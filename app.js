@@ -267,9 +267,9 @@ async function loadSettings() {
   const demoRecord   = await dbGet('settings', 'demoMode');
 
   // ── AUTO-CONFIGURE ON FIRST LAUNCH ──────────────────────────────
-  // If no API key has been saved yet, save the user's Gemini key now
-  // and switch to live mode automatically.
-  const USER_API_KEY = 'AIzaSyCnC_GFQi8Dl44YFG4od9FHj7BQMF3amKY';
+  // API key must be entered via Settings — never hardcode it here
+  // as it would be exposed in the public GitHub repository.
+  const USER_API_KEY = ''; // Enter your key in Settings (⚙️ bottom-left)
   if (!apiKeyRecord || !apiKeyRecord.value) {
     await dbPut('settings', { key: 'apiKey',   value: USER_API_KEY });
     await dbPut('settings', { key: 'demoMode', value: false });
