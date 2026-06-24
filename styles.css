@@ -1611,3 +1611,130 @@ img { max-width: 100%; }
     min-height: 140px;
   }
 }
+
+/* ── 31. IMMERSIVE MODE ── */
+
+/* Controls group in chat header */
+.chat-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Immersive-only elements are hidden by default */
+.immersive-only { display: none !important; }
+
+/* Immersive control buttons (Pause / Exit) */
+.btn-immersive-ctrl {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.btn-immersive-ctrl:hover { background: var(--bg-hover); border-color: var(--purple-light); }
+.btn-exit-immersive { border-color: rgba(239,68,68,0.4); }
+.btn-exit-immersive:hover { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.7); color: #f87171; }
+
+/* ── BODY IMMERSIVE STATE ── */
+body.immersive .sidebar          { display: none !important; }
+body.immersive .main-content     { padding-left: 0 !important; }
+body.immersive #view-tutor       { position: fixed; inset: 0; z-index: 500;
+                                   background: var(--bg-base); display: flex !important;
+                                   flex-direction: column; }
+body.immersive .page-header      { display: none; }
+body.immersive .tutor-split      { flex: 1; min-height: 0;
+                                   grid-template-columns: 1fr !important; }
+body.immersive .study-pane       { display: none !important; }
+
+/* Chat pane becomes a 2-column grid:
+   Left  → header / tabs / history / input
+   Right → visual panel (image + diagram)  */
+body.immersive .chat-pane {
+  height: 100%;
+  min-height: 0;
+  border-radius: 0 !important;
+  border: none !important;
+  display: grid !important;
+  grid-template-columns: 1fr 42% !important;
+  grid-template-rows: auto auto 1fr auto !important;
+  grid-template-areas:
+    "header  visual"
+    "tabs    visual"
+    "history visual"
+    "input   visual" !important;
+}
+
+body.immersive .chat-header      { grid-area: header; border-bottom: 1px solid var(--border); }
+body.immersive #chat-tabs-container { grid-area: tabs; }
+body.immersive .chat-history     { grid-area: history; }
+body.immersive .chat-input-bar   { grid-area: input; }
+
+/* Visual panel fills the right column — tall, image on top, diagram below */
+body.immersive #visual-panel {
+  grid-area: visual !important;
+  display: flex !important;
+  flex-direction: column !important;
+  max-height: none !important;
+  height: 100% !important;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  border-bottom: none;
+  padding: 16px;
+  gap: 16px;
+  background: var(--bg-base);
+  animation: none;
+}
+
+body.immersive .visual-image-wrap {
+  flex: 1.4;
+  min-height: 0;
+  border-radius: var(--radius-md);
+}
+
+body.immersive .visual-image {
+  height: 100%;
+  object-fit: cover;
+}
+
+body.immersive .visual-diagram-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: 260px;
+}
+
+body.immersive .visual-diagram svg {
+  max-height: 240px;
+}
+
+/* Show the immersive-only controls */
+body.immersive .immersive-only { display: flex !important; }
+
+/* Mobile: stack vertically in immersive mode */
+@media (max-width: 768px) {
+  body.immersive .chat-pane {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+      "header"
+      "visual"
+      "tabs"
+      "history"
+      "input" !important;
+  }
+  body.immersive #visual-panel {
+    flex-direction: row !important;
+    height: 200px !important;
+    border-left: none;
+    border-bottom: 1px solid var(--border);
+  }
+}

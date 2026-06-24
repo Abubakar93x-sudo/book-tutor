@@ -689,6 +689,11 @@ async function sendChatMessage() {
   // Narrate the response
   NarrationEngine.speak(response);
 
+  // Auto-enter immersive mode on first teach response
+  if (AppState.currentChatMode === 'teach') {
+    enterImmersiveMode();
+  }
+
   // Re-enable input
   input.disabled = false;
   document.getElementById('btn-chat-send').disabled = false;
@@ -807,6 +812,29 @@ async function updateVisualPanel(imagePrompt, diagramDef) {
   } else {
     diagramEl.innerHTML = '';
   }
+}
+
+// ── 18c. IMMERSIVE MODE ─────────────────────────────────────────────────────
+// Fullscreen teaching mode: expands the chat pane to cover the entire screen,
+// moves the AI image to the right column, and shows pause/exit controls.
+function enterImmersiveMode() {
+  if (document.body.classList.contains('immersive')) return;
+  document.body.classList.add('immersive');
+  // Ensure we are on the tutor view
+  navigateTo('tutor');
+  // Scroll chat to bottom
+  const history = document.getElementById(
+    AppState.currentChatMode === 'teach' ? 'chat-history-teach' : 'chat-history-quiz'
+  );
+  if (history) history.scrollTop = history.scrollHeight;
+}
+
+function exitImmersiveMode() {
+  document.body.classList.remove('immersive');
+  NarrationEngine.stop();
+  // Reset pause button label
+  const pauseBtn = document.getElementById('btn-immersive-pause');
+  if (pauseBtn) { pauseBtn.textContent = '⏸ Pause'; pauseBtn.dataset.paused = ''; }
 }
 
 // ── 19. ADD BOOK MODAL FLOW ───────────────────────────────────────────────────
@@ -1241,6 +1269,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.classList.toggle('narrate-off', !isOn);
     showToast(isOn ? 'Narration on' : 'Narration off', 'info', 1500);
   });
+
+  // Immersive pause button
+  document.getElementById('btn-immersive-pause').addEventListener('click', () => {
+    const btn = document.getElementById('btn-immersive-pause');
+    const isPaused = btn.dataset.paused === 'true';
+    if (isPaused) {
+      // Resume: re-enable narration
+      NarrationEngine.enabled = true;
+      btn.textContent = '⏸ Pause';
+      btn.dataset.paused = 'false';
+    } else {
+      // Pause: stop current narration and disable
+      NarrationEngine.stop();
+      NarrationEngine.enabled = false;
+      btn.textContent = '▶ Resume';
+      btn.dataset.paused = 'true';
+    }
+  });
+
+  // Immersive exit button
+  document.getElementById('btn-immersive-exit').addEventListener('click', exitImmersiveMode);
 
   // Stop narration when user starts typing a reply
   document.getElementById('chat-input').addEventListener('input', function () {
