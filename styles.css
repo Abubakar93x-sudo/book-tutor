@@ -1496,3 +1496,118 @@ img { max-width: 100%; }
   .hero-stats { flex-wrap: wrap; width: 100%; }
   .page-header { padding: 24px; }
 }
+
+/* ── 29. NARRATION TOGGLE BUTTON ── */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.btn-narrate {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.btn-narrate:hover { background: var(--bg-hover); border-color: var(--purple-light); }
+.btn-narrate.narrate-off { opacity: 0.4; }
+
+/* ── 30. VISUAL PANEL ── */
+.visual-panel {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(124,58,237,0.04);
+  min-height: 180px;
+  max-height: 260px;
+  overflow: hidden;
+  animation: visualPanelIn 0.5s ease;
+}
+
+@keyframes visualPanelIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.visual-panel-fresh { animation: visualPanelIn 0.5s ease; }
+
+.visual-image-wrap {
+  flex: 1.2;
+  min-width: 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+}
+
+.visual-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+.visual-img-in {
+  animation: fadeInScale 0.5s ease forwards;
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.visual-loader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+.visual-diagram-wrap {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  min-height: 150px;
+}
+
+.visual-diagram svg {
+  max-width: 100%;
+  max-height: 220px;
+  height: auto;
+}
+
+@media (max-width: 768px) {
+  .visual-panel {
+    flex-direction: column;
+    max-height: 400px;
+  }
+  .visual-image-wrap,
+  .visual-diagram-wrap {
+    min-height: 140px;
+  }
+}

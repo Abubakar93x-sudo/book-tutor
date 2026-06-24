@@ -22,6 +22,64 @@ const AppState = {
   }
 };
 
+// ── NARRATION ENGINE ──────────────────────────────────────────────────────────
+// Uses the browser's built-in Web Speech API to narrate tutor responses
+// in a UK English voice. Falls back gracefully if speech is unsupported.
+const NarrationEngine = {
+  enabled: true,
+  synth: window.speechSynthesis || null,
+  ukVoice: null,
+
+  init() {
+    if (!this.synth) return;
+    const loadVoice = () => {
+      const voices = this.synth.getVoices();
+      // Prefer Google UK English, then any en-GB, then any en-*, then first available
+      this.ukVoice =
+        voices.find(v => v.name.includes('Google UK English Female')) ||
+        voices.find(v => v.name.includes('Google UK English Male')) ||
+        voices.find(v => v.lang === 'en-GB') ||
+        voices.find(v => v.lang.startsWith('en')) ||
+        voices[0] || null;
+    };
+    loadVoice();
+    if (this.synth.onvoiceschanged !== undefined) {
+      this.synth.onvoiceschanged = loadVoice;
+    }
+  },
+
+  speak(text) {
+    if (!this.enabled || !this.synth) return;
+    this.synth.cancel();
+    // Strip markdown, HTML tags and mastery tags before speaking
+    const clean = text
+      .replace(/\[MASTERED:.*?\]/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/#{1,4} /g, '')
+      .replace(/<br\s*\/?>/gi, '. ')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    if (!clean) return;
+    const utt = new SpeechSynthesisUtterance(clean);
+    if (this.ukVoice) utt.voice = this.ukVoice;
+    utt.rate  = 0.92;
+    utt.pitch = 1.0;
+    utt.volume = 1.0;
+    this.synth.speak(utt);
+  },
+
+  stop() {
+    if (this.synth) this.synth.cancel();
+  },
+
+  toggle() {
+    this.enabled = !this.enabled;
+    if (!this.enabled) this.stop();
+    return this.enabled;
+  }
+};
+
 // ── 2. INDEXEDDB SETUP ────────────────────────────────────────────────────────
 // "IndexedDB" is a browser built-in database that stores data permanently
 // even after you close the tab, unlike regular JavaScript variables.
@@ -579,8 +637,29 @@ async function sendChatMessage() {
       // Demo mode: generate contextual mock response
       response = generateDemoResponse(message, AppState.currentChatMode);
     } else {
-      // Live mode: call Gemini 1.5 Pro
-      response = await callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts);
+      // Live mode: fire tutor agent and visual director in parallel.
+      // The visual director runs only in teach mode (not quiz).
+      const chapter  = AppState.selectedChapter;
+      const book     = AppState.selectedBook;
+
+      // Determine current active concept for the visual director
+      const activeConcept = chapter.concepts
+        .filter(c => !AppState.masteredConcepts.includes(c))[0] || chapter.title;
+      const visualContext = `${activeConcept}. ${chapter.summary_15m.substring(0, 500)}`;
+
+      const [tutorReply, visualData] = await Promise.all([
+        callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts),
+        AppState.currentChatMode === 'teach'
+          ? callVisualDirectorAgent(visualContext, book.title, chapter.title)
+          : Promise.resolve(null)
+      ]);
+
+      response = tutorReply;
+
+      // Update visual panel with image + diagram (non-blocking)
+      if (visualData) {
+        updateVisualPanel(visualData.imagePrompt, visualData.diagram);
+      }
     }
   } catch (err) {
     response = `Connection Error: ${err.message}`;
@@ -606,6 +685,9 @@ async function sendChatMessage() {
 
   // Show the AI response
   appendChatMessage('tutor', response, AppState.currentChatMode);
+
+  // Narrate the response
+  NarrationEngine.speak(response);
 
   // Re-enable input
   input.disabled = false;
@@ -669,6 +751,62 @@ async function saveMasteryProgress() {
   // Update the book in DB
   await dbPut('books', book);
   await renderLibrary();
+}
+
+// ── 18b. VISUAL PANEL ─────────────────────────────────────────────────────────
+// Updates the visual panel with a Pollinations.ai image and a Mermaid diagram.
+// Both are loaded asynchronously — image via <img> src, diagram via mermaid.run().
+async function updateVisualPanel(imagePrompt, diagramDef) {
+  const panel     = document.getElementById('visual-panel');
+  const imageEl   = document.getElementById('visual-image');
+  const loaderEl  = document.getElementById('visual-image-loader');
+  const diagramEl = document.getElementById('visual-diagram');
+
+  // Show the panel
+  panel.style.display = 'flex';
+  panel.classList.remove('visual-panel-fresh');
+  void panel.offsetWidth; // reflow to restart animation
+  panel.classList.add('visual-panel-fresh');
+
+  // ── Image via Pollinations.ai (free, no API key) ──
+  if (imagePrompt) {
+    const fullPrompt = imagePrompt + ', cartoon illustration, flat design, bright colors, simple, no text, educational';
+    const imageUrl   = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=800&height=350&nologo=true&seed=${Date.now()}`;
+
+    loaderEl.style.display = 'flex';
+    imageEl.style.display  = 'none';
+
+    imageEl.onload = () => {
+      loaderEl.style.display = 'none';
+      imageEl.style.display  = 'block';
+      imageEl.classList.remove('visual-img-in');
+      void imageEl.offsetWidth;
+      imageEl.classList.add('visual-img-in');
+    };
+    imageEl.onerror = () => {
+      loaderEl.style.display = 'none';
+    };
+    imageEl.src = imageUrl;
+  }
+
+  // ── Mermaid diagram ──
+  if (diagramDef && window.mermaid) {
+    try {
+      // Reset the element so mermaid will re-render it
+      diagramEl.removeAttribute('data-processed');
+      diagramEl.innerHTML = '';
+
+      // Generate unique ID to avoid conflicts
+      const uid = 'mmd-' + Date.now();
+      const { svg } = await mermaid.render(uid, diagramDef);
+      diagramEl.innerHTML = svg;
+    } catch (e) {
+      console.warn('Mermaid render error:', e.message);
+      diagramEl.innerHTML = '';
+    }
+  } else {
+    diagramEl.innerHTML = '';
+  }
 }
 
 // ── 19. ADD BOOK MODAL FLOW ───────────────────────────────────────────────────
@@ -1092,11 +1230,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Auto-resize textarea
+  // ── NARRATION ENGINE INIT ──
+  NarrationEngine.init();
+
+  // Narration toggle button
+  document.getElementById('btn-narrate-toggle').addEventListener('click', () => {
+    const isOn = NarrationEngine.toggle();
+    const btn = document.getElementById('btn-narrate-toggle');
+    btn.textContent = isOn ? '🔊' : '🔇';
+    btn.classList.toggle('narrate-off', !isOn);
+    showToast(isOn ? 'Narration on' : 'Narration off', 'info', 1500);
+  });
+
+  // Stop narration when user starts typing a reply
   document.getElementById('chat-input').addEventListener('input', function () {
+    NarrationEngine.stop();
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 120) + 'px';
   });
+
+  // ── MERMAID INIT ──
+  if (window.mermaid) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#7c3aed',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#5b21b6',
+        lineColor:    '#7c3aed',
+        background:   '#1a1a2e',
+        nodeBorder:   '#7c3aed',
+        fontSize:     '14px'
+      }
+    });
+  }
 
   // ── SANDBOX ──
   document.getElementById('sandbox-book-select').addEventListener('change', async (e) => {

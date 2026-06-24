@@ -144,6 +144,43 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '')
   return await queryGemini(prompt, true);
 }
 
+// ── AGENT 2.5: VISUAL DIRECTOR ────────────────────────────────────────────────
+// Runs in parallel with the Tutor agent. Given the concept being taught, it
+// generates (1) a cartoon image prompt for Pollinations.ai and (2) a Mermaid
+// mindmap that maps the key ideas. Returns null gracefully on any error.
+async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
+  const prompt = `
+    You are a Visual Director for an educational AI app.
+    A tutor is teaching a concept from "${bookTitle}", Chapter: "${chapterTitle}".
+
+    Concept being taught:
+    """
+    ${conceptText.substring(0, 600)}
+    """
+
+    Generate two things:
+    1. A SHORT image prompt (max 12 words) for a cartoon illustration that captures
+       the essence of this concept. Make it vivid, simple, cartoonish, and educational.
+       Example: "cartoon king on throne waving away talented advisor, flat design"
+
+    2. A Mermaid.js mindmap diagram that maps the key ideas of this concept.
+       Use simple labels (2-4 words each). Maximum 8 nodes total.
+       The mindmap MUST start with: mindmap
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "imagePrompt": "cartoon illustration of concept, flat design, bright colors",
+      "diagram": "mindmap\\n  root((Core Idea))\\n    Branch One\\n    Branch Two\\n      Sub Point"
+    }
+  `;
+  try {
+    return await queryGemini(prompt, true);
+  } catch (e) {
+    console.warn('Visual Director failed silently:', e.message);
+    return null;
+  }
+}
+
 // ── AGENT 4: SOCRATIC TUTOR (TEACH & QUIZ MODES) ─────────────────────────────
 // Powers the two-tab tutor system.
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.

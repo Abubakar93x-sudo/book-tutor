@@ -267,6 +267,18 @@
                 <h3 class="chat-title">Socratic Tutor</h3>
                 <span class="chat-subtitle" id="chat-mode-label">Select a chapter to unlock</span>
               </div>
+              <button id="btn-narrate-toggle" class="btn-narrate" title="Toggle narration (UK English voice)">🔊</button>
+            </div>
+
+            <!-- Visual Panel: AI illustration + concept diagram -->
+            <div id="visual-panel" class="visual-panel" style="display:none;">
+              <div class="visual-image-wrap">
+                <div id="visual-image-loader" class="visual-loader">🎨 Generating illustration...</div>
+                <img id="visual-image" class="visual-image" src="" alt="Concept illustration" style="display:none;" />
+              </div>
+              <div class="visual-diagram-wrap">
+                <div id="visual-diagram" class="visual-diagram"></div>
+              </div>
             </div>
 
             <!-- Chat Mode Tabs (shown after chapter is selected) -->
@@ -562,6 +574,7 @@
 
   <!-- Load scripts -->
   <script src="ai-agents.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
