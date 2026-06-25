@@ -53,8 +53,34 @@ async function queryGemini(prompt, responseJson = false) {
 
   if (!textResponse) throw new Error('Received empty response from Gemini API.');
 
-  // Parse the text as JSON if requested, otherwise return raw text.
-  return responseJson ? JSON.parse(textResponse) : textResponse;
+  if (!responseJson) return textResponse;
+
+  // ── Robust JSON extraction ──
+  // Gemini sometimes wraps JSON in markdown fences or includes unescaped
+  // characters. Try several strategies before giving up.
+  let toParse = textResponse.trim();
+
+  // 1. Strip ```json ... ``` or ``` ... ``` fences
+  const fenceMatch = toParse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) toParse = fenceMatch[1].trim();
+
+  // 2. Try direct parse
+  try {
+    return JSON.parse(toParse);
+  } catch (_) { /* fall through */ }
+
+  // 3. Extract first {...} or [...] block
+  const objMatch = toParse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (objMatch) {
+    try { return JSON.parse(objMatch[1]); } catch (_) { /* fall through */ }
+  }
+
+  // 4. Last resort: replace literal newlines inside strings then retry
+  try {
+    return JSON.parse(toParse.replace(/\n/g, '\\n'));
+  } catch (e) {
+    throw new Error(`Failed to parse JSON response: ${e.message}`);
+  }
 }
 
 // ── AGENT 1: DIAGNOSTIC LIBRARIAN ────────────────────────────────────────────
