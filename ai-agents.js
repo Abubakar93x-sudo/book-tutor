@@ -56,18 +56,16 @@ async function queryGemini(prompt, responseJson = false) {
   if (!responseJson) return textResponse;
 
   // ── Robust JSON extraction ──
-  // Gemini sometimes wraps JSON in markdown fences or includes unescaped
-  // characters. Try several strategies before giving up.
+  // Gemini sometimes wraps JSON in markdown fences or uses Python-style quotes.
   let toParse = textResponse.trim();
+  console.log('Raw Gemini response:', toParse); // Keep for debugging
 
   // 1. Strip ```json ... ``` or ``` ... ``` fences
   const fenceMatch = toParse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) toParse = fenceMatch[1].trim();
 
   // 2. Try direct parse
-  try {
-    return JSON.parse(toParse);
-  } catch (_) { /* fall through */ }
+  try { return JSON.parse(toParse); } catch (_) { /* fall through */ }
 
   // 3. Extract first {...} or [...] block
   const objMatch = toParse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
@@ -75,11 +73,23 @@ async function queryGemini(prompt, responseJson = false) {
     try { return JSON.parse(objMatch[1]); } catch (_) { /* fall through */ }
   }
 
-  // 4. Last resort: replace literal newlines inside strings then retry
+  // 4. Replace literal newlines inside strings
+  try { return JSON.parse(toParse.replace(/\n/g, '\\n')); } catch (_) { /* fall through */ }
+
+  // 5. Convert Python-style single-quoted dict syntax → JSON double quotes
   try {
-    return JSON.parse(toParse.replace(/\n/g, '\\n'));
+    const fixed = toParse
+      .replace(/'([^'\\]*)'\s*:/g, '"$1":')   // 'key': → "key":
+      .replace(/:\s*'([^'\\]*)'/g, ': "$1"')  // : 'value' → : "value"
+      .replace(/'/g, '"');                     // remaining single quotes
+    return JSON.parse(fixed);
+  } catch (_) { /* fall through */ }
+
+  // 6. Strip any non-printable/BOM characters and retry
+  try {
+    return JSON.parse(toParse.replace(/[^\x20-\x7E\n\r\t]/g, ''));
   } catch (e) {
-    throw new Error(`Failed to parse JSON response: ${e.message}`);
+    throw new Error(`Failed to parse JSON response: ${e.message}\nRaw: ${toParse.slice(0, 200)}`);
   }
 }
 
