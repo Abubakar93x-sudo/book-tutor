@@ -22,6 +22,23 @@
   <div id="toast-container" class="toast-container"></div>
 
   <!-- ============================================================
+    SIGN-IN OVERLAY
+    Shown when user is not authenticated. Hides once signed in.
+  ============================================================ -->
+  <div id="signin-overlay" class="signin-overlay">
+    <div class="signin-card glass-panel">
+      <div class="signin-logo">📚</div>
+      <h1 class="signin-title">BookTutor</h1>
+      <p class="signin-subtitle">Master any book with AI-powered immersive learning. Your library syncs across all your devices.</p>
+      <button id="btn-google-signin" class="btn-google-signin">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="22" height="22" alt="Google" />
+        Continue with Google
+      </button>
+      <p class="signin-note">Signing in keeps your books and progress saved to the cloud.</p>
+    </div>
+  </div>
+
+  <!-- ============================================================
     MAIN APP SHELL
     The entire app lives inside this container.
     The sidebar + main content sit side by side.
@@ -59,8 +76,16 @@
         </a>
       </nav>
 
-      <!-- Sidebar Footer -->
+      <!-- Sidebar Footer: User info + Settings -->
       <div class="sidebar-footer">
+        <!-- User info (shown when signed in) -->
+        <div id="sidebar-user" class="sidebar-user" style="display:none;">
+          <img id="user-avatar" class="user-avatar" src="" alt="User" />
+          <div class="user-info">
+            <span id="user-name" class="user-name">Loading...</span>
+            <button id="btn-signout" class="btn-signout">Sign out</button>
+          </div>
+        </div>
         <button id="btn-settings" class="sidebar-settings-btn">
           <span>⚙️</span>
           <span>Settings</span>
@@ -576,7 +601,12 @@
     </div>
   </div>
 
-  <!-- Load scripts -->
+  <!-- Firebase SDK (compat — no npm needed) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <!-- BookTutor scripts -->
+  <script src="firebase-config.js"></script>
   <script src="ai-agents.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script src="app.js"></script>

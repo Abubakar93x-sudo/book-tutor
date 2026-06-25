@@ -17,6 +17,7 @@ const AppState = {
   flashcardSession: [],     // Array of flashcard objects for daily review
   flashcardIndex: 0,        // Current flashcard position
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
+  currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
     apiKey: ''
   }
@@ -80,9 +81,9 @@ const NarrationEngine = {
   }
 };
 
-// ── 2. INDEXEDDB SETUP ────────────────────────────────────────────────────────
-// "IndexedDB" is a browser built-in database that stores data permanently
-// even after you close the tab, unlike regular JavaScript variables.
+// ── 2. INDEXEDDB SETUP (settings only) ───────────────────────────────────────
+// IndexedDB is kept only for the 'settings' store (API key etc.) because
+// those are sensitive and should never leave the device.
 let db;
 const DB_NAME = 'BookTutorDB';
 const DB_VERSION = 1;
@@ -91,78 +92,163 @@ function openDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    // Called when we create the DB for the first time or upgrade it.
     request.onupgradeneeded = (event) => {
       const database = event.target.result;
-      // Store for books (each book has chapters, flashcards, etc.)
       if (!database.objectStoreNames.contains('books')) {
         database.createObjectStore('books', { keyPath: 'id' });
       }
-      // Store for persistent chat histories
       if (!database.objectStoreNames.contains('chatHistory')) {
         const store = database.createObjectStore('chatHistory', { keyPath: 'id', autoIncrement: true });
         store.createIndex('chapterKey', 'chapterKey', { unique: false });
       }
-      // Store for app settings (API key, preferences)
       if (!database.objectStoreNames.contains('settings')) {
         database.createObjectStore('settings', { keyPath: 'key' });
       }
     };
 
-    request.onsuccess = () => {
-      db = request.result;
-      resolve(db);
-    };
-
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => { db = request.result; resolve(db); };
+    request.onerror  = () => reject(request.error);
   });
 }
 
-// ── DB HELPER FUNCTIONS ───────────────────────────────────────────────────────
-// These wrap IndexedDB's callback-based API in Promises so we can use async/await.
-
-function dbPut(storeName, data) {
+// ── RAW INDEXEDDB HELPERS (settings only) ────────────────────────────────────
+function idbPut(storeName, data) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName], 'readwrite');
+    const tx  = db.transaction([storeName], 'readwrite');
     const req = tx.objectStore(storeName).put(data);
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror   = () => reject(req.error);
   });
 }
 
-function dbGetAll(storeName) {
+function idbGet(storeName, key) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName], 'readonly');
-    const req = tx.objectStore(storeName).getAll();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function dbGet(storeName, key) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName], 'readonly');
+    const tx  = db.transaction([storeName], 'readonly');
     const req = tx.objectStore(storeName).get(key);
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror   = () => reject(req.error);
   });
 }
 
-function dbDelete(storeName, key) {
+function idbGetAll(storeName) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName], 'readwrite');
-    const req = tx.objectStore(storeName).delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    const tx  = db.transaction([storeName], 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
   });
 }
 
-function dbClearStore(storeName) {
+function idbClearStore(storeName) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName], 'readwrite');
+    const tx  = db.transaction([storeName], 'readwrite');
     const req = tx.objectStore(storeName).clear();
     req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ── SMART DB ROUTER ───────────────────────────────────────────────────────────
+// books / chatHistory → Firestore (cloud, synced across devices)
+// settings           → IndexedDB  (local only, API key stays private)
+
+function userCol(collectionName) {
+  const uid = AppState.currentUser?.uid;
+  if (!uid) throw new Error('Not signed in');
+  return firestoreDB.collection('users').doc(uid).collection(collectionName);
+}
+
+async function dbPut(storeName, data) {
+  if (storeName === 'settings') return idbPut(storeName, data);
+  if (storeName === 'books') {
+    await userCol('books').doc(String(data.id)).set(data);
+    return data.id;
+  }
+  if (storeName === 'chatHistory') {
+    await userCol('chat').add(data);
+    return;
+  }
+}
+
+async function dbGet(storeName, key) {
+  if (storeName === 'settings') return idbGet(storeName, key);
+  if (storeName === 'books') {
+    const doc = await userCol('books').doc(String(key)).get();
+    return doc.exists ? doc.data() : undefined;
+  }
+}
+
+async function dbGetAll(storeName) {
+  if (storeName === 'settings') return idbGetAll(storeName);
+  if (storeName === 'books') {
+    const snap = await userCol('books').get();
+    return snap.docs.map(d => d.data());
+  }
+  if (storeName === 'chatHistory') {
+    const snap = await userCol('chat').orderBy('timestamp').get();
+    return snap.docs.map(d => d.data());
+  }
+  return [];
+}
+
+async function dbDelete(storeName, key) {
+  if (storeName === 'books') {
+    await userCol('books').doc(String(key)).delete();
+  }
+}
+
+async function dbClearStore(storeName) {
+  if (storeName === 'settings') return idbClearStore(storeName);
+  const colName = storeName === 'chatHistory' ? 'chat' : storeName;
+  const snap = await userCol(colName).get();
+  const batch = firestoreDB.batch();
+  snap.docs.forEach(doc => batch.delete(doc.ref));
+  await batch.commit();
+}
+
+// ── FIREBASE AUTH ─────────────────────────────────────────────────────────────
+// Manages the sign-in overlay and user session lifecycle.
+
+async function signInWithGoogle() {
+  try {
+    await firebaseAuth.signInWithPopup(googleProvider);
+  } catch (e) {
+    showToast('Sign-in failed: ' + e.message, 'error');
+  }
+}
+
+async function signOutUser() {
+  if (!confirm('Sign out? Your library is safely saved to the cloud.')) return;
+  await firebaseAuth.signOut();
+}
+
+function initAuth() {
+  firebaseAuth.onAuthStateChanged(async (user) => {
+    const overlay   = document.getElementById('signin-overlay');
+    const sidebarUser = document.getElementById('sidebar-user');
+
+    if (user) {
+      // ── User is signed in ──
+      AppState.currentUser = user;
+      overlay.style.display = 'none';
+      sidebarUser.style.display = 'flex';
+
+      // Update avatar + name in sidebar
+      const avatar = document.getElementById('user-avatar');
+      if (user.photoURL) avatar.src = user.photoURL;
+      document.getElementById('user-name').textContent =
+        user.displayName?.split(' ')[0] || user.email;
+
+      // Load their library from Firestore
+      await loadSettings();
+      await renderLibrary();
+
+    } else {
+      // ── User is signed out ──
+      AppState.currentUser = null;
+      overlay.style.display = 'flex';
+      sidebarUser.style.display = 'none';
+    }
   });
 }
 
@@ -1182,19 +1268,18 @@ async function resetDatabase() {
 // This runs once the page HTML is fully loaded ("DOMContentLoaded" event).
 document.addEventListener('DOMContentLoaded', async () => {
 
-  // Open the IndexedDB database
+  // Open IndexedDB (settings only — books/chat use Firestore)
   await openDatabase();
 
-  // Load saved settings (API key, demo mode toggle)
-  await loadSettings();
+  // Init Firebase Auth (shows sign-in overlay if not logged in)
+  initAuth();
 
-  // Render the library homepage
-  await renderLibrary();
+  // Wire up sign-in / sign-out buttons
+  document.getElementById('btn-google-signin').addEventListener('click', signInWithGoogle);
+  document.getElementById('btn-signout').addEventListener('click', signOutUser);
 
-  // Initialize study tabs (in Tutor Arena)
+  // Init study tabs and tutor selectors
   initStudyTabs();
-
-  // Initialize Tutor Arena book/chapter selectors
   await initTutorSelectors();
 
   // ── NAVIGATION LINKS ──
