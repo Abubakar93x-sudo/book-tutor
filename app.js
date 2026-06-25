@@ -1049,9 +1049,13 @@ async function generateCurriculum() {
     await renderLibrary();
 
   } catch (error) {
-    document.getElementById('modal-add-book').style.display = 'none';
-    showToast(`Failed to generate curriculum: ${error.message}`, 'error');
-    console.error(error);
+    // Keep the modal open and show the error so user can read it
+    document.getElementById('add-book-step-3').style.display = 'none';
+    document.getElementById('add-book-step-2').style.display = 'block';
+    document.getElementById('diagnostic-result').innerHTML =
+      `<strong style="color:#f87171;">Error:</strong> ${error.message}`;
+    showToast(`Error: ${error.message}`, 'error', 10000);
+    console.error('generateCurriculum error:', error);
   }
 }
 
