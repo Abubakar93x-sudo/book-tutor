@@ -154,18 +154,22 @@ function idbClearStore(storeName) {
 
 function userCol(collectionName) {
   const uid = AppState.currentUser?.uid;
-  if (!uid) throw new Error('Not signed in');
+  if (!uid) return null; // Not signed in — callers handle null gracefully
   return firestoreDB.collection('users').doc(uid).collection(collectionName);
 }
 
 async function dbPut(storeName, data) {
   if (storeName === 'settings') return idbPut(storeName, data);
   if (storeName === 'books') {
-    await userCol('books').doc(String(data.id)).set(data);
+    const col = userCol('books');
+    if (!col) return;
+    await col.doc(String(data.id)).set(data);
     return data.id;
   }
   if (storeName === 'chatHistory') {
-    await userCol('chat').add(data);
+    const col = userCol('chat');
+    if (!col) return;
+    await col.add(data);
     return;
   }
 }
@@ -173,7 +177,9 @@ async function dbPut(storeName, data) {
 async function dbGet(storeName, key) {
   if (storeName === 'settings') return idbGet(storeName, key);
   if (storeName === 'books') {
-    const doc = await userCol('books').doc(String(key)).get();
+    const col = userCol('books');
+    if (!col) return undefined;
+    const doc = await col.doc(String(key)).get();
     return doc.exists ? doc.data() : undefined;
   }
 }
@@ -181,11 +187,15 @@ async function dbGet(storeName, key) {
 async function dbGetAll(storeName) {
   if (storeName === 'settings') return idbGetAll(storeName);
   if (storeName === 'books') {
-    const snap = await userCol('books').get();
+    const col = userCol('books');
+    if (!col) return [];
+    const snap = await col.get();
     return snap.docs.map(d => d.data());
   }
   if (storeName === 'chatHistory') {
-    const snap = await userCol('chat').orderBy('timestamp').get();
+    const col = userCol('chat');
+    if (!col) return [];
+    const snap = await col.orderBy('timestamp').get();
     return snap.docs.map(d => d.data());
   }
   return [];
@@ -193,14 +203,17 @@ async function dbGetAll(storeName) {
 
 async function dbDelete(storeName, key) {
   if (storeName === 'books') {
-    await userCol('books').doc(String(key)).delete();
+    const col = userCol('books');
+    if (!col) return;
+    await col.doc(String(key)).delete();
   }
 }
 
 async function dbClearStore(storeName) {
   if (storeName === 'settings') return idbClearStore(storeName);
-  const colName = storeName === 'chatHistory' ? 'chat' : storeName;
-  const snap = await userCol(colName).get();
+  const col = userCol(storeName === 'chatHistory' ? 'chat' : storeName);
+  if (!col) return;
+  const snap = await col.get();
   const batch = firestoreDB.batch();
   snap.docs.forEach(doc => batch.delete(doc.ref));
   await batch.commit();
@@ -224,7 +237,7 @@ async function signOutUser() {
 
 function initAuth() {
   firebaseAuth.onAuthStateChanged(async (user) => {
-    const overlay   = document.getElementById('signin-overlay');
+    const overlay     = document.getElementById('signin-overlay');
     const sidebarUser = document.getElementById('sidebar-user');
 
     if (user) {
@@ -239,9 +252,10 @@ function initAuth() {
       document.getElementById('user-name').textContent =
         user.displayName?.split(' ')[0] || user.email;
 
-      // Load their library from Firestore
+      // Load settings, library, and tutor selectors now that we have a user
       await loadSettings();
       await renderLibrary();
+      await initTutorSelectors();
 
     } else {
       // ── User is signed out ──
@@ -1278,9 +1292,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-google-signin').addEventListener('click', signInWithGoogle);
   document.getElementById('btn-signout').addEventListener('click', signOutUser);
 
-  // Init study tabs and tutor selectors
+  // Init study tabs (tutor selectors are initialised in initAuth after sign-in)
   initStudyTabs();
-  await initTutorSelectors();
 
   // ── NAVIGATION LINKS ──
   document.querySelectorAll('.nav-link').forEach(link => {
