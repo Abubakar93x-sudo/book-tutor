@@ -1555,7 +1555,7 @@ img { max-width: 100%; }
   /* ── Layout ── */
   .mobile-bottom-nav { display: flex; } /* Show bottom nav */
   .sidebar           { display: none !important; } /* Hide sidebar */
-  .main-content      { padding-left: 0 !important; }
+  .main-content      { margin-left: 0 !important; padding-left: 0 !important; }
 
   /* Pad content above the fixed bottom nav + iPhone home bar */
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
