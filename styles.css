@@ -1488,13 +1488,187 @@ img { max-width: 100%; }
   .review-layout { grid-template-columns: 1fr; }
 }
 
+/* ── MOBILE BOTTOM NAV (hidden on desktop) ── */
+.mobile-bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 64px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  z-index: 300;
+  /* iPhone safe area */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-decoration: none;
+  color: var(--text-muted);
+  padding: 6px 4px;
+  transition: color 0.2s;
+  position: relative;
+  min-height: 44px; /* WCAG touch target */
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.mobile-nav-item.active { color: var(--purple-light); }
+.mobile-nav-item.active .mobile-nav-icon { transform: translateY(-2px); }
+
+.mobile-nav-icon {
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 0.2s;
+}
+
+.mobile-nav-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.mobile-nav-badge {
+  position: absolute;
+  top: 4px; right: calc(50% - 20px);
+  background: var(--purple);
+  color: white;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 14px;
+}
+
+/* ── COMPREHENSIVE MOBILE STYLES ── */
 @media (max-width: 768px) {
-  :root { --sidebar-w: 60px; }
-  .logo-text, .nav-label, .sidebar-footer span:last-child { display: none; }
-  .hero-section { padding: 40px 24px 40px; }
-  .shelf-section, .features-row { padding-left: 24px; padding-right: 24px; }
-  .hero-stats { flex-wrap: wrap; width: 100%; }
-  .page-header { padding: 24px; }
+
+  /* ── Layout ── */
+  .mobile-bottom-nav { display: flex; } /* Show bottom nav */
+  .sidebar           { display: none !important; } /* Hide sidebar */
+  .main-content      { padding-left: 0 !important; }
+
+  /* Pad content above the fixed bottom nav + iPhone home bar */
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+
+  /* ── Library — Hero ── */
+  .hero-section {
+    padding: 36px 20px 28px;
+    min-height: auto;
+  }
+  .hero-eyebrow { font-size: 12px; }
+  .hero-title { font-size: 30px; line-height: 1.2; }
+  .hero-subtitle { font-size: 15px; }
+  .hero-cta { flex-direction: column; gap: 12px; }
+  .hero-cta .btn { width: 100%; justify-content: center; }
+  .hero-stats { flex-wrap: wrap; gap: 16px; justify-content: center; }
+  .features-row { display: none; } /* Too dense on mobile */
+
+  /* ── Library — Shelf ── */
+  .shelf-section { padding: 0 16px 20px; }
+  .shelf-header { padding: 20px 0 12px; }
+  .shelf-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .shelf-card { padding: 14px; }
+  .shelf-card-title { font-size: 13px; }
+  .shelf-card-author { font-size: 11px; }
+
+  /* ── Page Headers ── */
+  .page-header { padding: 20px 16px 0; }
+  .page-header h2 { font-size: 22px; }
+
+  /* ── Tutor view ── */
+  .tutor-split {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+  }
+  .study-pane {
+    max-height: 220px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-y: auto;
+  }
+  .chat-pane {
+    height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px) - 220px - 1px);
+    min-height: 400px;
+  }
+  .chat-history { padding: 12px; }
+  .chat-input-bar { padding: 10px 12px; }
+  .chat-textarea { font-size: 16px; } /* Prevent iOS zoom on input focus */
+
+  /* ── Review/Flashcard ── */
+  .review-layout { grid-template-columns: 1fr !important; }
+  .flashcard { min-height: 180px; font-size: 16px; }
+  .review-controls { flex-wrap: wrap; gap: 8px; }
+  .review-controls .btn { flex: 1 1 calc(50% - 8px); justify-content: center; }
+
+  /* ── Sandbox ── */
+  .sandbox-workspace { grid-template-columns: 1fr !important; }
+  .sandbox-panel { max-height: 280px; }
+
+  /* ── Modals — bottom sheet on mobile ── */
+  .modal-overlay {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+  .modal-content, .modal-add-book-content {
+    border-radius: 24px 24px 0 0 !important;
+    max-height: 90dvh !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    padding-bottom: env(safe-area-inset-bottom, 16px) !important;
+  }
+  .settings-panel {
+    border-radius: 24px 24px 0 0 !important;
+    max-height: 90dvh !important;
+    overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom, 16px) !important;
+  }
+
+  /* ── Buttons — comfortable touch targets ── */
+  .btn { min-height: 44px; }
+  .btn-primary { min-height: 48px; }
+
+  /* ── Immersive mode on mobile — vertical stack ── */
+  body.immersive .chat-pane {
+    grid-template-columns: 1fr !important;
+    grid-template-areas:
+      "header"
+      "visual"
+      "tabs"
+      "history"
+      "input" !important;
+    height: 100dvh !important;
+  }
+  body.immersive #visual-panel {
+    flex-direction: row !important;
+    height: 180px !important;
+    border-left: none !important;
+    border-bottom: 1px solid var(--border);
+    padding: 10px !important;
+    gap: 10px !important;
+  }
+  body.immersive .visual-diagram-wrap { max-height: 160px; }
+  .btn-immersive-ctrl span { display: none; } /* Show only icon on mobile */
+
+  /* ── Visual panel ── */
+  .visual-panel { flex-direction: column; max-height: 360px; }
+  .visual-image-wrap, .visual-diagram-wrap { min-height: 130px; }
+
+  /* ── Sign-in overlay ── */
+  .signin-card { padding: 40px 24px 32px; }
+  .signin-title { font-size: 28px; }
+  .signin-subtitle { font-size: 15px; }
 }
 
 /* ── 29. NARRATION TOGGLE BUTTON ── */
@@ -1720,24 +1894,6 @@ body.immersive .visual-diagram svg {
 /* Show the immersive-only controls */
 body.immersive .immersive-only { display: flex !important; }
 
-/* Mobile: stack vertically in immersive mode */
-@media (max-width: 768px) {
-  body.immersive .chat-pane {
-    grid-template-columns: 1fr !important;
-    grid-template-areas:
-      "header"
-      "visual"
-      "tabs"
-      "history"
-      "input" !important;
-  }
-  body.immersive #visual-panel {
-    flex-direction: row !important;
-    height: 200px !important;
-    border-left: none;
-    border-bottom: 1px solid var(--border);
-  }
-}
 
 /* ── 32. SIGN-IN OVERLAY ── */
 .signin-overlay {

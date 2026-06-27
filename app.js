@@ -351,12 +351,15 @@ function showToast(message, type = 'info', duration = 4000) {
 function navigateTo(viewId) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.querySelectorAll('.mobile-nav-item').forEach(l => l.classList.remove('active'));
 
-  const targetView = document.getElementById(`view-${viewId}`);
-  const targetNav = document.getElementById(`nav-${viewId}`);
+  const targetView    = document.getElementById(`view-${viewId}`);
+  const targetNav     = document.getElementById(`nav-${viewId}`);
+  const targetMobNav  = document.getElementById(`mobile-nav-${viewId}`);
 
-  if (targetView) targetView.classList.add('active');
-  if (targetNav) targetNav.classList.add('active');
+  if (targetView)   targetView.classList.add('active');
+  if (targetNav)    targetNav.classList.add('active');
+  if (targetMobNav) targetMobNav.classList.add('active');
 
   AppState.currentView = viewId;
 }
@@ -1299,16 +1302,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Init study tabs (tutor selectors are initialised in initAuth after sign-in)
   initStudyTabs();
 
-  // ── NAVIGATION LINKS ──
+  // ── NAVIGATION LINKS (desktop sidebar) ──
   document.querySelectorAll('.nav-link').forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       const view = link.dataset.view;
       navigateTo(view);
-
-      // When navigating to review, init the flashcard session
       if (view === 'review') initReviewSession();
-      // When navigating to sandbox, populate selectors
+      if (view === 'sandbox') populateSandboxSelectors();
+    });
+  });
+
+  // ── MOBILE BOTTOM NAV ──
+  document.querySelectorAll('.mobile-nav-item').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const view = link.dataset.view;
+      navigateTo(view);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (view === 'review') initReviewSession();
       if (view === 'sandbox') populateSandboxSelectors();
     });
   });
