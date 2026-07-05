@@ -955,8 +955,7 @@ function openAddBookModal() {
   const isDemo = AppState.mode === 'demo';
   document.getElementById('demo-mode-warning').style.display = isDemo ? 'flex' : 'none';
 
-  // Disable the form fields (but keep them visible) in demo mode so it's
-  // obvious they won't work until the user switches to live mode.
+  // Disable the form fields in demo mode
   const fields = ['input-book-title', 'input-book-author', 'input-book-reference'];
   fields.forEach(id => {
     const el = document.getElementById(id);
@@ -965,11 +964,20 @@ function openAddBookModal() {
   });
   document.getElementById('btn-check-book').disabled = isDemo;
   document.getElementById('btn-check-book').style.opacity = isDemo ? '0.4' : '1';
+
+  // Reset source toggle + drop zone
+  document.getElementById('source-knowledge').checked = true;
+  document.getElementById('source-knowledge-zone').style.display = 'block';
+  document.getElementById('source-pdf-zone').style.display     = 'none';
+  document.getElementById('input-pdf-file').value              = '';
+  document.getElementById('drop-zone-idle').style.display      = 'flex';
+  document.getElementById('drop-zone-selected').style.display  = 'none';
 }
 
 async function checkBookCoverage() {
-  const title = document.getElementById('input-book-title').value.trim();
+  const title  = document.getElementById('input-book-title').value.trim();
   const author = document.getElementById('input-book-author').value.trim();
+  const sourceMode = document.querySelector('input[name="book-source"]:checked')?.value || 'knowledge';
 
   if (!title) { showToast('Please enter a book title.', 'error'); return; }
 
@@ -984,7 +992,30 @@ async function checkBookCoverage() {
     return;
   }
 
-  // Show loading
+  // ── PDF MODE: skip diagnostic, go straight to Step 2 ──
+  if (sourceMode === 'pdf') {
+    const fileInput = document.getElementById('input-pdf-file');
+    if (!fileInput.files.length) {
+      showToast('Please select a PDF or TXT file first.', 'error');
+      return;
+    }
+    const file = fileInput.files[0];
+    if (file.size > 50 * 1024 * 1024) {
+      showToast('File is too large. Please use a PDF under 50 MB.', 'error');
+      return;
+    }
+    document.getElementById('add-book-step-1').style.display = 'none';
+    document.getElementById('add-book-step-2').style.display = 'block';
+    document.getElementById('diagnostic-result').innerHTML = `
+      <strong style="color:#a78bfa">📄 PDF Ready: "${file.name}"</strong><br><br>
+      The AI will read your uploaded book directly — no prior knowledge used.
+      It will extract every chapter in the exact order it appears in the PDF.
+    `;
+    document.getElementById('btn-generate-book').dataset.level = 'ref';
+    return;
+  }
+
+  // ── KNOWLEDGE MODE: run diagnostic as before ──
   document.getElementById('btn-check-book').disabled = true;
   document.getElementById('btn-check-book').textContent = 'Checking...';
 
@@ -1003,10 +1034,11 @@ async function checkBookCoverage() {
 }
 
 async function generateCurriculum() {
-  const title = document.getElementById('input-book-title').value.trim();
-  const author = document.getElementById('input-book-author').value.trim();
+  const title     = document.getElementById('input-book-title').value.trim();
+  const author    = document.getElementById('input-book-author').value.trim();
   const reference = document.getElementById('input-book-reference').value.trim();
-  const level = document.getElementById('btn-generate-book').dataset.level || 'ref';
+  const level     = document.getElementById('btn-generate-book').dataset.level || 'ref';
+  const sourceMode = document.querySelector('input[name="book-source"]:checked')?.value || 'knowledge';
 
   document.getElementById('add-book-step-2').style.display = 'none';
   document.getElementById('add-book-step-3').style.display = 'block';
@@ -1028,12 +1060,44 @@ async function generateCurriculum() {
     return;
   }
 
+  let fileUri = null;
+
+  // ── PDF MODE: upload the file first ──
+  if (sourceMode === 'pdf') {
+    const fileInput = document.getElementById('input-pdf-file');
+    const file = fileInput.files[0];
+    if (!file) { showToast('No file selected.', 'error'); return; }
+
+    const progressWrap = document.getElementById('upload-progress-wrap');
+    const progressFill = document.getElementById('upload-progress-fill');
+    const progressPct  = document.getElementById('upload-progress-pct');
+    progressWrap.style.display = 'block';
+
+    logStep('📤 Uploading your PDF to Gemini…');
+    try {
+      fileUri = await uploadPdfToGemini(file, (pct) => {
+        progressFill.style.width = pct + '%';
+        progressPct.textContent  = pct + '%';
+      });
+      progressWrap.style.display = 'none';
+      logStep('✅ PDF uploaded. Gemini is reading your book…');
+    } catch (uploadErr) {
+      // Show error and go back to Step 2
+      progressWrap.style.display = 'none';
+      document.getElementById('add-book-step-3').style.display = 'none';
+      document.getElementById('add-book-step-2').style.display = 'block';
+      document.getElementById('diagnostic-result').innerHTML =
+        `<strong style="color:#f87171">Upload Error:</strong> ${uploadErr.message}`;
+      return;
+    }
+  }
+
   logStep('🔍 Agent 1: Curriculum Designer analyzing book structure...');
   await new Promise(r => setTimeout(r, 400));
   logStep('📋 Mapping chapters to 80/20 core concepts...');
 
   try {
-    const curriculum = await callLiveCurriculumGenerator(title, author, reference);
+    const curriculum = await callLiveCurriculumGenerator(title, author, reference, fileUri);
     logStep('✅ Agent 2: QA Verifier auditing for hallucinations...');
     await new Promise(r => setTimeout(r, 600));
     logStep('🃏 Generating flashcard decks...');

@@ -19,29 +19,36 @@ function getApiKey() {
 
 // ── CORE: GEMINI HTTP REQUEST ─────────────────────────────────────────────────
 // Sends a prompt to the Gemini API and returns either raw text or parsed JSON.
-// "responseJson = true" instructs Gemini to format the reply as JSON data.
-async function queryGemini(prompt, responseJson = false) {
+// fileUri: optional Gemini File API URI to attach (e.g. uploaded PDF)
+async function queryGemini(prompt, responseJson = false, fileUri = null) {
   const apiKey = getApiKey();
   const url = `${GEMINI_API_URL}?key=${apiKey}`;
 
-  // The payload structure required by Google's API.
+  // Build parts array — text always first, file attachment second if provided
+  const parts = [{ text: prompt }];
+  if (fileUri) {
+    parts.push({
+      fileData: {
+        mimeType: 'application/pdf',
+        fileUri: fileUri
+      }
+    });
+  }
+
   const payload = {
-    contents: [{ parts: [{ text: prompt }] }]
+    contents: [{ parts }]
   };
 
-  // Ask for JSON output format when we need structured data.
   if (responseJson) {
     payload.generationConfig = { responseMimeType: 'application/json' };
   }
 
-  // Send the HTTP POST request to Google's servers.
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
 
-  // If the server returned an error, parse and throw it for debugging.
   if (!response.ok) {
     const errData = await response.json();
     console.error('Gemini API Error:', errData);
@@ -93,6 +100,66 @@ async function queryGemini(prompt, responseJson = false) {
   }
 }
 
+// ── GEMINI FILE UPLOAD ────────────────────────────────────────────────────────
+// Uploads a File (PDF or TXT) to Gemini's File API via multipart/related.
+// Returns the fileUri string, which can then be attached to any prompt.
+// onProgress(0..100) is called with upload progress estimates.
+async function uploadPdfToGemini(file, onProgress = () => {}) {
+  const apiKey = getApiKey();
+  const BOUNDARY = '----GeminiUpload' + Date.now();
+  const mimeType = file.type || (file.name.toLowerCase().endsWith('.txt') ? 'text/plain' : 'application/pdf');
+
+  onProgress(5);
+  const fileBuffer = await file.arrayBuffer();
+  const fileBytes  = new Uint8Array(fileBuffer);
+  onProgress(20);
+
+  // Build multipart/related body (required format for Gemini Files API)
+  const enc = new TextEncoder();
+  const metaJson    = JSON.stringify({ file: { display_name: file.name } });
+  const part1       = enc.encode(`--${BOUNDARY}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metaJson}\r\n`);
+  const part2Header = enc.encode(`--${BOUNDARY}\r\nContent-Type: ${mimeType}\r\n\r\n`);
+  const part2Footer = enc.encode(`\r\n--${BOUNDARY}--`);
+
+  const body = new Uint8Array(part1.length + part2Header.length + fileBytes.length + part2Footer.length);
+  let off = 0;
+  body.set(part1,       off); off += part1.length;
+  body.set(part2Header, off); off += part2Header.length;
+  body.set(fileBytes,   off); off += fileBytes.length;
+  body.set(part2Footer, off);
+
+  onProgress(40);
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/related; boundary=${BOUNDARY}`,
+        'X-Goog-Upload-Protocol': 'multipart',
+      },
+      body: body.buffer
+    }
+  );
+
+  onProgress(90);
+
+  if (!response.ok) {
+    const errText = await response.text();
+    let msg = `Upload failed (HTTP ${response.status})`;
+    try { msg = JSON.parse(errText).error?.message || msg; } catch {}
+    throw new Error(msg);
+  }
+
+  const data = await response.json();
+  onProgress(100);
+
+  const fileUri = data.file?.uri;
+  if (!fileUri) throw new Error('Gemini did not return a file URI after upload.');
+  console.log('PDF uploaded to Gemini. URI:', fileUri);
+  return fileUri;
+}
+
 // ── AGENT 1: DIAGNOSTIC LIBRARIAN ────────────────────────────────────────────
 // Checks if Gemini has deep or surface-level knowledge of the requested book.
 // Returns "deep" if Gemini knows the book well, or "ref" if the user must paste text.
@@ -125,7 +192,8 @@ async function callLiveDiagnosticCheck(title, author) {
 // ── AGENT 2 & 3: CURRICULUM DESIGNER + QA VERIFIER ───────────────────────────
 // Two-agent pipeline: Designer creates the curriculum, QA Verifier audits it.
 // Returns a structured JSON syllabus of chapters, summaries, concepts, and flashcards.
-async function callLiveCurriculumGenerator(title, author, userUploadedText = '') {
+// fileUri: if set, Gemini reads the uploaded PDF instead of using prior knowledge.
+async function callLiveCurriculumGenerator(title, author, userUploadedText = '', fileUri = null) {
   let prompt = `
     You are a two-agent team:
     Agent 1 (Curriculum Designer): Creates a structured learning curriculum.
@@ -137,7 +205,16 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '')
     For example, if the book has 48 laws, generate all 48. If it has 12 chapters, generate all 12.
   `;
 
-  if (userUploadedText) {
+  if (fileUri) {
+    prompt += `
+      CRITICAL: The student has uploaded the actual PDF of this book (attached to this request).
+      Read the ENTIRE uploaded document carefully from start to finish.
+      Base the curriculum SOLELY on the actual content found in the uploaded PDF.
+      Do NOT use any prior training knowledge about this book — only use what is in the attached document.
+      Extract all chapters/sections/laws in the exact order they appear in the PDF.
+      Use the exact chapter titles and section names as written in the PDF.
+    `;
+  } else if (userUploadedText) {
     prompt += `
       The student has provided this reference text/highlights:
       ---
@@ -177,7 +254,7 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '')
     }
   `;
 
-  return await queryGemini(prompt, true);
+  return await queryGemini(prompt, true, fileUri);
 }
 
 // ── AGENT 2.5: VISUAL DIRECTOR ────────────────────────────────────────────────
