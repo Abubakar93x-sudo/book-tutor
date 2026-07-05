@@ -528,13 +528,20 @@
             <button id="btn-open-settings-from-modal" class="btn btn-primary btn-sm">Open Settings →</button>
           </div>
 
-          <div class="form-group">
-            <label for="input-book-title">Book Title</label>
-            <input type="text" id="input-book-title" class="form-input" placeholder="e.g. The Behavior Operational Manual">
+          <!-- Title + Author (hidden in PDF mode — auto-extracted from PDF) -->
+          <div id="title-author-group">
+            <div class="form-group">
+              <label for="input-book-title">Book Title</label>
+              <input type="text" id="input-book-title" class="form-input" placeholder="e.g. The Behavior Operational Manual">
+            </div>
+            <div class="form-group mt-3">
+              <label for="input-book-author">Author</label>
+              <input type="text" id="input-book-author" class="form-input" placeholder="e.g. Chase Hughes">
+            </div>
           </div>
-          <div class="form-group mt-3">
-            <label for="input-book-author">Author</label>
-            <input type="text" id="input-book-author" class="form-input" placeholder="e.g. Chase Hughes">
+          <!-- Shown instead of title/author in PDF mode -->
+          <div id="pdf-autodetect-note" class="pdf-autodetect-note" style="display:none;">
+            🧠 Title &amp; author will be auto-detected from your PDF
           </div>
           <!-- Source toggle: AI knowledge vs. Upload PDF -->
           <div class="form-group mt-4">

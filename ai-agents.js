@@ -194,65 +194,102 @@ async function callLiveDiagnosticCheck(title, author) {
 // Returns a structured JSON syllabus of chapters, summaries, concepts, and flashcards.
 // fileUri: if set, Gemini reads the uploaded PDF instead of using prior knowledge.
 async function callLiveCurriculumGenerator(title, author, userUploadedText = '', fileUri = null) {
-  let prompt = `
-    You are a two-agent team:
-    Agent 1 (Curriculum Designer): Creates a structured learning curriculum.
-    Agent 2 (QA Verifier): Audits it for accuracy and removes hallucinations.
-
-    Book: "${title}" by "${author}".
-    Generate a complete chapter-by-chapter curriculum covering ALL major chapters, laws, or sections of this book.
-    Include every chapter/law/section — do not summarize or collapse them.
-    For example, if the book has 48 laws, generate all 48. If it has 12 chapters, generate all 12.
-  `;
+  let prompt;
 
   if (fileUri) {
-    prompt += `
-      CRITICAL: The student has uploaded the actual PDF of this book (attached to this request).
-      Read the ENTIRE uploaded document carefully from start to finish.
-      Base the curriculum SOLELY on the actual content found in the uploaded PDF.
-      Do NOT use any prior training knowledge about this book — only use what is in the attached document.
-      Extract all chapters/sections/laws in the exact order they appear in the PDF.
-      Use the exact chapter titles and section names as written in the PDF.
-    `;
-  } else if (userUploadedText) {
-    prompt += `
-      The student has provided this reference text/highlights:
-      ---
-      ${userUploadedText.substring(0, 15000)}
-      ---
-      Use this text to build accurate summaries.
+    // ── PDF MODE: Gemini reads the actual uploaded document ──
+    prompt = `
+      You are an expert curriculum designer reading an uploaded book PDF.
+
+      STEP 1 — Identify the book:
+      Read the cover page or title page to find the exact book title and author name.
+
+      STEP 2 — Build the curriculum:
+      Read the ENTIRE document from start to finish.
+      Create a complete chapter-by-chapter curriculum covering EVERY chapter, law, section, or part.
+      Do NOT skip, merge, or abbreviate chapters — list every single one.
+      Use the exact chapter titles and section headings as written in the PDF.
+      Base ALL content SOLELY on the uploaded PDF — do NOT use any prior knowledge.
+
+      For each chapter return:
+      - number: chapter number (integer, starting at 1)
+      - title: exact chapter title from the PDF
+      - summary_10s: one powerful sentence summarising the chapter thesis
+      - summary_3m: array of 3-4 key point strings (use **bold** for keywords)
+      - summary_15m: a rich markdown string with ### headers and 3+ detailed paragraphs
+      - concepts: array of 3-4 short concept noun strings
+      - flashcards: array of 2-3 objects with "front" question and "back" answer strings
+
+      Return ONLY valid JSON with NO markdown fences:
+      {
+        "title": "exact book title from the PDF",
+        "author": "author full name from the PDF",
+        "chapters": [
+          {
+            "number": 1,
+            "title": "string",
+            "summary_10s": "string",
+            "summary_3m": ["string"],
+            "summary_15m": "string",
+            "concepts": ["string"],
+            "flashcards": [{"front": "string", "back": "string"}]
+          }
+        ]
+      }
     `;
   } else {
-    prompt += `Use your internal knowledge of this book's chapters and arguments.`;
-  }
+    // ── AI KNOWLEDGE MODE (existing behaviour) ──
+    prompt = `
+      You are a two-agent team:
+      Agent 1 (Curriculum Designer): Creates a structured learning curriculum.
+      Agent 2 (QA Verifier): Audits it for accuracy and removes hallucinations.
 
-  prompt += `
-    For each chapter, generate:
-    - number: Chapter number (integer)
-    - title: Chapter title string
-    - summary_10s: One powerful sentence summarizing the chapter thesis
-    - summary_3m: Array of 3-4 key point strings (use **bold** for keywords)
-    - summary_15m: A rich markdown string with ### headers and 3+ paragraphs of detailed analysis
-    - concepts: Array of 3-4 short concept noun strings (e.g. "Habit Loop", "Behavioral Baseline")
-    - flashcards: Array of 2-3 objects with "front" question and "back" answer strings
+      Book: "${title}" by "${author}".
+      Generate a complete chapter-by-chapter curriculum covering ALL major chapters, laws, or sections.
+      Include every chapter/law/section — do not summarise or collapse them.
+      For example, if the book has 48 laws, generate all 48. If it has 12 chapters, generate all 12.
+    `;
 
-    After designing, the QA Verifier must audit for accuracy and remove any filler.
-    
-    Return ONLY valid JSON, no markdown fences:
-    {
-      "chapters": [
-        {
-          "number": 1,
-          "title": "string",
-          "summary_10s": "string",
-          "summary_3m": ["string"],
-          "summary_15m": "string",
-          "concepts": ["string"],
-          "flashcards": [{"front": "string", "back": "string"}]
-        }
-      ]
+    if (userUploadedText) {
+      prompt += `
+        The student has provided this reference text/highlights:
+        ---
+        ${userUploadedText.substring(0, 15000)}
+        ---
+        Use this text to build accurate summaries.
+      `;
+    } else {
+      prompt += `Use your internal knowledge of this book's chapters and arguments.`;
     }
-  `;
+
+    prompt += `
+      For each chapter, generate:
+      - number: Chapter number (integer)
+      - title: Chapter title string
+      - summary_10s: One powerful sentence summarizing the chapter thesis
+      - summary_3m: Array of 3-4 key point strings (use **bold** for keywords)
+      - summary_15m: A rich markdown string with ### headers and 3+ paragraphs of detailed analysis
+      - concepts: Array of 3-4 short concept noun strings (e.g. "Habit Loop", "Behavioral Baseline")
+      - flashcards: Array of 2-3 objects with "front" question and "back" answer strings
+
+      After designing, the QA Verifier must audit for accuracy and remove any filler.
+
+      Return ONLY valid JSON, no markdown fences:
+      {
+        "chapters": [
+          {
+            "number": 1,
+            "title": "string",
+            "summary_10s": "string",
+            "summary_3m": ["string"],
+            "summary_15m": "string",
+            "concepts": ["string"],
+            "flashcards": [{"front": "string", "back": "string"}]
+          }
+        ]
+      }
+    `;
+  }
 
   return await queryGemini(prompt, true, fileUri);
 }

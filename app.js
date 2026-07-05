@@ -966,12 +966,14 @@ function openAddBookModal() {
   document.getElementById('btn-check-book').style.opacity = isDemo ? '0.4' : '1';
 
   // Reset source toggle + drop zone
-  document.getElementById('source-knowledge').checked = true;
-  document.getElementById('source-knowledge-zone').style.display = 'block';
-  document.getElementById('source-pdf-zone').style.display     = 'none';
-  document.getElementById('input-pdf-file').value              = '';
-  document.getElementById('drop-zone-idle').style.display      = 'flex';
-  document.getElementById('drop-zone-selected').style.display  = 'none';
+  document.getElementById('source-knowledge').checked              = true;
+  document.getElementById('source-knowledge-zone').style.display   = 'block';
+  document.getElementById('source-pdf-zone').style.display         = 'none';
+  document.getElementById('title-author-group').style.display      = 'block';
+  document.getElementById('pdf-autodetect-note').style.display     = 'none';
+  document.getElementById('input-pdf-file').value                  = '';
+  document.getElementById('drop-zone-idle').style.display          = 'flex';
+  document.getElementById('drop-zone-selected').style.display      = 'none';
 }
 
 async function checkBookCoverage() {
@@ -1098,6 +1100,9 @@ async function generateCurriculum() {
 
   try {
     const curriculum = await callLiveCurriculumGenerator(title, author, reference, fileUri);
+    // In PDF mode, use the title/author Gemini extracted from the document
+    const finalTitle  = (sourceMode === 'pdf' && curriculum.title)  ? curriculum.title  : title;
+    const finalAuthor = (sourceMode === 'pdf' && curriculum.author) ? curriculum.author : author;
     logStep('✅ Agent 2: QA Verifier auditing for hallucinations...');
     await new Promise(r => setTimeout(r, 600));
     logStep('🃏 Generating flashcard decks...');
@@ -1106,7 +1111,7 @@ async function generateCurriculum() {
     const bookId = `book-${Date.now()}`;
     const newBook = {
       id: bookId,
-      title, author, level,
+      title: finalTitle, author: finalAuthor, level,
       chapters: curriculum.chapters
     };
 
@@ -1407,6 +1412,60 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btn-check-book').addEventListener('click', checkBookCoverage);
+
+  // ── SOURCE TOGGLE (AI knowledge vs. PDF upload) ──
+  document.querySelectorAll('input[name="book-source"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isPdf = document.getElementById('source-pdf').checked;
+      document.getElementById('source-knowledge-zone').style.display  = isPdf ? 'none'  : 'block';
+      document.getElementById('source-pdf-zone').style.display        = isPdf ? 'block' : 'none';
+      document.getElementById('title-author-group').style.display     = isPdf ? 'none'  : 'block';
+      document.getElementById('pdf-autodetect-note').style.display    = isPdf ? 'block' : 'none';
+    });
+  });
+
+  // ── PDF DROP ZONE ──
+  function showSelectedFile(file) {
+    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+    document.getElementById('pdf-filename').textContent             = file.name;
+    document.getElementById('pdf-filesize').textContent             = sizeMB + ' MB';
+    document.getElementById('drop-zone-idle').style.display         = 'none';
+    document.getElementById('drop-zone-selected').style.display     = 'flex';
+  }
+
+  // Clicking anywhere on the drop zone opens the file picker
+  document.getElementById('pdf-drop-zone').addEventListener('click', (e) => {
+    if (e.target.closest('#btn-remove-pdf')) return;
+    document.getElementById('input-pdf-file').click();
+  });
+
+  document.getElementById('input-pdf-file').addEventListener('change', (e) => {
+    if (e.target.files[0]) showSelectedFile(e.target.files[0]);
+  });
+
+  document.getElementById('btn-remove-pdf').addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.getElementById('input-pdf-file').value             = '';
+    document.getElementById('drop-zone-idle').style.display     = 'flex';
+    document.getElementById('drop-zone-selected').style.display = 'none';
+  });
+
+  const dropZone = document.getElementById('pdf-drop-zone');
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const ok = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.txt');
+    if (!ok) { showToast('Please drop a PDF or TXT file.', 'error'); return; }
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('input-pdf-file').files = dt.files;
+    showSelectedFile(file);
+  });
+
   document.getElementById('btn-back-step-1').addEventListener('click', () => {
     document.getElementById('add-book-step-2').style.display = 'none';
     document.getElementById('add-book-step-1').style.display = 'block';
