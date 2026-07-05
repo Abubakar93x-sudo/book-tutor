@@ -40,7 +40,12 @@ async function queryGemini(prompt, responseJson = false, fileUri = null) {
   };
 
   if (responseJson) {
-    payload.generationConfig = { responseMimeType: 'application/json' };
+    payload.generationConfig = {
+      responseMimeType: 'application/json',
+      // Raise the output limit: 1000-page books produce very large curricula.
+      // Gemini 2.5 Flash supports up to 65536 output tokens.
+      maxOutputTokens: fileUri ? 65536 : 32768
+    };
   }
 
   const response = await fetch(url, {

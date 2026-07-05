@@ -981,7 +981,11 @@ async function checkBookCoverage() {
   const author = document.getElementById('input-book-author').value.trim();
   const sourceMode = document.querySelector('input[name="book-source"]:checked')?.value || 'knowledge';
 
-  if (!title) { showToast('Please enter a book title.', 'error'); return; }
+  // PDF mode auto-extracts title from the document — don't require manual entry
+  if (sourceMode !== 'pdf' && !title) {
+    showToast('Please enter a book title.', 'error');
+    return;
+  }
 
   if (AppState.mode === 'demo') {
     document.getElementById('add-book-step-1').style.display = 'none';
@@ -1096,7 +1100,11 @@ async function generateCurriculum() {
 
   logStep('🔍 Agent 1: Curriculum Designer analyzing book structure...');
   await new Promise(r => setTimeout(r, 400));
-  logStep('📋 Mapping chapters to 80/20 core concepts...');
+  if (fileUri) {
+    logStep('📖 Reading your full document (1000 pages may take 2-4 minutes — please wait)...');
+  } else {
+    logStep('📋 Mapping chapters to 80/20 core concepts...');
+  }
 
   try {
     const curriculum = await callLiveCurriculumGenerator(title, author, reference, fileUri);
