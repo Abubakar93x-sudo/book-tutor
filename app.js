@@ -1071,6 +1071,20 @@ async function generateCurriculum() {
     return;
   }
 
+  // ── API KEY GUARD ──
+  // Check before any upload or generation so the user gets a clear redirect,
+  // not a confusing "Upload Error" deep inside the agent log.
+  const resolvedKey = AppState.settings.apiKey
+    || document.getElementById('input-api-key')?.value?.trim();
+  if (!resolvedKey) {
+    document.getElementById('modal-add-book').style.display = 'none';
+    document.getElementById('modal-settings').style.display = 'flex';
+    showToast('Please add your Gemini API key in Settings first.', 'error');
+    return;
+  }
+  // Ensure AppState is in sync in case loadSettings() was slow
+  AppState.settings.apiKey = resolvedKey;
+
   let fileUri = null;
 
   // ── PDF MODE: upload the file first ──

@@ -9,11 +9,14 @@
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // ── HELPER: GET API KEY ──────────────────────────────────────────────────────
-// Safely retrieves the API key from AppState settings.
-// Throws an error if no key is set, preventing silent failures.
+// Safely retrieves the API key. Checks AppState first, then falls back to the
+// Settings input field so a missing loadSettings() call doesn't silently break things.
 function getApiKey() {
-  const key = AppState.settings.apiKey;
+  const key = AppState.settings.apiKey
+    || document.getElementById('input-api-key')?.value?.trim();
   if (!key) throw new Error('Gemini API Key is missing. Please add it in Settings.');
+  // Keep AppState in sync if it was stale
+  if (key && !AppState.settings.apiKey) AppState.settings.apiKey = key;
   return key;
 }
 
