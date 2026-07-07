@@ -586,13 +586,25 @@
                 <span>or <button type="button" id="btn-browse-pdf" class="link-btn">browse files</button></span>
                 <span class="drop-hint">PDF or TXT &bull; Max 50 MB</span>
               </div>
-              <div id="drop-zone-selected" class="drop-zone-inner" style="display:none;">
-                <span style="font-size:32px">✅</span>
-                <div style="text-align:center">
-                  <strong id="pdf-filename">file.pdf</strong><br>
-                  <span id="pdf-filesize" class="drop-hint"></span>
+              <div id="drop-zone-selected" class="drop-zone-selected-card" style="display:none;">
+                <div class="pdf-card-icon">📄</div>
+                <div class="pdf-card-info">
+                  <strong id="pdf-filename">file.pdf</strong>
+                  <div class="pdf-card-meta">
+                    <span id="pdf-filesize"></span>
+                    <span id="pdf-pagecount" style="display:none;"> &bull; <strong id="pdf-pages-num"></strong> pages</span>
+                  </div>
+                  <div id="pdf-detected-title" class="pdf-detected-row" style="display:none;">
+                    📚 <span id="pdf-det-title"></span>
+                  </div>
+                  <div id="pdf-detected-author" class="pdf-detected-row" style="display:none;">
+                    ✍️ <span id="pdf-det-author"></span>
+                  </div>
+                  <div id="pdf-detecting" class="pdf-detected-row" style="color:var(--text-muted)">
+                    ⏳ Reading metadata…
+                  </div>
                 </div>
-                <button type="button" id="btn-remove-pdf" class="link-btn link-btn-danger">Remove</button>
+                <button type="button" id="btn-remove-pdf" class="link-btn link-btn-danger" style="align-self:flex-start">✕</button>
               </div>
             </div>
           </div>

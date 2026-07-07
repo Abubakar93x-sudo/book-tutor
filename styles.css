@@ -2139,4 +2139,48 @@ body.immersive .immersive-only { display: flex !important; }
   margin-bottom: 4px;
 }
 
+/* ── 37. PDF SELECTED-FILE INFO CARD ── */
+.drop-zone-selected-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+  width: 100%;
+  text-align: left;
+}
 
+.pdf-card-icon {
+  font-size: 32px;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.pdf-card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pdf-card-info strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.pdf-card-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pdf-detected-row {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}

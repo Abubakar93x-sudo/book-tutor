@@ -23,6 +23,10 @@ const AppState = {
   }
 };
 
+// Metadata extracted from a locally-selected PDF (page count, title, author).
+// Set by showSelectedFile(); read by generateCurriculum() for the log message.
+let _pdfMeta = { pageCount: null, title: null, author: null };
+
 // ── NARRATION ENGINE ──────────────────────────────────────────────────────────
 // Uses the browser's built-in Web Speech API to narrate tutor responses
 // in a UK English voice. Falls back gracefully if speech is unsupported.
@@ -974,6 +978,7 @@ function openAddBookModal() {
   document.getElementById('input-pdf-file').value                  = '';
   document.getElementById('drop-zone-idle').style.display          = 'flex';
   document.getElementById('drop-zone-selected').style.display      = 'none';
+  _pdfMeta = { pageCount: null, title: null, author: null };
 }
 
 async function checkBookCoverage() {
@@ -1101,7 +1106,10 @@ async function generateCurriculum() {
   logStep('🔍 Agent 1: Curriculum Designer analyzing book structure...');
   await new Promise(r => setTimeout(r, 400));
   if (fileUri) {
-    logStep('📖 Reading your full document (1000 pages may take 2-4 minutes — please wait)...');
+    const pages   = _pdfMeta?.pageCount;
+    const pageStr = pages ? `${pages.toLocaleString()}-page` : 'large';
+    const timeStr = !pages ? '2-5 minutes' : pages > 800 ? '3-6 minutes' : pages > 400 ? '2-4 minutes' : pages > 100 ? '1-2 minutes' : '30-60 seconds';
+    logStep(`📖 Reading your ${pageStr} document — this may take ${timeStr}, please keep this tab open…`);
   } else {
     logStep('📋 Mapping chapters to 80/20 core concepts...');
   }
@@ -1433,12 +1441,72 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ── PDF DROP ZONE ──
+
+  // (_pdfMeta is declared at module scope — see top of file)
+
+  // Reads just the first 64KB and last 32KB of the PDF binary to extract
+  // page count (/Count), title (/Title) and author (/Author) without a full load.
+  async function extractPdfMetadata(file) {
+    try {
+      const CHUNK = 65536;
+      const size  = file.size;
+      const startBuf = await file.slice(0, Math.min(CHUNK, size)).arrayBuffer();
+      const endBuf   = await file.slice(Math.max(0, size - CHUNK), size).arrayBuffer();
+      const dec  = buf => new TextDecoder('latin1').decode(buf);
+      const text = dec(startBuf) + dec(endBuf);
+
+      // Page count — largest /Count N found in the page tree
+      let pageCount = null;
+      const countMatches = [...text.matchAll(/\/Count\s+(\d+)/g)];
+      if (countMatches.length > 0)
+        pageCount = Math.max(...countMatches.map(m => parseInt(m[1])));
+
+      // Title — /Title (text) pattern
+      let title = null;
+      const tm = text.match(/\/Title\s*\(([^)]+)\)/);
+      if (tm && tm[1].trim()) title = tm[1].trim().replace(/\\(.)/g, '$1');
+
+      // Author — /Author (text) pattern
+      let author = null;
+      const am = text.match(/\/Author\s*\(([^)]+)\)/);
+      if (am && am[1].trim()) author = am[1].trim().replace(/\\(.)/g, '$1');
+
+      return { pageCount, title, author };
+    } catch (e) {
+      console.warn('PDF metadata extraction failed:', e);
+      return { pageCount: null, title: null, author: null };
+    }
+  }
+
   function showSelectedFile(file) {
     const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-    document.getElementById('pdf-filename').textContent             = file.name;
-    document.getElementById('pdf-filesize').textContent             = sizeMB + ' MB';
-    document.getElementById('drop-zone-idle').style.display         = 'none';
-    document.getElementById('drop-zone-selected').style.display     = 'flex';
+    document.getElementById('pdf-filename').textContent         = file.name;
+    document.getElementById('pdf-filesize').textContent        = sizeMB + ' MB';
+    document.getElementById('pdf-pagecount').style.display     = 'none';
+    document.getElementById('pdf-detected-title').style.display  = 'none';
+    document.getElementById('pdf-detected-author').style.display = 'none';
+    document.getElementById('pdf-detecting').style.display      = 'block';
+    document.getElementById('drop-zone-idle').style.display     = 'none';
+    document.getElementById('drop-zone-selected').style.display = 'flex';
+
+    // Extract metadata in background — updates card when ready
+    extractPdfMetadata(file).then(meta => {
+      _pdfMeta = meta;
+      document.getElementById('pdf-detecting').style.display = 'none';
+
+      if (meta.pageCount) {
+        document.getElementById('pdf-pages-num').textContent   = meta.pageCount.toLocaleString();
+        document.getElementById('pdf-pagecount').style.display = 'inline';
+      }
+      if (meta.title) {
+        document.getElementById('pdf-det-title').textContent     = meta.title;
+        document.getElementById('pdf-detected-title').style.display = 'block';
+      }
+      if (meta.author) {
+        document.getElementById('pdf-det-author').textContent     = meta.author;
+        document.getElementById('pdf-detected-author').style.display = 'block';
+      }
+    });
   }
 
   // Clicking anywhere on the drop zone opens the file picker
