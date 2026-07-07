@@ -27,6 +27,10 @@ const AppState = {
 // Set by showSelectedFile(); read by generateCurriculum() for the log message.
 let _pdfMeta = { pageCount: null, title: null, author: null };
 
+// Full text extracted from a large PDF (>1000 pages) via PDF.js client-side.
+// Used instead of the Gemini File API when the page limit would be exceeded.
+let _extractedPdfText = null;
+
 // ── NARRATION ENGINE ──────────────────────────────────────────────────────────
 // Uses the browser's built-in Web Speech API to narrate tutor responses
 // in a UK English voice. Falls back gracefully if speech is unsupported.
@@ -979,6 +983,7 @@ function openAddBookModal() {
   document.getElementById('drop-zone-idle').style.display          = 'flex';
   document.getElementById('drop-zone-selected').style.display      = 'none';
   _pdfMeta = { pageCount: null, title: null, author: null };
+  _extractedPdfText = null;
 }
 
 async function checkBookCoverage() {
@@ -1087,7 +1092,7 @@ async function generateCurriculum() {
 
   let fileUri = null;
 
-  // ── PDF MODE: upload the file first ──
+  // ── PDF MODE ──
   if (sourceMode === 'pdf') {
     const fileInput = document.getElementById('input-pdf-file');
     const file = fileInput.files[0];
@@ -1098,22 +1103,75 @@ async function generateCurriculum() {
     const progressPct  = document.getElementById('upload-progress-pct');
     progressWrap.style.display = 'block';
 
-    logStep('📤 Uploading your PDF to Gemini…');
-    try {
-      fileUri = await uploadPdfToGemini(file, (pct) => {
-        progressFill.style.width = pct + '%';
-        progressPct.textContent  = pct + '%';
-      });
-      progressWrap.style.display = 'none';
-      logStep('✅ PDF uploaded. Gemini is reading your book…');
-    } catch (uploadErr) {
-      // Show error and go back to Step 2
-      progressWrap.style.display = 'none';
-      document.getElementById('add-book-step-3').style.display = 'none';
-      document.getElementById('add-book-step-2').style.display = 'block';
-      document.getElementById('diagnostic-result').innerHTML =
-        `<strong style="color:#f87171">Upload Error:</strong> ${uploadErr.message}`;
-      return;
+    const pageCount = _pdfMeta?.pageCount || 0;
+    const needsTextExtraction = pageCount > 1000; // Gemini File API hard limit
+
+    if (needsTextExtraction) {
+      // ── LARGE PDF: extract text locally with PDF.js (no upload limit) ──
+      logStep(`📖 PDF has ${pageCount.toLocaleString()} pages — extracting text directly in your browser…`);
+      try {
+        // Lazy-load PDF.js from CDN the first time it's needed
+        if (!window.pdfjsLib) {
+          logStep('⚙️ Loading PDF reader (one-time, ~1 MB)…');
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('Could not load PDF reader library. Check your internet connection.'));
+            document.head.appendChild(s);
+          });
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const totalPages = pdfDoc.numPages;
+        let fullText = '';
+
+        for (let p = 1; p <= totalPages; p++) {
+          const page = await pdfDoc.getPage(p);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(i => i.str).join(' ');
+          fullText += pageText + '\n';
+
+          // Update progress every 25 pages
+          if (p % 25 === 0 || p === totalPages) {
+            const pct = Math.round((p / totalPages) * 100);
+            progressFill.style.width = pct + '%';
+            progressPct.textContent  = pct + '%';
+          }
+        }
+
+        _extractedPdfText = fullText;
+        progressWrap.style.display = 'none';
+        logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Building curriculum from full content…`);
+      } catch (extractErr) {
+        progressWrap.style.display = 'none';
+        document.getElementById('add-book-step-3').style.display = 'none';
+        document.getElementById('add-book-step-2').style.display = 'block';
+        document.getElementById('diagnostic-result').innerHTML =
+          `<strong style="color:#f87171">Extraction Error:</strong> ${extractErr.message}`;
+        return;
+      }
+    } else {
+      // ── NORMAL PDF (≤1000 pages): upload to Gemini File API ──
+      logStep('📤 Uploading your PDF to Gemini…');
+      try {
+        fileUri = await uploadPdfToGemini(file, (pct) => {
+          progressFill.style.width = pct + '%';
+          progressPct.textContent  = pct + '%';
+        });
+        progressWrap.style.display = 'none';
+        logStep('✅ PDF uploaded. Gemini is reading your book…');
+      } catch (uploadErr) {
+        progressWrap.style.display = 'none';
+        document.getElementById('add-book-step-3').style.display = 'none';
+        document.getElementById('add-book-step-2').style.display = 'block';
+        document.getElementById('diagnostic-result').innerHTML =
+          `<strong style="color:#f87171">Upload Error:</strong> ${uploadErr.message}`;
+        return;
+      }
     }
   }
 
@@ -1124,12 +1182,19 @@ async function generateCurriculum() {
     const pageStr = pages ? `${pages.toLocaleString()}-page` : 'large';
     const timeStr = !pages ? '2-5 minutes' : pages > 800 ? '3-6 minutes' : pages > 400 ? '2-4 minutes' : pages > 100 ? '1-2 minutes' : '30-60 seconds';
     logStep(`📖 Reading your ${pageStr} document — this may take ${timeStr}, please keep this tab open…`);
+  } else if (_extractedPdfText) {
+    const pages   = _pdfMeta?.pageCount;
+    const pageStr = pages ? `${pages.toLocaleString()}-page` : 'large';
+    const timeStr = !pages ? '3-6 minutes' : pages > 800 ? '4-8 minutes' : '2-4 minutes';
+    logStep(`🤖 Sending ${pageStr} book to Gemini AI — this may take ${timeStr}, please keep this tab open…`);
   } else {
     logStep('📋 Mapping chapters to 80/20 core concepts...');
   }
 
   try {
-    const curriculum = await callLiveCurriculumGenerator(title, author, reference, fileUri);
+    // Large PDF (>1000 pages) uses extracted text; normal PDF uses fileUri; knowledge mode uses reference
+    const textForCurriculum = _extractedPdfText || reference;
+    const curriculum = await callLiveCurriculumGenerator(title, author, textForCurriculum, fileUri, !!_extractedPdfText);
     // In PDF mode, use the title/author Gemini extracted from the document
     const finalTitle  = (sourceMode === 'pdf' && curriculum.title)  ? curriculum.title  : title;
     const finalAuthor = (sourceMode === 'pdf' && curriculum.author) ? curriculum.author : author;
@@ -1147,7 +1212,7 @@ async function generateCurriculum() {
 
     await dbPut('books', newBook);
     document.getElementById('modal-add-book').style.display = 'none';
-    showToast(`"${title}" added to your library!`, 'success');
+    showToast(`"${finalTitle || 'Book'}" added to your library!`, 'success');
     await renderLibrary();
 
   } catch (error) {

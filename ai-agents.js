@@ -200,12 +200,13 @@ async function callLiveDiagnosticCheck(title, author) {
 // ── AGENT 2 & 3: CURRICULUM DESIGNER + QA VERIFIER ───────────────────────────
 // Two-agent pipeline: Designer creates the curriculum, QA Verifier audits it.
 // Returns a structured JSON syllabus of chapters, summaries, concepts, and flashcards.
-// fileUri: if set, Gemini reads the uploaded PDF instead of using prior knowledge.
-async function callLiveCurriculumGenerator(title, author, userUploadedText = '', fileUri = null) {
+// fileUri:        Gemini File API URI (PDFs ≤1000 pages)
+// isFullPdfText:  true when userUploadedText is full extracted text from a large PDF (>1000 pages)
+async function callLiveCurriculumGenerator(title, author, userUploadedText = '', fileUri = null, isFullPdfText = false) {
   let prompt;
 
   if (fileUri) {
-    // ── PDF MODE: Gemini reads the actual uploaded document ──
+    // ── FILE API MODE: Gemini reads the actual uploaded PDF ──
     prompt = `
       You are an expert curriculum designer reading an uploaded book PDF.
 
@@ -232,6 +233,55 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '',
       {
         "title": "exact book title from the PDF",
         "author": "author full name from the PDF",
+        "chapters": [
+          {
+            "number": 1,
+            "title": "string",
+            "summary_10s": "string",
+            "summary_3m": ["string"],
+            "summary_15m": "string",
+            "concepts": ["string"],
+            "flashcards": [{"front": "string", "back": "string"}]
+          }
+        ]
+      }
+    `;
+  } else if (isFullPdfText && userUploadedText) {
+    // ── LARGE PDF TEXT MODE: full book text extracted client-side (>1000 pages) ──
+    // Send the entire extracted text — Gemini 2.5 Flash handles up to 1M tokens.
+    // No character limit applied; we allow up to 800K chars safely within the window.
+    const safeText = userUploadedText.substring(0, 800000);
+    prompt = `
+      You are an expert curriculum designer. The following is the COMPLETE extracted text of a book.
+
+      STEP 1 — Identify the book:
+      Read the opening pages to find the exact book title and author name.
+
+      STEP 2 — Build the curriculum:
+      Read the ENTIRE text below carefully from start to finish.
+      Create a complete chapter-by-chapter curriculum covering EVERY chapter, law, section, or part.
+      Do NOT skip, merge, or abbreviate chapters — list every single one in the order they appear.
+      Use the exact chapter titles and headings as they appear in the text.
+      Base ALL content SOLELY on the text provided — do NOT use any prior knowledge.
+
+      BOOK TEXT:
+      ---
+      ${safeText}
+      ---
+
+      For each chapter return:
+      - number: chapter number (integer, starting at 1)
+      - title: exact chapter title from the text
+      - summary_10s: one powerful sentence summarising the chapter thesis
+      - summary_3m: array of 3-4 key point strings (use **bold** for keywords)
+      - summary_15m: a rich markdown string with ### headers and 3+ detailed paragraphs
+      - concepts: array of 3-4 short concept noun strings
+      - flashcards: array of 2-3 objects with "front" question and "back" answer strings
+
+      Return ONLY valid JSON with NO markdown fences:
+      {
+        "title": "exact book title from the text",
+        "author": "author full name from the text",
         "chapters": [
           {
             "number": 1,
