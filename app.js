@@ -1103,68 +1103,70 @@ async function generateCurriculum() {
     const progressPct  = document.getElementById('upload-progress-pct');
     progressWrap.style.display = 'block';
 
-    const pageCount = _pdfMeta?.pageCount || 0;
-    const needsTextExtraction = pageCount > 1000; // Gemini File API hard limit
-
-    if (needsTextExtraction) {
-      // ── LARGE PDF: extract text locally with PDF.js (no upload limit) ──
-      logStep(`📖 PDF has ${pageCount.toLocaleString()} pages — extracting text directly in your browser…`);
-      try {
-        // Lazy-load PDF.js from CDN the first time it's needed
-        if (!window.pdfjsLib) {
-          logStep('⚙️ Loading PDF reader (one-time, ~1 MB)…');
-          await new Promise((resolve, reject) => {
-            const s = document.createElement('script');
-            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-            s.onload = resolve;
-            s.onerror = () => reject(new Error('Could not load PDF reader library. Check your internet connection.'));
-            document.head.appendChild(s);
-          });
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        }
-
-        const arrayBuffer = await file.arrayBuffer();
-        const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        const totalPages = pdfDoc.numPages;
-        let fullText = '';
-
-        for (let p = 1; p <= totalPages; p++) {
-          const page = await pdfDoc.getPage(p);
-          const content = await page.getTextContent();
-          const pageText = content.items.map(i => i.str).join(' ');
-          fullText += pageText + '\n';
-
-          // Update progress every 25 pages
-          if (p % 25 === 0 || p === totalPages) {
-            const pct = Math.round((p / totalPages) * 100);
-            progressFill.style.width = pct + '%';
-            progressPct.textContent  = pct + '%';
-          }
-        }
-
-        _extractedPdfText = fullText;
-        progressWrap.style.display = 'none';
-        logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Building curriculum from full content…`);
-      } catch (extractErr) {
-        progressWrap.style.display = 'none';
-        document.getElementById('add-book-step-3').style.display = 'none';
-        document.getElementById('add-book-step-2').style.display = 'block';
-        document.getElementById('diagnostic-result').innerHTML =
-          `<strong style="color:#f87171">Extraction Error:</strong> ${extractErr.message}`;
-        return;
+    // Helper: extract full text from PDF using PDF.js (no page limit)
+    async function runPdfTextExtraction(pdfFile) {
+      if (!window.pdfjsLib) {
+        logStep('⚙️ Loading PDF reader…');
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = resolve;
+          s.onerror = () => reject(new Error('Could not load PDF reader. Check your internet connection.'));
+          document.head.appendChild(s);
+        });
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
       }
-    } else {
-      // ── NORMAL PDF (≤1000 pages): upload to Gemini File API ──
-      logStep('📤 Uploading your PDF to Gemini…');
-      try {
-        fileUri = await uploadPdfToGemini(file, (pct) => {
+      const arrayBuffer = await pdfFile.arrayBuffer();
+      const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const totalPages = pdfDoc.numPages;
+      let text = '';
+      for (let p = 1; p <= totalPages; p++) {
+        const page    = await pdfDoc.getPage(p);
+        const content = await page.getTextContent();
+        text += content.items.map(i => i.str).join(' ') + '\n';
+        if (p % 25 === 0 || p === totalPages) {
+          const pct = Math.round((p / totalPages) * 100);
           progressFill.style.width = pct + '%';
           progressPct.textContent  = pct + '%';
-        });
-        progressWrap.style.display = 'none';
-        logStep('✅ PDF uploaded. Gemini is reading your book…');
-      } catch (uploadErr) {
+        }
+      }
+      return { text, totalPages };
+    }
+
+    // ── STEP 1: try Gemini File API (works for PDFs up to 1000 pages) ──
+    logStep('📤 Uploading your PDF to Gemini…');
+    try {
+      fileUri = await uploadPdfToGemini(file, (pct) => {
+        progressFill.style.width = pct + '%';
+        progressPct.textContent  = pct + '%';
+      });
+      progressWrap.style.display = 'none';
+      logStep('✅ PDF uploaded. Gemini is reading your book…');
+    } catch (uploadErr) {
+      const isPageLimitError = uploadErr.message.includes('page limit')
+        || uploadErr.message.includes('1000')
+        || uploadErr.message.includes('pages');
+
+      if (isPageLimitError) {
+        // ── STEP 2: File API refused — fall back to PDF.js text extraction ──
+        const pageCount = _pdfMeta?.pageCount;
+        logStep(`📖 PDF too large for direct upload (${pageCount ? pageCount.toLocaleString() + ' pages' : 'page limit exceeded'}) — extracting text in your browser instead…`);
+        try {
+          const { text, totalPages } = await runPdfTextExtraction(file);
+          _extractedPdfText = text;
+          progressWrap.style.display = 'none';
+          logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Sending full book to Gemini…`);
+        } catch (extractErr) {
+          progressWrap.style.display = 'none';
+          document.getElementById('add-book-step-3').style.display = 'none';
+          document.getElementById('add-book-step-2').style.display = 'block';
+          document.getElementById('diagnostic-result').innerHTML =
+            `<strong style="color:#f87171">Extraction Error:</strong> ${extractErr.message}`;
+          return;
+        }
+      } else {
+        // Some other upload error — show it to the user
         progressWrap.style.display = 'none';
         document.getElementById('add-book-step-3').style.display = 'none';
         document.getElementById('add-book-step-2').style.display = 'block';
