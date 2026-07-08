@@ -227,6 +227,108 @@ async function dbClearStore(storeName) {
   await batch.commit();
 }
 
+// ── CHAPTER CONTENT DB (Firestore) ────────────────────────────────────────────
+// Each PDF book's chapters are stored as individual Firestore documents under
+// users/{uid}/bookChapters/{bookId}_ch_{N}, containing both the raw extracted
+// text (for tutor quoting) and the AI-generated curriculum (generated on demand).
+
+async function dbPutChapter(bookId, chapterData) {
+  const col = userCol('bookChapters');
+  if (!col) return;
+  const key = `${bookId}_ch_${chapterData.chapterNumber}`;
+  await col.doc(key).set({ ...chapterData, bookId, updatedAt: Date.now() }, { merge: true });
+}
+
+async function dbGetChapter(bookId, chapterNumber) {
+  const col = userCol('bookChapters');
+  if (!col) return null;
+  const key = `${bookId}_ch_${chapterNumber}`;
+  const snap = await col.doc(key).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function dbDeleteBookChapters(bookId) {
+  const col = userCol('bookChapters');
+  if (!col) return;
+  const snap = await col.where('bookId', '==', bookId).get();
+  if (snap.empty) return;
+  const batch = firestoreDB.batch();
+  snap.docs.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+}
+
+// Update readyChapters / studiedChapters arrays stored on the book doc.
+async function dbUpdateBookProgress(bookId, type, chapterNumber) {
+  const book = await dbGet('books', bookId);
+  if (!book) return;
+  const field = type === 'ready' ? 'readyChapters' : 'studiedChapters';
+  const current = book[field] || [];
+  if (current.includes(chapterNumber)) return; // already recorded
+  const updated = { ...book, [field]: [...current, chapterNumber] };
+  await dbPut('books', updated);
+  // Keep AppState in sync
+  if (AppState.selectedBook?.id === bookId) {
+    AppState.selectedBook = updated;
+  }
+  return updated;
+}
+
+// ── PDF CHAPTER SPLITTER ──────────────────────────────────────────────────────
+// Detects chapter headings in extracted PDF text and splits the full text into
+// an array of { number, title, text } chapter objects.
+// Supports: "Chapter N", "Law N", "Part N", ALL-CAPS headings, Roman numerals,
+// numbered sections like "1. Title", and common book structures.
+function splitPdfIntoChapters(rawText) {
+  const lines = rawText.split('\n');
+
+  function isHeading(line) {
+    const t = line.trim();
+    if (!t || t.length < 3 || t.length > 120) return false;
+    return (
+      /^(chapter|law|part|section|rule|lesson|principle|habit|step|day|week|element|pillar|key|secret)\s+\d+/i.test(t) ||
+      /^(chapter|law|part|section|rule|lesson|principle|habit|step)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)/i.test(t) ||
+      /^\d{1,2}[.:)]\s+[A-Z]/.test(t) ||
+      /^[IVXLC]{1,6}[.:)]\s+[A-Z]/.test(t) ||
+      // ALL-CAPS heading: 4–80 chars, contains at least 3 capital letters, not pure numbers/symbols
+      (t === t.toUpperCase() && t.length >= 4 && t.length <= 80 && /[A-Z]{3}/.test(t) && !/^\d+$/.test(t) && !/^[^\w]+$/.test(t))
+    );
+  }
+
+  const chapters = [];
+  let currentTitle = null;
+  let currentLines = [];
+
+  for (const line of lines) {
+    if (isHeading(line)) {
+      if (currentTitle !== null) {
+        chapters.push({ title: currentTitle, text: currentLines.join('\n').trim() });
+      }
+      currentTitle = line.trim();
+      currentLines = [];
+    } else {
+      currentLines.push(line);
+    }
+  }
+
+  // Include final chapter
+  if (currentTitle !== null) {
+    chapters.push({ title: currentTitle, text: currentLines.join('\n').trim() });
+  }
+
+  // Fallback: no headings detected — treat whole book as one chapter
+  if (chapters.length === 0) {
+    return [{ number: 1, title: 'Full Book Content', text: rawText.trim() }];
+  }
+
+  // Filter out noise (very short "chapters" that are just page numbers, headers, etc.)
+  const meaningful = chapters.filter(ch => ch.text.length > 200 || chapters.length <= 3);
+
+  // Number them
+  return meaningful.map((ch, i) => ({ number: i + 1, title: ch.title, text: ch.text }));
+}
+
+
+
 // ── FIREBASE AUTH ─────────────────────────────────────────────────────────────
 // Manages the sign-in overlay and user session lifecycle.
 
@@ -451,16 +553,24 @@ async function renderLibrary() {
 
   // Render a card for each book
   books.forEach(book => {
-    const masteredCount = book.chapters.filter(c => c._mastered).length;
-    const totalChapters = book.chapters.length;
+    const totalChapters   = book.chapters.length;
+    const studiedCount    = book.isPdfBook
+      ? (book.studiedChapters?.length || 0)
+      : book.chapters.filter(c => c._mastered).length;
+    const readyCount      = book.isPdfBook
+      ? (book.readyChapters?.length || 0)
+      : studiedCount;
 
     const card = document.createElement('div');
     card.className = 'book-card';
     card.dataset.bookId = book.id;
 
-    const levelBadge = book.level === 'deep'
-      ? `<span class="book-card-badge badge-deep">AI Deep</span>`
-      : `<span class="book-card-badge badge-ref">Reference</span>`;
+    // Badge: PDF Upload vs AI Deep vs Reference
+    const levelBadge = book.isPdfBook
+      ? `<span class="book-card-badge badge-pdf">📄 PDF Upload</span>`
+      : book.level === 'deep'
+        ? `<span class="book-card-badge badge-deep">AI Deep</span>`
+        : `<span class="book-card-badge badge-ref">Reference</span>`;
 
     // Color-themed covers using book ID for variety
     const coverColors = [
@@ -474,6 +584,29 @@ async function renderLibrary() {
     const [c1, c2] = coverColors[colorIndex];
     const emoji = ['📖', '🧠', '⚡', '🎯', '🔑'][colorIndex];
 
+    // Progress bar (PDF books only)
+    let progressSection = '';
+    if (book.isPdfBook && totalChapters > 0) {
+      const pct = Math.round((studiedCount / totalChapters) * 100);
+      const remaining = totalChapters - studiedCount;
+      const etaMins   = remaining * 45;
+      const etaStr    = etaMins >= 60
+        ? `${Math.floor(etaMins / 60)}h ${etaMins % 60}m`
+        : `${etaMins}m`;
+      progressSection = `
+        <div class="book-progress-bar-wrap">
+          <div class="book-progress-track">
+            <div class="book-progress-fill" style="width:${pct}%"></div>
+          </div>
+          <div class="book-progress-meta">
+            <span>${studiedCount} of ${totalChapters} chapters studied</span>
+            <span>⏱ ~${etaStr} to go</span>
+          </div>
+        </div>`;
+    } else if (!book.isPdfBook) {
+      progressSection = `<span class="book-card-progress">${studiedCount}/${totalChapters} chapters</span>`;
+    }
+
     card.innerHTML = `
       <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22);">
         <span style="font-size:40px;">${emoji}</span>
@@ -482,8 +615,9 @@ async function renderLibrary() {
       <div class="book-card-author">by ${book.author}</div>
       <div class="book-card-meta">
         ${levelBadge}
-        <span class="book-card-progress">${masteredCount}/${totalChapters} chapters</span>
+        ${book.isPdfBook ? `<span class="book-card-pages">${(book.totalPages || 0).toLocaleString()} pages</span>` : ''}
       </div>
+      ${progressSection}
     `;
 
     card.addEventListener('click', () => openBook(book.id));
@@ -493,7 +627,10 @@ async function renderLibrary() {
   // Update stats
   const totalCards = books.reduce((sum, b) => sum + b.chapters.reduce((s, c) => s + (c.flashcards?.length || 0), 0), 0);
   document.getElementById('stat-total-books').textContent = books.length;
-  document.getElementById('stat-mastered-chapters').textContent = books.reduce((sum, b) => sum + b.chapters.filter(c => c._mastered).length, 0);
+  document.getElementById('stat-mastered-chapters').textContent = books.reduce((sum, b) => {
+    if (b.isPdfBook) return sum + (b.studiedChapters?.length || 0);
+    return sum + b.chapters.filter(c => c._mastered).length;
+  }, 0);
   document.getElementById('stat-cards-due').textContent = totalCards;
 }
 
@@ -526,11 +663,20 @@ function populateChapterSelect(book) {
   select.innerHTML = '<option value="">-- Choose a Chapter --</option>';
   select.disabled = false;
 
+  const readySet   = new Set(book.readyChapters   || []);
+  const studiedSet = new Set(book.studiedChapters  || []);
+
   book.chapters.forEach(ch => {
     const opt = document.createElement('option');
     opt.value = ch.number;
-    const masteredMark = ch._mastered ? ' ✓' : '';
-    opt.textContent = `Ch. ${ch.number}: ${ch.title}${masteredMark}`;
+    let badge = '';
+    if (book.isPdfBook) {
+      if (studiedSet.has(ch.number)) badge = ' ✓';
+      else if (readySet.has(ch.number)) badge = ' ✨';
+    } else {
+      if (ch._mastered) badge = ' ✓';
+    }
+    opt.textContent = `Ch. ${ch.number}: ${ch.title}${badge}`;
     select.appendChild(opt);
   });
 }
@@ -540,50 +686,120 @@ async function loadChapter(chapterNumber) {
   const book = AppState.selectedBook;
   if (!book) return;
 
-  const chapter = book.chapters.find(c => c.number === parseInt(chapterNumber));
-  if (!chapter) return;
+  const chapterNum = parseInt(chapterNumber);
+  const chapterSkeleton = book.chapters.find(c => c.number === chapterNum);
+  if (!chapterSkeleton) return;
 
-  AppState.selectedChapter = chapter;
+  // ── PDF BOOK: on-demand curriculum generation ─────────────────────────────
+  if (book.isPdfBook) {
+    let chapterData = await dbGetChapter(book.id, chapterNum);
+
+    // Check if curriculum has already been generated
+    if (!chapterData?.summary_10s) {
+      // Show generating overlay
+      const overlay = document.getElementById('chapter-generating-overlay');
+      const overlayTitle = document.getElementById('chapter-gen-title');
+      const overlayStatus = document.getElementById('chapter-gen-status');
+      if (overlay) {
+        overlayTitle.textContent = chapterSkeleton.title;
+        overlayStatus.textContent = 'Analysing chapter with Gemini AI…';
+        overlay.style.display = 'flex';
+      }
+
+      try {
+        const chapterText = chapterData?.text || '';
+        if (!chapterText) {
+          throw new Error('Chapter text not found. The book may need to be re-uploaded.');
+        }
+        overlayStatus && (overlayStatus.textContent = 'Applying 80/20 principle…');
+        const curriculum = await callChapterCurriculumGenerator(
+          chapterSkeleton.title,
+          book.title,
+          book.author,
+          chapterText
+        );
+
+        // Save curriculum back to Firestore (merge so we keep the text)
+        await dbPutChapter(book.id, {
+          chapterNumber: chapterNum,
+          title: chapterSkeleton.title,
+          ...curriculum
+        });
+
+        // Mark chapter as ready in book doc
+        await dbUpdateBookProgress(book.id, 'ready', chapterNum);
+        populateChapterSelect(AppState.selectedBook); // refresh badges
+
+        // Reload from Firestore to get merged data (text + curriculum)
+        chapterData = await dbGetChapter(book.id, chapterNum);
+      } catch (err) {
+        if (overlay) overlay.style.display = 'none';
+        showToast('Could not generate chapter: ' + err.message, 'error', 8000);
+        return;
+      }
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    // Build the chapter object the rest of the function expects
+    const chapter = {
+      ...chapterSkeleton,
+      ...chapterData,
+      _chapterText: chapterData?.text || '' // for tutor quoting
+    };
+    AppState.selectedChapter = chapter;
+    AppState.masteredConcepts = chapter._masteredConcepts || [];
+    AppState.currentChatMode  = 'teach';
+
+    const chapterKey = `${book.id}-ch${chapterNum}`;
+    await loadChatHistoryFromDB(chapterKey);
+    renderChapterUI(chapter);
+    return;
+  }
+
+  // ── KNOWLEDGE BOOK: existing flow ────────────────────────────────────────
+  const chapter = chapterSkeleton;
+  AppState.selectedChapter  = chapter;
   AppState.masteredConcepts = chapter._masteredConcepts || [];
-  AppState.currentChatMode = 'teach';
+  AppState.currentChatMode  = 'teach';
 
-  // Load chat history from DB
   const chapterKey = `${book.id}-ch${chapter.number}`;
   await loadChatHistoryFromDB(chapterKey);
+  renderChapterUI(chapter);
+}
 
-  // Update study panel summaries
-  document.getElementById('summary-text-10s').textContent = chapter.summary_10s;
-  document.getElementById('summary-text-3m').innerHTML = chapter.summary_3m
+// ── 10b. RENDER CHAPTER UI ───────────────────────────────────────────────────
+// Shared renderer — called by both PDF on-demand path and knowledge-book path.
+function renderChapterUI(chapter) {
+  const book = AppState.selectedBook;
+
+  document.getElementById('summary-text-10s').textContent = chapter.summary_10s || '';
+  document.getElementById('summary-text-3m').innerHTML = (chapter.summary_3m || [])
     .map(p => `<p style="margin-bottom:10px;">${p.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>`)
     .join('');
-  document.getElementById('summary-text-15m').innerHTML = renderMarkdown(chapter.summary_15m);
+  document.getElementById('summary-text-15m').innerHTML = renderMarkdown(chapter.summary_15m || '');
 
-  // Build concept map nodes
   renderConceptMap(chapter);
 
-  // Show chat tabs and enable input
   document.getElementById('chat-tabs-container').style.display = 'flex';
   document.getElementById('chat-input').disabled = false;
   document.getElementById('btn-chat-send').disabled = false;
   document.getElementById('chat-mode-label').textContent = `Ch. ${chapter.number}: ${chapter.title}`;
 
-  // Update status pill
   document.getElementById('tutor-status-dot').className = 'status-dot green';
   document.getElementById('tutor-status-text').textContent = 'Session Active';
 
-  // Switch to teach tab
   switchChatTab('teach');
 
-  // If this is a fresh chapter with no history, send the opening greeting.
   const teachHistory = AppState.activeChatHistory.filter(m => m.mode === 'teach');
   if (teachHistory.length === 0) {
     const greeting = `Welcome! You're about to study **Chapter ${chapter.number}: ${chapter.title}** from *${book.title}*.\n\nAre you ready to begin? Just say "yes" when you're ready and I'll start teaching!`;
     appendChatMessage('tutor', greeting, 'teach');
   }
 
-  // Also populate sandbox book selectors
   populateSandboxSelectors();
 }
+
+
 
 // ── 11. RENDER MARKDOWN (simple parser) ───────────────────────────────────────
 // Converts a basic subset of Markdown to HTML for rendering in the UI.
@@ -759,7 +975,7 @@ async function sendChatMessage() {
       const visualContext = `${activeConcept}. ${chapter.summary_15m.substring(0, 500)}`;
 
       const [tutorReply, visualData] = await Promise.all([
-        callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts),
+        callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts, chapter._chapterText || ''),
         AppState.currentChatMode === 'teach'
           ? callVisualDirectorAgent(visualContext, book.title, chapter.title)
           : Promise.resolve(null)
@@ -1092,114 +1308,136 @@ async function generateCurriculum() {
 
   let fileUri = null;
 
-  // ── PDF MODE ──
+  // ── PDF MODE: chapter-by-chapter approach ─────────────────────────────────
+  // Instead of generating the entire curriculum at once (which hits Gemini's
+  // output token limit for large books), we:
+  // 1. Extract all text from the PDF via PDF.js (no page limit)
+  // 2. Split into chapters by heading detection
+  // 3. Store skeleton book + each chapter's raw text in Firestore
+  // 4. Let curriculum be generated per-chapter on demand when opened
   if (sourceMode === 'pdf') {
     const fileInput = document.getElementById('input-pdf-file');
-    const file = fileInput.files[0];
-    if (!file) { showToast('No file selected.', 'error'); return; }
+    const pdfFile   = fileInput.files[0];
+    if (!pdfFile) { showToast('No file selected.', 'error'); return; }
 
     const progressWrap = document.getElementById('upload-progress-wrap');
     const progressFill = document.getElementById('upload-progress-fill');
     const progressPct  = document.getElementById('upload-progress-pct');
     progressWrap.style.display = 'block';
 
-    // Helper: extract full text from PDF using PDF.js (no page limit)
-    async function runPdfTextExtraction(pdfFile) {
+    try {
+      // Load PDF.js if needed
       if (!window.pdfjsLib) {
         logStep('⚙️ Loading PDF reader…');
-        await new Promise((resolve, reject) => {
+        await new Promise((res, rej) => {
           const s = document.createElement('script');
           s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-          s.onload = resolve;
-          s.onerror = () => reject(new Error('Could not load PDF reader. Check your internet connection.'));
+          s.onload = res;
+          s.onerror = () => rej(new Error('Could not load PDF reader. Check your internet connection.'));
           document.head.appendChild(s);
         });
         window.pdfjsLib.GlobalWorkerOptions.workerSrc =
           'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
       }
+
+      // ── STEP 1: Extract all text ──
       const arrayBuffer = await pdfFile.arrayBuffer();
-      const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const totalPages = pdfDoc.numPages;
-      let text = '';
+      const pdfDoc      = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const totalPages  = pdfDoc.numPages;
+      logStep(`📖 Reading ${totalPages.toLocaleString()} pages from your PDF…`);
+
+      let fullText = '';
       for (let p = 1; p <= totalPages; p++) {
         const page    = await pdfDoc.getPage(p);
         const content = await page.getTextContent();
-        text += content.items.map(i => i.str).join(' ') + '\n';
-        if (p % 25 === 0 || p === totalPages) {
-          const pct = Math.round((p / totalPages) * 100);
+        fullText += content.items.map(i => i.str).join(' ') + '\n';
+        if (p % 40 === 0 || p === totalPages) {
+          const pct = Math.round((p / totalPages) * 70); // 70% for extraction
           progressFill.style.width = pct + '%';
-          progressPct.textContent  = pct + '%';
+          progressPct.textContent  = `Reading… ${pct}%`;
         }
       }
-      return { text, totalPages };
-    }
 
-    // ── STEP 1: try Gemini File API (works for PDFs up to 1000 pages) ──
-    logStep('📤 Uploading your PDF to Gemini…');
-    try {
-      fileUri = await uploadPdfToGemini(file, (pct) => {
+      // ── STEP 2: Split into chapters ──
+      logStep('📚 Identifying chapter structure…');
+      const chapters = splitPdfIntoChapters(fullText);
+      logStep(`✅ Found ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}. Identifying title & author…`);
+
+      // ── STEP 3: Auto-detect title & author from first pages ──
+      progressFill.style.width = '75%';
+      progressPct.textContent  = 'Detecting title & author…';
+      const bookInfo = await callBookIdentifier(fullText.substring(0, 5000));
+      const finalTitle  = bookInfo.title  || _pdfMeta?.title  || pdfFile.name.replace(/\.pdf$/i, '');
+      const finalAuthor = bookInfo.author || _pdfMeta?.author || 'Unknown Author';
+
+      // ── STEP 4: Store skeleton book in Firestore ──
+      progressFill.style.width = '80%';
+      progressPct.textContent  = 'Saving to your library…';
+      const bookId = `book-${Date.now()}`;
+      const newBook = {
+        id: bookId,
+        title:         finalTitle,
+        author:        finalAuthor,
+        level:         'ref',
+        isPdfBook:     true,
+        totalPages,
+        totalChapters: chapters.length,
+        chapters:      chapters.map(ch => ({ number: ch.number, title: ch.title })),
+        readyChapters:   [],
+        studiedChapters: [],
+        createdAt: Date.now()
+      };
+      await dbPut('books', newBook);
+
+      // ── STEP 5: Store each chapter's text in Firestore ──
+      logStep(`💾 Saving ${chapters.length} chapters to your library…`);
+      for (let i = 0; i < chapters.length; i++) {
+        const ch = chapters[i];
+        const pct = 80 + Math.round(((i + 1) / chapters.length) * 18);
         progressFill.style.width = pct + '%';
-        progressPct.textContent  = pct + '%';
-      });
-      progressWrap.style.display = 'none';
-      logStep('✅ PDF uploaded. Gemini is reading your book…');
-    } catch (uploadErr) {
-      const isPageLimitError = uploadErr.message.includes('page limit')
-        || uploadErr.message.includes('1000')
-        || uploadErr.message.includes('pages');
-
-      if (isPageLimitError) {
-        // ── STEP 2: File API refused — fall back to PDF.js text extraction ──
-        const pageCount = _pdfMeta?.pageCount;
-        logStep(`📖 PDF too large for direct upload (${pageCount ? pageCount.toLocaleString() + ' pages' : 'page limit exceeded'}) — extracting text in your browser instead…`);
-        try {
-          const { text, totalPages } = await runPdfTextExtraction(file);
-          _extractedPdfText = text;
-          progressWrap.style.display = 'none';
-          logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Sending full book to Gemini…`);
-        } catch (extractErr) {
-          progressWrap.style.display = 'none';
-          document.getElementById('add-book-step-3').style.display = 'none';
-          document.getElementById('add-book-step-2').style.display = 'block';
-          document.getElementById('diagnostic-result').innerHTML =
-            `<strong style="color:#f87171">Extraction Error:</strong> ${extractErr.message}`;
-          return;
-        }
-      } else {
-        // Some other upload error — show it to the user
-        progressWrap.style.display = 'none';
-        document.getElementById('add-book-step-3').style.display = 'none';
-        document.getElementById('add-book-step-2').style.display = 'block';
-        document.getElementById('diagnostic-result').innerHTML =
-          `<strong style="color:#f87171">Upload Error:</strong> ${uploadErr.message}`;
-        return;
+        progressPct.textContent  = `Saving ch. ${i + 1} / ${chapters.length}`;
+        await dbPutChapter(bookId, {
+          chapterNumber: ch.number,
+          title:         ch.title,
+          text:          ch.text.substring(0, 200000), // Firestore 1 MB doc limit safety
+          // AI curriculum fields — generated on demand when chapter is opened:
+          summary_10s: null,
+          summary_3m:  null,
+          summary_15m: null,
+          concepts:    null,
+          flashcards:  null,
+          studiedAt:   null
+        });
       }
+
+      progressFill.style.width = '100%';
+      progressPct.textContent  = '100%';
+      progressWrap.style.display = 'none';
+      document.getElementById('modal-add-book').style.display = 'none';
+      showToast(`"${finalTitle}" added! Open any chapter to start studying.`, 'success');
+      await renderLibrary();
+
+    } catch (pdfErr) {
+      progressWrap.style.display = 'none';
+      document.getElementById('add-book-step-3').style.display = 'none';
+      document.getElementById('add-book-step-2').style.display = 'block';
+      document.getElementById('diagnostic-result').innerHTML =
+        `<strong style="color:#f87171;">PDF Error:</strong> ${pdfErr.message}`;
+      showToast(`Error: ${pdfErr.message}`, 'error', 10000);
+      console.error('PDF processing error:', pdfErr);
     }
+    return; // PDF mode is complete — do NOT fall through to knowledge-mode curriculum generation
   }
 
+  // ── KNOWLEDGE MODE: generate full curriculum from AI knowledge ─────────────
   logStep('🔍 Agent 1: Curriculum Designer analyzing book structure...');
   await new Promise(r => setTimeout(r, 400));
-  if (fileUri) {
-    const pages   = _pdfMeta?.pageCount;
-    const pageStr = pages ? `${pages.toLocaleString()}-page` : 'large';
-    const timeStr = !pages ? '2-5 minutes' : pages > 800 ? '3-6 minutes' : pages > 400 ? '2-4 minutes' : pages > 100 ? '1-2 minutes' : '30-60 seconds';
-    logStep(`📖 Reading your ${pageStr} document — this may take ${timeStr}, please keep this tab open…`);
-  } else if (_extractedPdfText) {
-    const pages   = _pdfMeta?.pageCount;
-    const pageStr = pages ? `${pages.toLocaleString()}-page` : 'large';
-    const timeStr = !pages ? '3-6 minutes' : pages > 800 ? '4-8 minutes' : '2-4 minutes';
-    logStep(`🤖 Sending ${pageStr} book to Gemini AI — this may take ${timeStr}, please keep this tab open…`);
-  } else {
-    logStep('📋 Mapping chapters to 80/20 core concepts...');
-  }
+  logStep('📋 Mapping chapters to 80/20 core concepts...');
 
   try {
-    // Large PDF (>1000 pages) uses extracted text; normal PDF uses fileUri; knowledge mode uses reference
-    const textForCurriculum = _extractedPdfText || reference;
-    const curriculum = await callLiveCurriculumGenerator(title, author, textForCurriculum, fileUri, !!_extractedPdfText);
-    // In PDF mode, use the title/author Gemini extracted from the document
-    const finalTitle  = (sourceMode === 'pdf' && curriculum.title)  ? curriculum.title  : title;
-    const finalAuthor = (sourceMode === 'pdf' && curriculum.author) ? curriculum.author : author;
+    const curriculum = await callLiveCurriculumGenerator(title, author, reference, null, false);
+    const finalTitle  = curriculum.title  || title;
+    const finalAuthor = curriculum.author || author;
     logStep('✅ Agent 2: QA Verifier auditing for hallucinations...');
     await new Promise(r => setTimeout(r, 600));
     logStep('🃏 Generating flashcard decks...');
@@ -1218,126 +1456,17 @@ async function generateCurriculum() {
     await renderLibrary();
 
   } catch (error) {
-    // ── AUTO-RETRY: Gemini rejected the PDF due to page count limit ──
-    // The upload succeeded but GenerateContent refused it. Fall back to text extraction.
-    const isPageLimit = fileUri && !_extractedPdfText && (
-      error.message.includes('page limit') ||
-      error.message.includes('exceeds') ||
-      error.message.includes('1000') ||
-      error.message.toLowerCase().includes('pages')
-    );
-
-    if (isPageLimit) {
-      logStep('⚠️ Gemini cannot read this PDF directly — switching to text extraction…');
-      try {
-        // Load PDF.js if needed
-        if (!window.pdfjsLib) {
-          logStep('⚙️ Loading PDF reader…');
-          await new Promise((res, rej) => {
-            const s = document.createElement('script');
-            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-            s.onload = res;
-            s.onerror = () => rej(new Error('Could not load PDF reader. Check your internet connection.'));
-            document.head.appendChild(s);
-          });
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        }
-
-        const fileInput = document.getElementById('input-pdf-file');
-        const pdfFile   = fileInput.files[0];
-        const arrayBuffer = await pdfFile.arrayBuffer();
-        const pdfDoc    = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        const totalPages = pdfDoc.numPages;
-
-        logStep(`📖 Extracting text from ${totalPages.toLocaleString()} pages… (this may take a few minutes)`);
-        let fullText = '';
-        for (let p = 1; p <= totalPages; p++) {
-          const page    = await pdfDoc.getPage(p);
-          const content = await page.getTextContent();
-          fullText += content.items.map(i => i.str).join(' ') + '\n';
-        }
-        _extractedPdfText = fullText;
-
-        // ── Smart structure extraction ──
-        // Sending raw book text triggers Gemini's copyright/recitation protection
-        // and causes truncated JSON. Instead we extract chapter headings + brief
-        // excerpts (~30-60 KB) so Gemini gets the real structure, not verbatim text.
-        logStep('\uD83D\uDDC2\uFE0F Extracting chapter structure from your book\u2026');
-
-        function extractBookStructure(rawText) {
-          const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
-          const isHeading = (line) => {
-            if (line.length < 3 || line.length > 120) return false;
-            return (
-              /^(chapter|law|part|section|rule|lesson|principle|habit|step|day|week|element|pillar|key|secret)\s+\d+/i.test(line) ||
-              /^(chapter|law|part|section|rule|lesson|principle|habit|step)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)/i.test(line) ||
-              /^\d{1,2}[\.:)]\s+[A-Z]/.test(line) ||
-              /^[IVXLC]{1,6}[\.:)]\s+[A-Z]/.test(line) ||
-              // ALL-CAPS line: heading-length, not pure numbers/punctuation
-              (line === line.toUpperCase() && line.length >= 4 && line.length <= 80 && /[A-Z]{3}/.test(line) && !/^\d+$/.test(line) && !/^[^\w]+$/.test(line))
-            );
-          };
-          const chapters = [];
-          let currentHeading = null;
-          let currentBody = [];
-          for (const line of lines) {
-            if (isHeading(line)) {
-              if (currentHeading) {
-                const excerpt = currentBody.filter(l => l.length > 25).slice(0, 5).join(' ').substring(0, 400);
-                chapters.push(currentHeading + '\n' + excerpt);
-              }
-              currentHeading = line;
-              currentBody = [];
-            } else if (currentHeading && currentBody.length < 60) {
-              currentBody.push(line);
-            }
-          }
-          if (currentHeading) {
-            const excerpt = currentBody.filter(l => l.length > 25).slice(0, 5).join(' ').substring(0, 400);
-            chapters.push(currentHeading + '\n' + excerpt);
-          }
-          // If we found at least 3 chapters, return the structure
-          if (chapters.length >= 3) return chapters.join('\n\n---\n\n');
-          // Fallback: first 40 KB (enough context without triggering recitation)
-          return rawText.substring(0, 40000);
-        }
-
-        const bookStructure = extractBookStructure(fullText);
-        logStep('\u2705 Structure ready. Building curriculum from ' + totalPages.toLocaleString() + ' pages\u2026');
-
-        const curriculum2 = await callLiveCurriculumGenerator('', '', bookStructure, null, true);
-        const finalTitle2  = curriculum2.title  || title  || pdfFile.name.replace('.pdf', '');
-        const finalAuthor2 = curriculum2.author || author || 'Unknown Author';
-
-        const newBook2 = {
-          id: `book-${Date.now()}`,
-          title: finalTitle2, author: finalAuthor2, level,
-          chapters: curriculum2.chapters
-        };
-        await dbPut('books', newBook2);
-        document.getElementById('modal-add-book').style.display = 'none';
-        showToast(`"${finalTitle2}" added to your library!`, 'success');
-        await renderLibrary();
-
-      } catch (retryErr) {
-        document.getElementById('add-book-step-3').style.display = 'none';
-        document.getElementById('add-book-step-2').style.display = 'block';
-        document.getElementById('diagnostic-result').innerHTML =
-          `<strong style="color:#f87171;">Extraction Error:</strong> ${retryErr.message}`;
-        showToast(`Error: ${retryErr.message}`, 'error', 10000);
-      }
-    } else {
-      // Some other error — keep modal open so user can see it
-      document.getElementById('add-book-step-3').style.display = 'none';
-      document.getElementById('add-book-step-2').style.display = 'block';
-      document.getElementById('diagnostic-result').innerHTML =
-        `<strong style="color:#f87171;">Error:</strong> ${error.message}`;
-      showToast(`Error: ${error.message}`, 'error', 10000);
-      console.error('generateCurriculum error:', error);
-    }
+    document.getElementById('add-book-step-3').style.display = 'none';
+    document.getElementById('add-book-step-2').style.display = 'block';
+    document.getElementById('diagnostic-result').innerHTML =
+      `<strong style="color:#f87171;">Error:</strong> ${error.message}`;
+    showToast(`Error: ${error.message}`, 'error', 10000);
+    console.error('generateCurriculum error:', error);
   }
 }
+
+
+
 
 // ── 20. FEYNMAN SANDBOX ────────────────────────────────────────────────────────
 function populateSandboxSelectors() {

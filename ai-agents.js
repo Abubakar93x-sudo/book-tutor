@@ -197,6 +197,88 @@ async function callLiveDiagnosticCheck(title, author) {
   }
 }
 
+// ── AGENT 1b: BOOK IDENTIFIER ─────────────────────────────────────────────────
+// Given the first few pages of a PDF (as text), returns the book title and author.
+// Used during PDF upload so users don't have to type them manually.
+async function callBookIdentifier(firstPageText) {
+  const prompt = `
+    Read the following text extracted from the opening pages of a book (cover page, title page, copyright).
+    Identify the exact book title and the author's full name.
+
+    TEXT:
+    ---
+    ${firstPageText.substring(0, 4000)}
+    ---
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "title": "exact book title as written on the cover",
+      "author": "author full name"
+    }
+
+    If you cannot determine one of these, use null for that field.
+  `;
+  try {
+    return await queryGemini(prompt, true);
+  } catch (e) {
+    console.warn('Book identifier failed:', e.message);
+    return { title: null, author: null };
+  }
+}
+
+// ── AGENT: CHAPTER CURRICULUM GENERATOR ──────────────────────────────────────
+// Generates a complete curriculum entry for a SINGLE chapter using its extracted text.
+// This is the core of the chapter-by-chapter approach — no whole-book truncation issues.
+async function callChapterCurriculumGenerator(chapterTitle, bookTitle, bookAuthor, chapterText) {
+  const safeText = chapterText.substring(0, 60000); // ~15k tokens — one chapter comfortably fits
+  const prompt = `
+    You are an expert curriculum designer and educator using the 80/20 learning principle.
+
+    Book: "${bookTitle}" by "${bookAuthor}"
+    Chapter: "${chapterTitle}"
+
+    CHAPTER TEXT (extracted directly from the student's PDF):
+    ---
+    ${safeText}
+    ---
+
+    Using the text above, generate a complete learning entry for this chapter.
+    Apply the 80/20 rule: identify the 20% of ideas that deliver 80% of the value.
+    You may quote directly from the text when it is vivid or memorable.
+
+    Return ONLY valid JSON with NO markdown fences:
+    {
+      "summary_10s": "One powerful sentence capturing the chapter's core thesis",
+      "summary_3m": [
+        "Key point 1 — use **bold** for important keywords",
+        "Key point 2 — use **bold** for important keywords",
+        "Key point 3 — use **bold** for important keywords",
+        "Key point 4 — use **bold** for important keywords"
+      ],
+      "summary_15m": "A rich markdown string with ### headers and 3+ detailed paragraphs. Include direct quotes from the text where powerful.",
+      "concepts": ["Concept One", "Concept Two", "Concept Three"],
+      "flashcards": [
+        { "front": "Question testing deep understanding", "back": "Answer" },
+        { "front": "Another probing question", "back": "Answer" }
+      ]
+    }
+  `;
+  try {
+    const result = await queryGemini(prompt, true);
+    // Ensure all required fields exist
+    return {
+      summary_10s: result.summary_10s || '',
+      summary_3m:  Array.isArray(result.summary_3m)  ? result.summary_3m  : [],
+      summary_15m: result.summary_15m || '',
+      concepts:    Array.isArray(result.concepts)    ? result.concepts    : [],
+      flashcards:  Array.isArray(result.flashcards)  ? result.flashcards  : []
+    };
+  } catch (error) {
+    console.error('Chapter curriculum generation failed:', error);
+    throw error;
+  }
+}
+
 // ── AGENT 2 & 3: CURRICULUM DESIGNER + QA VERIFIER ───────────────────────────
 // Two-agent pipeline: Designer creates the curriculum, QA Verifier audits it.
 // Returns a structured JSON syllabus of chapters, summaries, concepts, and flashcards.
@@ -395,7 +477,8 @@ async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
 // Powers the two-tab tutor system.
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.
 // "quiz" mode:  Comprehensive chapter review and retention testing.
-async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = []) {
+// chapterText: raw PDF text for the chapter (optional) — enables direct quoting.
+async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '') {
   const bookTitle = AppState.selectedBook.title;
   const chapter = AppState.selectedChapter;
 
@@ -411,6 +494,11 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
     const remainingConcepts = chapter.concepts.filter(c => !masteredConcepts.includes(c));
     const activeConcept = remainingConcepts[0];
 
+    // Include up to 8000 chars of the raw chapter text so the tutor can quote
+    const textBlock = chapterText
+      ? `\n      RAW CHAPTER TEXT (quote from this when teaching — use "..." with quotation marks):\n      ---\n      ${chapterText.substring(0, 8000)}\n      ---\n`
+      : '';
+
     prompt = `
       You are an expert AI Tutor. Your job is to teach Chapter ${chapter.number}: "${chapter.title}"
       from "${bookTitle}" page-by-page using the 80/20 rule.
@@ -419,7 +507,7 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
       ---
       ${chapter.summary_15m}
       ---
-
+      ${textBlock}
       TEACHING STATUS:
       - Mastered: ${masteredConcepts.length > 0 ? masteredConcepts.join(', ') : 'None yet'}
       - Remaining: ${remainingConcepts.join(', ') || 'All done!'}
@@ -436,6 +524,7 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
          - Immediately begin teaching "${activeConcept}" in depth:
            * Write 2-3 rich paragraphs explaining the core principle using the 80/20 rule.
            * Include a vivid real-world analogy or example.
+           * If raw chapter text is provided, quote 1-2 powerful lines from it using quotation marks.
            * At the end, ask: "Do you have any questions on this, or are you ready to turn the page?"
 
       2. If the student says they are ready to proceed (e.g. "next", "ready", "no questions", "continue", "got it"):
@@ -445,6 +534,7 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
 
       3. If the student asks a clarifying question:
          - Answer it thoroughly with simple analogies.
+         - If raw chapter text is provided, quote the relevant passage if helpful.
          - Do NOT output any mastery tag.
          - End with: "Does that clear it up? Ready to turn the page?"
 

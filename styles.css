@@ -580,6 +580,58 @@ img { max-width: 100%; }
   color: var(--text-muted);
 }
 
+/* PDF Upload badge */
+.badge-pdf {
+  background: rgba(124,58,237,0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(124,58,237,0.25);
+}
+
+/* Page count label on PDF book cards */
+.book-card-pages {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Progress bar — PDF books */
+.book-progress-bar-wrap {
+  margin-top: 14px;
+}
+
+.book-progress-track {
+  height: 5px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 7px;
+}
+
+.book-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7c3aed, #4f46e5);
+  border-radius: 99px;
+  transition: width 0.6s ease;
+  min-width: 2px;
+}
+
+.book-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Spin keyframe used by chapter generating overlay */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Ensure the tutor view is positioned so the overlay can use position:absolute */
+#view-tutor {
+  position: relative;
+}
+
+
 /* Empty shelf state */
 .empty-shelf {
   grid-column: 1 / -1;
