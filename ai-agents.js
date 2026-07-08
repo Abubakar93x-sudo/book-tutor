@@ -247,32 +247,34 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '',
       }
     `;
   } else if (isFullPdfText && userUploadedText) {
-    // ── LARGE PDF TEXT MODE: full book text extracted client-side (>1000 pages) ──
-    // Send the entire extracted text — Gemini 2.5 Flash handles up to 1M tokens.
-    // No character limit applied; we allow up to 800K chars safely within the window.
-    const safeText = userUploadedText.substring(0, 800000);
+    // ── STRUCTURE EXCERPT MODE: chapter headings + brief excerpts from the PDF ──
+    // We send a compact structure (headings + 400-char excerpts per chapter), NOT
+    // the raw verbatim text, to avoid Gemini's recitation/copyright protection.
+    // Gemini supplements with its knowledge to generate rich summaries.
+    const safeText = userUploadedText.substring(0, 150000); // structure is already compact
     prompt = `
-      You are an expert curriculum designer. The following is the COMPLETE extracted text of a book.
+      You are an expert curriculum designer and book educator.
 
-      STEP 1 — Identify the book:
-      Read the opening pages to find the exact book title and author name.
+      The student has uploaded their copy of a book as a PDF. The chapter structure and brief
+      excerpt from each chapter have been extracted from that PDF and are shown below.
 
-      STEP 2 — Build the curriculum:
-      Read the ENTIRE text below carefully from start to finish.
-      Create a complete chapter-by-chapter curriculum covering EVERY chapter, law, section, or part.
-      Do NOT skip, merge, or abbreviate chapters — list every single one in the order they appear.
-      Use the exact chapter titles and headings as they appear in the text.
-      Base ALL content SOLELY on the text provided — do NOT use any prior knowledge.
+      YOUR TASKS:
+      1. Identify the book title and author from the content shown.
+      2. Build a complete chapter-by-chapter curriculum covering EVERY chapter, law, section, or part
+         shown in the structure. Do NOT skip or merge any chapters.
+      3. Use the exact chapter titles and headings as they appear in the structure below.
+      4. You may supplement each chapter's summary with your broader knowledge of the book,
+         but the chapter LIST must come solely from the structure provided.
 
-      BOOK TEXT:
+      BOOK STRUCTURE (headings + excerpts extracted from the uploaded PDF):
       ---
       ${safeText}
       ---
 
-      For each chapter return:
+      For each chapter generate:
       - number: chapter number (integer, starting at 1)
-      - title: exact chapter title from the text
-      - summary_10s: one powerful sentence summarising the chapter thesis
+      - title: exact chapter title from the structure above
+      - summary_10s: one powerful sentence summarising the chapter's core thesis
       - summary_3m: array of 3-4 key point strings (use **bold** for keywords)
       - summary_15m: a rich markdown string with ### headers and 3+ detailed paragraphs
       - concepts: array of 3-4 short concept noun strings
@@ -280,8 +282,8 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '',
 
       Return ONLY valid JSON with NO markdown fences:
       {
-        "title": "exact book title from the text",
-        "author": "author full name from the text",
+        "title": "book title",
+        "author": "author full name",
         "chapters": [
           {
             "number": 1,

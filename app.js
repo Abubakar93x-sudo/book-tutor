@@ -1258,9 +1258,55 @@ async function generateCurriculum() {
           fullText += content.items.map(i => i.str).join(' ') + '\n';
         }
         _extractedPdfText = fullText;
-        logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Sending to Gemini AI…`);
 
-        const curriculum2 = await callLiveCurriculumGenerator('', '', _extractedPdfText, null, true);
+        // ── Smart structure extraction ──
+        // Sending raw book text triggers Gemini's copyright/recitation protection
+        // and causes truncated JSON. Instead we extract chapter headings + brief
+        // excerpts (~30-60 KB) so Gemini gets the real structure, not verbatim text.
+        logStep('\uD83D\uDDC2\uFE0F Extracting chapter structure from your book\u2026');
+
+        function extractBookStructure(rawText) {
+          const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
+          const isHeading = (line) => {
+            if (line.length < 3 || line.length > 120) return false;
+            return (
+              /^(chapter|law|part|section|rule|lesson|principle|habit|step|day|week|element|pillar|key|secret)\s+\d+/i.test(line) ||
+              /^(chapter|law|part|section|rule|lesson|principle|habit|step)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)/i.test(line) ||
+              /^\d{1,2}[\.:)]\s+[A-Z]/.test(line) ||
+              /^[IVXLC]{1,6}[\.:)]\s+[A-Z]/.test(line) ||
+              // ALL-CAPS line: heading-length, not pure numbers/punctuation
+              (line === line.toUpperCase() && line.length >= 4 && line.length <= 80 && /[A-Z]{3}/.test(line) && !/^\d+$/.test(line) && !/^[^\w]+$/.test(line))
+            );
+          };
+          const chapters = [];
+          let currentHeading = null;
+          let currentBody = [];
+          for (const line of lines) {
+            if (isHeading(line)) {
+              if (currentHeading) {
+                const excerpt = currentBody.filter(l => l.length > 25).slice(0, 5).join(' ').substring(0, 400);
+                chapters.push(currentHeading + '\n' + excerpt);
+              }
+              currentHeading = line;
+              currentBody = [];
+            } else if (currentHeading && currentBody.length < 60) {
+              currentBody.push(line);
+            }
+          }
+          if (currentHeading) {
+            const excerpt = currentBody.filter(l => l.length > 25).slice(0, 5).join(' ').substring(0, 400);
+            chapters.push(currentHeading + '\n' + excerpt);
+          }
+          // If we found at least 3 chapters, return the structure
+          if (chapters.length >= 3) return chapters.join('\n\n---\n\n');
+          // Fallback: first 40 KB (enough context without triggering recitation)
+          return rawText.substring(0, 40000);
+        }
+
+        const bookStructure = extractBookStructure(fullText);
+        logStep('\u2705 Structure ready. Building curriculum from ' + totalPages.toLocaleString() + ' pages\u2026');
+
+        const curriculum2 = await callLiveCurriculumGenerator('', '', bookStructure, null, true);
         const finalTitle2  = curriculum2.title  || title  || pdfFile.name.replace('.pdf', '');
         const finalAuthor2 = curriculum2.author || author || 'Unknown Author';
 
