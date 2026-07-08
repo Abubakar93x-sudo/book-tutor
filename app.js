@@ -1218,13 +1218,78 @@ async function generateCurriculum() {
     await renderLibrary();
 
   } catch (error) {
-    // Keep the modal open and show the error so user can read it
-    document.getElementById('add-book-step-3').style.display = 'none';
-    document.getElementById('add-book-step-2').style.display = 'block';
-    document.getElementById('diagnostic-result').innerHTML =
-      `<strong style="color:#f87171;">Error:</strong> ${error.message}`;
-    showToast(`Error: ${error.message}`, 'error', 10000);
-    console.error('generateCurriculum error:', error);
+    // ── AUTO-RETRY: Gemini rejected the PDF due to page count limit ──
+    // The upload succeeded but GenerateContent refused it. Fall back to text extraction.
+    const isPageLimit = fileUri && !_extractedPdfText && (
+      error.message.includes('page limit') ||
+      error.message.includes('exceeds') ||
+      error.message.includes('1000') ||
+      error.message.toLowerCase().includes('pages')
+    );
+
+    if (isPageLimit) {
+      logStep('⚠️ Gemini cannot read this PDF directly — switching to text extraction…');
+      try {
+        // Load PDF.js if needed
+        if (!window.pdfjsLib) {
+          logStep('⚙️ Loading PDF reader…');
+          await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+            s.onload = res;
+            s.onerror = () => rej(new Error('Could not load PDF reader. Check your internet connection.'));
+            document.head.appendChild(s);
+          });
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        const fileInput = document.getElementById('input-pdf-file');
+        const pdfFile   = fileInput.files[0];
+        const arrayBuffer = await pdfFile.arrayBuffer();
+        const pdfDoc    = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const totalPages = pdfDoc.numPages;
+
+        logStep(`📖 Extracting text from ${totalPages.toLocaleString()} pages… (this may take a few minutes)`);
+        let fullText = '';
+        for (let p = 1; p <= totalPages; p++) {
+          const page    = await pdfDoc.getPage(p);
+          const content = await page.getTextContent();
+          fullText += content.items.map(i => i.str).join(' ') + '\n';
+        }
+        _extractedPdfText = fullText;
+        logStep(`✅ Text extracted (${totalPages.toLocaleString()} pages). Sending to Gemini AI…`);
+
+        const curriculum2 = await callLiveCurriculumGenerator('', '', _extractedPdfText, null, true);
+        const finalTitle2  = curriculum2.title  || title  || pdfFile.name.replace('.pdf', '');
+        const finalAuthor2 = curriculum2.author || author || 'Unknown Author';
+
+        const newBook2 = {
+          id: `book-${Date.now()}`,
+          title: finalTitle2, author: finalAuthor2, level,
+          chapters: curriculum2.chapters
+        };
+        await dbPut('books', newBook2);
+        document.getElementById('modal-add-book').style.display = 'none';
+        showToast(`"${finalTitle2}" added to your library!`, 'success');
+        await renderLibrary();
+
+      } catch (retryErr) {
+        document.getElementById('add-book-step-3').style.display = 'none';
+        document.getElementById('add-book-step-2').style.display = 'block';
+        document.getElementById('diagnostic-result').innerHTML =
+          `<strong style="color:#f87171;">Extraction Error:</strong> ${retryErr.message}`;
+        showToast(`Error: ${retryErr.message}`, 'error', 10000);
+      }
+    } else {
+      // Some other error — keep modal open so user can see it
+      document.getElementById('add-book-step-3').style.display = 'none';
+      document.getElementById('add-book-step-2').style.display = 'block';
+      document.getElementById('diagnostic-result').innerHTML =
+        `<strong style="color:#f87171;">Error:</strong> ${error.message}`;
+      showToast(`Error: ${error.message}`, 'error', 10000);
+      console.error('generateCurriculum error:', error);
+    }
   }
 }
 
