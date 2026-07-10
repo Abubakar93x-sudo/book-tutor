@@ -565,13 +565,6 @@ async function renderLibrary() {
     card.className = 'book-card';
     card.dataset.bookId = book.id;
 
-    // Badge: PDF Upload vs AI Deep vs Reference
-    const levelBadge = book.isPdfBook
-      ? `<span class="book-card-badge badge-pdf">📄 PDF Upload</span>`
-      : book.level === 'deep'
-        ? `<span class="book-card-badge badge-deep">AI Deep</span>`
-        : `<span class="book-card-badge badge-ref">Reference</span>`;
-
     // Color-themed covers using book ID for variety
     const coverColors = [
       ['#7c3aed', '#4f46e5'],
@@ -582,42 +575,38 @@ async function renderLibrary() {
     ];
     const colorIndex = book.id.charCodeAt(4) % coverColors.length;
     const [c1, c2] = coverColors[colorIndex];
-    const emoji = ['📖', '🧠', '⚡', '🎯', '🔑'][colorIndex];
 
-    // Progress bar (PDF books only)
-    let progressSection = '';
-    if (book.isPdfBook && totalChapters > 0) {
-      const pct = Math.round((studiedCount / totalChapters) * 100);
-      const remaining = totalChapters - studiedCount;
-      const etaMins   = remaining * 45;
-      const etaStr    = etaMins >= 60
-        ? `${Math.floor(etaMins / 60)}h ${etaMins % 60}m`
-        : `${etaMins}m`;
-      progressSection = `
-        <div class="book-progress-bar-wrap">
-          <div class="book-progress-track">
-            <div class="book-progress-fill" style="width:${pct}%"></div>
-          </div>
-          <div class="book-progress-meta">
-            <span>${studiedCount} of ${totalChapters} chapters studied</span>
-            <span>⏱ ~${etaStr} to go</span>
-          </div>
-        </div>`;
-    } else if (!book.isPdfBook) {
-      progressSection = `<span class="book-card-progress">${studiedCount}/${totalChapters} chapters</span>`;
-    }
+    const pct = totalChapters > 0 ? Math.round((studiedCount / totalChapters) * 100) : 0;
+    
+    // Create tags array
+    const tags = [];
+    if (pct === 100) tags.push('#Completed');
+    else if (pct > 0) tags.push('#Read');
+    else tags.push('#New');
+    
+    if (book.isPdfBook) tags.push('#PDF');
+    if (book.level === 'deep') tags.push('#DeepStudy');
+    
+    const tagsHtml = tags.map(t => `<span class="book-tag">${t}</span>`).join('');
 
     card.innerHTML = `
-      <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22);">
-        <span style="font-size:40px;">${emoji}</span>
+      <div class="book-card-cover">
+        <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px;">
+          <!-- Placeholder for actual cover image -->
+        </div>
       </div>
       <div class="book-card-title">${book.title}</div>
-      <div class="book-card-author">by ${book.author}</div>
-      <div class="book-card-meta">
-        ${levelBadge}
-        ${book.isPdfBook ? `<span class="book-card-pages">${(book.totalPages || 0).toLocaleString()} pages</span>` : ''}
+      <div class="book-card-author">${book.author}</div>
+      <div class="book-card-progress-wrapper">
+        <div class="book-card-progress-track">
+          <div class="book-card-progress-fill" style="width:${pct}%"></div>
+        </div>
+        <span class="book-card-progress-text">${pct}%</span>
       </div>
-      ${progressSection}
+      <div class="book-card-tags">
+        ${tagsHtml}
+      </div>
+
     `;
 
     card.addEventListener('click', () => openBook(book.id));
