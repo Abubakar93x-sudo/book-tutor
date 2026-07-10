@@ -163,7 +163,9 @@ img { max-width: 100%; }
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
-  background: #f7f6f0;
+  background: 
+    repeating-linear-gradient(90deg, rgba(139,115,85,0.03) 0px, rgba(139,115,85,0.03) 1px, transparent 1px, transparent 40px),
+    linear-gradient(180deg, #f4f0e5 0%, #ebe7d9 100%);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
