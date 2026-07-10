@@ -164,10 +164,10 @@ img { max-width: 100%; }
   width: var(--sidebar-w);
   flex-shrink: 0;
   background-image: 
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='200' viewBox='0 0 120 200'%3E%3Cpath d='M10,-10 C20,30 5,70 15,110 C25,150 10,190 20,230' stroke='rgba(139,115,85,0.12)' stroke-width='1.2' fill='none'/%3E%3Cpath d='M40,-10 C55,40 35,90 50,140 C65,190 45,210 55,230' stroke='rgba(139,115,85,0.08)' stroke-width='1' fill='none'/%3E%3Cpath d='M70,-10 C60,30 80,80 65,120 C50,160 75,200 70,230' stroke='rgba(139,115,85,0.12)' stroke-width='1.5' fill='none'/%3E%3Cpath d='M100,-10 C110,40 95,90 105,140 C115,190 100,210 110,230' stroke='rgba(139,115,85,0.08)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,60 C78,65 78,75 72,80 C66,75 66,65 72,60 Z' stroke='rgba(139,115,85,0.06)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,50 C85,60 85,85 72,95 C59,85 59,60 72,50' stroke='rgba(139,115,85,0.06)' stroke-width='1' fill='none'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, #f5f2e9 0%, #ebe6da 100%);
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='200' viewBox='0 0 120 200'%3E%3Cpath d='M10,-10 C20,30 5,70 15,110 C25,150 10,190 20,230' stroke='rgba(15,10,5,0.4)' stroke-width='1.2' fill='none'/%3E%3Cpath d='M40,-10 C55,40 35,90 50,140 C65,190 45,210 55,230' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M70,-10 C60,30 80,80 65,120 C50,160 75,200 70,230' stroke='rgba(15,10,5,0.4)' stroke-width='1.5' fill='none'/%3E%3Cpath d='M100,-10 C110,40 95,90 105,140 C115,190 100,210 110,230' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,60 C78,65 78,75 72,80 C66,75 66,65 72,60 Z' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,50 C85,60 85,85 72,95 C59,85 59,60 72,50' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #3a2818 0%, #22160d 100%);
   background-repeat: repeat, no-repeat;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid #2a1d15;
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -182,7 +182,7 @@ img { max-width: 100%; }
   align-items: center;
   gap: 12px;
   padding: 0 24px 28px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .logo-icon {
@@ -201,7 +201,7 @@ img { max-width: 100%; }
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: #fff;
   letter-spacing: -0.3px;
 }
 
@@ -219,7 +219,7 @@ img { max-width: 100%; }
   gap: 12px;
   padding: 11px 14px;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: #e5dfd3;
   font-size: 14px;
   font-weight: 500;
   transition: var(--transition);
@@ -227,18 +227,18 @@ img { max-width: 100%; }
 }
 
 .nav-link:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .nav-link.active {
-  background: var(--purple-dim);
-  color: var(--purple-light);
+  background: #1f4d2f;
+  color: #fff;
   font-weight: 600;
 }
 
 .nav-link.active .nav-icon {
-  filter: drop-shadow(0 0 4px rgba(45,106,79,0.4));
+  filter: drop-shadow(0 0 4px rgba(0,0,0,0.4));
 }
 
 .nav-icon { font-size: 17px; }
@@ -255,7 +255,7 @@ img { max-width: 100%; }
 
 .sidebar-footer {
   padding: 20px 12px 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .sidebar-settings-btn {
@@ -265,15 +265,15 @@ img { max-width: 100%; }
   width: 100%;
   padding: 11px 14px;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: #e5dfd3;
   font-size: 14px;
   font-weight: 500;
   transition: var(--transition);
 }
 
 .sidebar-settings-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 /* ── 9. MAIN CONTENT ── */
@@ -472,6 +472,73 @@ img { max-width: 100%; }
   margin-top: 4px;
 }
 
+/* ── 12.5 LIBRARY TOP NAV ── */
+.library-top-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 32px;
+}
+
+.top-nav-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.top-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.search-bar {
+  position: relative;
+}
+
+.search-bar input {
+  padding: 8px 16px 8px 36px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-surface);
+  font-size: 14px;
+  width: 250px;
+  outline: none;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.user-avatar-circle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.settings-icon-btn {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
 /* ── 13. BOOK GRID ── */
 .book-grid {
   display: grid;
@@ -481,14 +548,15 @@ img { max-width: 100%; }
 
 /* Individual book card */
 .book-card {
-  background: var(--grad-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: #ffffff;
+  border: none;
+  border-radius: 12px;
   padding: 24px;
   cursor: pointer;
   transition: var(--transition);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
 }
 
 .book-card::before {
@@ -502,9 +570,8 @@ img { max-width: 100%; }
 }
 
 .book-card:hover {
-  border-color: var(--purple-light);
   transform: translateY(-4px);
-  box-shadow: 0 16px 36px rgba(0,0,0,0.05);
+  box-shadow: 0 16px 36px rgba(0,0,0,0.08);
 }
 
 .book-card:hover::before { opacity: 1; }
@@ -512,12 +579,18 @@ img { max-width: 100%; }
 .book-card-cover {
   width: 100%;
   aspect-ratio: 3/4;
-  max-height: 160px;
+  max-height: 180px;
   object-fit: cover;
-  border-radius: var(--radius-sm);
-  margin-bottom: 16px;
+  border-radius: 4px;
+  margin-bottom: 24px;
   background: var(--bg-elevated);
   display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+  border-bottom: 8px solid #6b4423;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
   align-items: center;
   justify-content: center;
   font-size: 40px;
