@@ -590,11 +590,13 @@ async function renderLibrary() {
     
     const tagsHtml = tags.map(t => `<span class="book-tag">${t}</span>`).join('');
 
+    const coverHtml = book.coverUrl 
+      ? `<div class="book-card-cover-placeholder" style="height: 100%; border-radius: 4px; overflow: hidden;"><img src="${book.coverUrl}" class="book-card-cover-image" alt="Cover" /></div>`
+      : `<div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center;"><span style="font-size: 48px;">${emoji}</span></div>`;
+
     card.innerHTML = `
       <div class="book-card-cover">
-        <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
-          <span style="font-size: 48px;">${emoji}</span>
-        </div>
+        ${coverHtml}
       </div>
       <div class="book-card-title">${book.title}</div>
       <div class="book-card-author">${book.author}</div>
@@ -1255,6 +1257,24 @@ async function checkBookCoverage() {
   }
 }
 
+async function fetchGoogleBooksCover(title, author) {
+  try {
+    const q = encodeURIComponent(`${title} ${author}`);
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.items && data.items.length > 0) {
+      const volInfo = data.items[0].volumeInfo;
+      if (volInfo && volInfo.imageLinks && volInfo.imageLinks.thumbnail) {
+        return volInfo.imageLinks.thumbnail.replace('http:', 'https:');
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch cover from Google Books API:', e);
+  }
+  return null;
+}
+
 async function generateCurriculum() {
   const title     = document.getElementById('input-book-title').value.trim();
   const author    = document.getElementById('input-book-author').value.trim();
@@ -1360,6 +1380,9 @@ async function generateCurriculum() {
       const finalTitle  = bookInfo.title  || _pdfMeta?.title  || pdfFile.name.replace(/\.pdf$/i, '');
       const finalAuthor = bookInfo.author || _pdfMeta?.author || 'Unknown Author';
 
+      progressPct.textContent  = 'Fetching cover image…';
+      const coverUrl = await fetchGoogleBooksCover(finalTitle, finalAuthor);
+
       // ── STEP 4: Store skeleton book in Firestore ──
       progressFill.style.width = '80%';
       progressPct.textContent  = 'Saving to your library…';
@@ -1368,6 +1391,7 @@ async function generateCurriculum() {
         id: bookId,
         title:         finalTitle,
         author:        finalAuthor,
+        coverUrl:      coverUrl,
         level:         'ref',
         isPdfBook:     true,
         totalPages,
@@ -1433,10 +1457,14 @@ async function generateCurriculum() {
     logStep('🃏 Generating flashcard decks...');
     await new Promise(r => setTimeout(r, 400));
 
+    logStep('🖼️ Fetching cover image...');
+    const coverUrl = await fetchGoogleBooksCover(finalTitle, finalAuthor);
+
     const bookId = `book-${Date.now()}`;
     const newBook = {
       id: bookId,
       title: finalTitle, author: finalAuthor, level,
+      coverUrl: coverUrl,
       chapters: curriculum.chapters
     };
 

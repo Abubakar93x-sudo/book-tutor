@@ -631,6 +631,13 @@ img { max-width: 100%; }
   margin-bottom: 16px;
 }
 
+.book-card-cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .book-card-title {
   font-family: var(--font-body);
   font-size: 14px;
