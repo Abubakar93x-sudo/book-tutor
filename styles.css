@@ -163,10 +163,10 @@ img { max-width: 100%; }
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
-  background: 
-    repeating-linear-gradient(90deg, rgba(120,95,65,0.12) 0px, rgba(120,95,65,0.12) 1px, transparent 1px, transparent 36px),
-    repeating-linear-gradient(180deg, rgba(120,95,65,0.06) 0px, rgba(120,95,65,0.06) 1px, transparent 1px, transparent 150px),
-    linear-gradient(180deg, #f2eadc 0%, #e5dbc9 100%);
+  background-image: 
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='200' viewBox='0 0 120 200'%3E%3Cpath d='M10,-10 C20,30 5,70 15,110 C25,150 10,190 20,230' stroke='rgba(120,95,65,0.12)' stroke-width='1.2' fill='none'/%3E%3Cpath d='M40,-10 C55,40 35,90 50,140 C65,190 45,210 55,230' stroke='rgba(120,95,65,0.08)' stroke-width='1' fill='none'/%3E%3Cpath d='M70,-10 C60,30 80,80 65,120 C50,160 75,200 70,230' stroke='rgba(120,95,65,0.12)' stroke-width='1.5' fill='none'/%3E%3Cpath d='M100,-10 C110,40 95,90 105,140 C115,190 100,210 110,230' stroke='rgba(120,95,65,0.08)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,60 C78,65 78,75 72,80 C66,75 66,65 72,60 Z' stroke='rgba(120,95,65,0.06)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,50 C85,60 85,85 72,95 C59,85 59,60 72,50' stroke='rgba(120,95,65,0.06)' stroke-width='1' fill='none'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #f4f0e5 0%, #ebe7d9 100%);
+  background-repeat: repeat, no-repeat;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
