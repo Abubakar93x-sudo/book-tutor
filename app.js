@@ -575,6 +575,7 @@ async function renderLibrary() {
     ];
     const colorIndex = book.id.charCodeAt(4) % coverColors.length;
     const [c1, c2] = coverColors[colorIndex];
+    const emoji = ['📖', '🧠', '⚡', '🎯', '🔑'][colorIndex];
 
     const pct = totalChapters > 0 ? Math.round((studiedCount / totalChapters) * 100) : 0;
     
@@ -591,8 +592,8 @@ async function renderLibrary() {
 
     card.innerHTML = `
       <div class="book-card-cover">
-        <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px;">
-          <!-- Placeholder for actual cover image -->
+        <div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+          <span style="font-size: 48px;">${emoji}</span>
         </div>
       </div>
       <div class="book-card-title">${book.title}</div>
