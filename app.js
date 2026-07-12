@@ -575,7 +575,6 @@ async function renderLibrary() {
     ];
     const colorIndex = book.id.charCodeAt(4) % coverColors.length;
     const [c1, c2] = coverColors[colorIndex];
-    const emoji = ['📖', '🧠', '⚡', '🎯', '🔑'][colorIndex];
 
     const pct = totalChapters > 0 ? Math.round((studiedCount / totalChapters) * 100) : 0;
     
@@ -590,9 +589,9 @@ async function renderLibrary() {
 
     const tagsHtml = tags.map(([label, cls]) => `<span class="book-tag ${cls}">${label}</span>`).join('');
 
-    const coverHtml = book.coverUrl 
+    const coverHtml = book.coverUrl
       ? `<div class="book-card-cover-placeholder" style="height: 100%; border-radius: 4px; overflow: hidden;"><img src="${book.coverUrl}" class="book-card-cover-image" alt="Cover" /></div>`
-      : `<div class="book-card-cover-placeholder" style="background: linear-gradient(135deg, ${c1}33, ${c2}22); height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center;"><span style="font-size: 48px;">${emoji}</span></div>`;
+      : `<div class="book-card-cover-placeholder" style="background: linear-gradient(155deg, ${c1}, ${c2}); height: 100%; border-radius: 4px;"></div>`;
 
     card.innerHTML = `
       <div class="book-card-cover">

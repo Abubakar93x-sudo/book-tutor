@@ -555,21 +555,16 @@ img { max-width: 100%; }
 .book-card-cover {
   width: 100%;
   aspect-ratio: 3/4;
-  max-height: 180px;
   object-fit: cover;
   border-radius: 5px;
   margin-bottom: 20px;
   background: var(--bg-elevated);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   box-shadow: inset 0 0 0 1px rgba(36,26,16,0.15), 0 8px 16px rgba(36,26,16,0.2);
   border-bottom: 8px solid #3d2b1a;
   border-bottom-left-radius: 8px;
   border-bottom-right-radius: 8px;
   position: relative;
   overflow: hidden;
-  font-size: 40px;
 }
 
 /* Spine highlight, left edge */
