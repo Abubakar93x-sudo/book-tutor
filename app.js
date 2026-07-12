@@ -603,7 +603,6 @@ async function renderLibrary() {
         <div class="book-card-progress-track">
           <div class="book-card-progress-fill" style="width:${pct}%"></div>
         </div>
-        <span class="book-card-progress-text">${pct}%</span>
       </div>
       <div class="book-card-tags">
         ${tagsHtml}

@@ -7,8 +7,8 @@
 /* ── 1. CSS CUSTOM PROPERTIES (DESIGN TOKENS) ── */
 :root {
   /* Warm Parchment Backgrounds */
-  --bg-base:       #f2e8d2;       /* Aged-paper base */
-  --bg-surface:    #faf4e6;       /* Warm paper panels */
+  --bg-base:       #efe3c9;       /* Aged-paper base */
+  --bg-surface:    #f8f1de;       /* Warm paper panels */
   --bg-elevated:   #ecdfc0;       /* Warm cream controls */
   --bg-hover:      #e2d0a4;       /* Deeper cream hover */
 
@@ -104,7 +104,7 @@ img { max-width: 100%; }
   align-items: center;
   gap: 8px;
   padding: 10px 20px;
-  border-radius: 10px;
+  border-radius: 9px;
   font-size: 14px;
   font-weight: 600;
   transition: var(--transition);
@@ -113,8 +113,8 @@ img { max-width: 100%; }
 
 .btn-primary {
   background: var(--grad-purple);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(184,134,63,0.2);
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(184,134,63,0.2), inset 0 0 0 1px rgba(255,255,255,0.25);
 }
 .btn-primary:hover {
   transform: translateY(-2px);
@@ -195,13 +195,11 @@ img { max-width: 100%; }
   box-shadow: 0 4px 12px rgba(184,134,63,0.25);
 }
 
-.logo-icon svg { width: 17px; height: 17px; }
-
 .logo-text {
   font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 700;
-  color: #fff;
+  font-size: 19px;
+  font-weight: 600;
+  color: #f3e8d0;
   letter-spacing: -0.3px;
 }
 
@@ -216,11 +214,11 @@ img { max-width: 100%; }
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 14px;
-  border-radius: var(--radius-sm);
-  color: #e5dfd3;
-  font-size: 14px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: #cbb794;
+  font-size: 13.5px;
   font-weight: 500;
   transition: var(--transition);
   position: relative;
@@ -232,18 +230,16 @@ img { max-width: 100%; }
 }
 
 .nav-link.active {
-  background: rgba(184,134,63,0.16);
+  background: rgba(184,134,63,0.14);
   color: #f3e8d0;
-  font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(184,134,63,0.3);
 }
 
 .nav-link.active .nav-icon {
-  filter: drop-shadow(0 0 4px rgba(0,0,0,0.4));
+  background: #c99a52;
 }
 
-.nav-icon { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.nav-icon svg { width: 14px; height: 14px; }
+.nav-icon { width: 14px; height: 14px; border-radius: 3px; background: #4d3a24; flex-shrink: 0; }
 
 .nav-badge {
   margin-left: auto;
@@ -450,7 +446,7 @@ img { max-width: 100%; }
 
 /* ── 12. SHELF SECTION ── */
 .shelf-section {
-  padding: 44px 48px;
+  padding: 26px 30px 34px;
 }
 
 /* ── 12.5 LIBRARY TOP NAV ── */
@@ -460,7 +456,7 @@ img { max-width: 100%; }
   align-items: center;
   padding-bottom: 24px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 36px;
+  margin-bottom: 26px;
 }
 
 .top-nav-title {
@@ -473,7 +469,7 @@ img { max-width: 100%; }
 .top-nav-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
 }
 
 .search-bar {
@@ -482,8 +478,8 @@ img { max-width: 100%; }
 
 .search-bar input {
   padding: 9px 16px 9px 38px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
+  border: 1px solid rgba(36,26,16,0.14);
+  border-radius: 9px;
   background: var(--bg-surface);
   font-size: 13px;
   width: 320px;
@@ -511,7 +507,7 @@ img { max-width: 100%; }
 .book-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 28px;
+  gap: 22px;
 }
 
 @media (max-width: 1100px) {
@@ -527,7 +523,7 @@ img { max-width: 100%; }
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 20px;
+  padding: 14px;
   cursor: pointer;
   transition: var(--transition);
   position: relative;
@@ -557,8 +553,8 @@ img { max-width: 100%; }
   width: 100%;
   height: 132px;
   object-fit: cover;
-  border-radius: 5px;
-  margin-bottom: 20px;
+  border-radius: 6px;
+  margin-bottom: 14px;
   background: var(--bg-elevated);
   box-shadow: inset 0 0 0 1px rgba(36,26,16,0.15), 0 8px 16px rgba(36,26,16,0.2);
   border-bottom: 8px solid #3d2b1a;
@@ -583,7 +579,7 @@ img { max-width: 100%; }
   content: '';
   position: absolute;
   top: 0; right: 0;
-  width: 22px; height: 22px;
+  width: 16px; height: 16px;
   background: linear-gradient(145deg, #dcb572, #b8863f);
   clip-path: polygon(100% 0, 0 0, 100% 100%);
   opacity: 0.9;
@@ -610,48 +606,35 @@ img { max-width: 100%; }
 
 .book-card-title {
   font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 700;
+  font-size: 16.5px;
+  font-weight: 600;
   color: var(--text-primary);
   line-height: 1.25;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .book-card-author {
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-secondary);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .book-card-progress-wrapper {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .book-card-progress-track {
-  flex: 1;
   height: 5px;
-  background: var(--bg-hover);
+  background: rgba(36,26,16,0.12);
   border-radius: 99px;
   overflow: hidden;
 }
 
 .book-card-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--teal), var(--purple));
+  background: linear-gradient(90deg, #2c5c40, #c99a52);
   border-radius: 99px;
-}
-
-.book-card-progress-text {
-  font-family: var(--font-body);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
 }
 
 .book-card-tags {
@@ -661,18 +644,18 @@ img { max-width: 100%; }
 }
 
 .book-tag {
-  background: var(--teal-dim);
+  background: rgba(35,74,52,0.12);
   color: var(--teal);
-  padding: 4px 9px;
+  padding: 3px 9px;
   border-radius: 99px;
   font-family: var(--font-body);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
-.book-tag.tag-brass { background: var(--purple-dim); color: #7d5b28; }
-.book-tag.tag-burgundy { background: rgba(109,37,48,0.10); color: var(--rose); }
+.book-tag.tag-brass { background: rgba(184,134,63,0.16); color: #7d5b28; }
+.book-tag.tag-burgundy { background: rgba(109,37,48,0.12); color: var(--rose); }
 
 /* PDF Upload badge */
 .badge-pdf {
@@ -2131,17 +2114,16 @@ body.immersive .immersive-only { display: flex !important; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.18);
   margin-bottom: 8px;
   min-width: 0;
 }
 
 .user-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
