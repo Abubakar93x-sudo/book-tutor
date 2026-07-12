@@ -817,9 +817,10 @@ function renderConceptMap(chapter) {
 
   chapter.concepts.forEach(concept => {
     const node = document.createElement('div');
+    const isMastered = AppState.masteredConcepts.includes(concept);
     node.className = 'concept-node';
-    if (AppState.masteredConcepts.includes(concept)) node.classList.add('mastered');
-    node.textContent = concept;
+    if (isMastered) node.classList.add('mastered');
+    node.textContent = isMastered ? `${concept} ✓` : concept;
     container.appendChild(node);
   });
 }
@@ -1746,6 +1747,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       if (view === 'review') initReviewSession();
       if (view === 'sandbox') populateSandboxSelectors();
+    });
+  });
+
+  // ── LIBRARY SEARCH ──
+  document.getElementById('library-search-input').addEventListener('input', (e) => {
+    const query = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#book-grid .book-card').forEach(card => {
+      const title = card.querySelector('.book-card-title')?.textContent.toLowerCase() || '';
+      const author = card.querySelector('.book-card-author')?.textContent.toLowerCase() || '';
+      card.style.display = (!query || title.includes(query) || author.includes(query)) ? '' : 'none';
     });
   });
 
