@@ -567,11 +567,11 @@ async function renderLibrary() {
 
     // Color-themed covers using book ID for variety
     const coverColors = [
-      ['#7c3aed', '#4f46e5'],
-      ['#0d9488', '#059669'],
-      ['#db2777', '#9333ea'],
-      ['#ea580c', '#dc2626'],
-      ['#1d4ed8', '#0d9488'],
+      ['#234a34', '#152e20'],
+      ['#6d2530', '#3f1119'],
+      ['#3d2b1a', '#211609'],
+      ['#8a6229', '#5c4018'],
+      ['#4f7a6c', '#2b453c'],
     ];
     const colorIndex = book.id.charCodeAt(4) % coverColors.length;
     const [c1, c2] = coverColors[colorIndex];
@@ -579,16 +579,16 @@ async function renderLibrary() {
 
     const pct = totalChapters > 0 ? Math.round((studiedCount / totalChapters) * 100) : 0;
     
-    // Create tags array
+    // Create tags array, each paired with a theme class
     const tags = [];
-    if (pct === 100) tags.push('#Completed');
-    else if (pct > 0) tags.push('#Read');
-    else tags.push('#New');
-    
-    if (book.isPdfBook) tags.push('#PDF');
-    if (book.level === 'deep') tags.push('#DeepStudy');
-    
-    const tagsHtml = tags.map(t => `<span class="book-tag">${t}</span>`).join('');
+    if (pct === 100) tags.push(['#Completed', '']);
+    else if (pct > 0) tags.push(['#Read', '']);
+    else tags.push(['#New', 'tag-brass']);
+
+    if (book.isPdfBook) tags.push(['#PDF', 'tag-burgundy']);
+    if (book.level === 'deep') tags.push(['#DeepStudy', 'tag-brass']);
+
+    const tagsHtml = tags.map(([label, cls]) => `<span class="book-tag ${cls}">${label}</span>`).join('');
 
     const coverHtml = book.coverUrl 
       ? `<div class="book-card-cover-placeholder" style="height: 100%; border-radius: 4px; overflow: hidden;"><img src="${book.coverUrl}" class="book-card-cover-image" alt="Cover" /></div>`
@@ -1231,7 +1231,7 @@ async function checkBookCoverage() {
     document.getElementById('add-book-step-1').style.display = 'none';
     document.getElementById('add-book-step-2').style.display = 'block';
     document.getElementById('diagnostic-result').innerHTML = `
-      <strong style="color:#a78bfa">📄 PDF Ready: "${file.name}"</strong><br><br>
+      <strong style="color:#b8863f">📄 PDF Ready: "${file.name}"</strong><br><br>
       The AI will read your uploaded book directly — no prior knowledge used.
       It will extract every chapter in the exact order it appears in the PDF.
     `;

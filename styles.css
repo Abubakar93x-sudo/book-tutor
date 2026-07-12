@@ -1,44 +1,44 @@
 /* ============================================================
-   BookTutor — Premium Design System
-   Dark luxury theme with deep space colors, gold accents,
-   glassmorphism panels, and smooth micro-animations.
+   BookTutor — Dark Academia Library
+   Espresso wood chrome, brass fittings, forest-leather accents,
+   and warm parchment reading panes.
 ============================================================ */
 
 /* ── 1. CSS CUSTOM PROPERTIES (DESIGN TOKENS) ── */
 :root {
-  /* Cozy Paper Warm Light Backgrounds */
-  --bg-base:       #fcfbf9;       /* Calming warm-light base */
-  --bg-surface:    #ffffff;       /* Pure white panels */
-  --bg-elevated:   #f5f3ed;       /* Warm grey-cream controls */
-  --bg-hover:      #ebe8df;       /* Soft dark-cream hover */
+  /* Warm Parchment Backgrounds */
+  --bg-base:       #f2e8d2;       /* Aged-paper base */
+  --bg-surface:    #faf4e6;       /* Warm paper panels */
+  --bg-elevated:   #ecdfc0;       /* Warm cream controls */
+  --bg-hover:      #e2d0a4;       /* Deeper cream hover */
 
-  --border:        rgba(0,0,0,0.06);
-  --border-light:  rgba(0,0,0,0.1);
+  --border:        rgba(36,26,16,0.10);
+  --border-light:  rgba(36,26,16,0.16);
 
-  /* Forest Green Accent palette (Replacing Neon Purple) */
-  --purple:        #1e4620;       /* Deep Forest Green */
-  --purple-light:  #2d6a4f;       
-  --purple-dim:    rgba(45,106,79,0.08);
-  --indigo:        #40916c;       
-  --gold:          #b45309;       /* Warm Amber */
-  --gold-dim:      rgba(180,83,9,0.08);
-  --teal:          #0f5132;       
-  --teal-dim:      rgba(15,81,50,0.08);
-  --rose:          #ba181b;       /* Muted Crimson */
+  /* Brass / Forest / Burgundy accent palette (token names kept from the prior theme) */
+  --purple:        #b8863f;       /* Brass — primary accent */
+  --purple-light:  #d8a856;       /* Brass, light/hover */
+  --purple-dim:    rgba(184,134,63,0.08);
+  --indigo:        #4f7a6c;       /* Verdigris — secondary accent */
+  --gold:          #9c6b28;       /* Deep ochre — warm highlight */
+  --gold-dim:      rgba(156,107,40,0.08);
+  --teal:          #234a34;       /* Forest leather — success / mastery */
+  --teal-dim:      rgba(35,74,52,0.08);
+  --rose:          #6d2530;       /* Burgundy — danger */
 
   /* Gradients */
-  --grad-hero:     linear-gradient(135deg, #1e4620 0%, #2d6a4f 50%, #40916c 100%);
-  --grad-purple:   linear-gradient(135deg, #1e4620, #2d6a4f);
-  --grad-gold:     linear-gradient(135deg, #b45309, #ba181b);
-  --grad-card:     linear-gradient(160deg, rgba(45,106,79,0.03) 0%, rgba(180,83,9,0.02) 100%);
+  --grad-hero:     linear-gradient(135deg, #2e2015 0%, #6d4a28 50%, #b8863f 100%);
+  --grad-purple:   linear-gradient(150deg, #d8a856, #b8863f);
+  --grad-gold:     linear-gradient(135deg, #9c6b28, #6d2530);
+  --grad-card:     linear-gradient(160deg, rgba(184,134,63,0.04) 0%, rgba(35,74,52,0.03) 100%);
 
   /* Reading & UI Typography */
-  --text-primary:   #2a2a2a;       /* Soft charcoal for visual comfort */
-  --text-secondary: #5a5a5a;       /* Secondary grey */
-  --text-muted:     #8a8a8a;       
+  --text-primary:   #241a10;       /* Soft charcoal for visual comfort */
+  --text-secondary: #5c4a36;       /* Secondary grey */
+  --text-muted:     #8a7860;       
 
   /* Fonts */
-  --font-display:  'Outfit', sans-serif;
+  --font-display:  'Cormorant Garamond', serif;
   --font-body:     'Inter', sans-serif;
   --font-reading:  'Lora', serif;  /* Lora serif for readability */
 
@@ -114,11 +114,11 @@ img { max-width: 100%; }
 .btn-primary {
   background: var(--grad-purple);
   color: #fff;
-  box-shadow: 0 4px 16px rgba(45,106,79,0.2);
+  box-shadow: 0 4px 16px rgba(184,134,63,0.2);
 }
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(45,106,79,0.3);
+  box-shadow: 0 6px 20px rgba(184,134,63,0.3);
 }
 
 .btn-ghost {
@@ -132,11 +132,11 @@ img { max-width: 100%; }
 }
 
 .btn-danger {
-  background: rgba(186,24,27,0.1);
+  background: rgba(109,37,48,0.1);
   color: var(--rose);
-  border: 1px solid rgba(186,24,27,0.2);
+  border: 1px solid rgba(109,37,48,0.2);
 }
-.btn-danger:hover { background: rgba(186,24,27,0.18); }
+.btn-danger:hover { background: rgba(109,37,48,0.18); }
 
 
 .btn-lg { padding: 14px 28px; font-size: 16px; border-radius: 12px; }
@@ -163,11 +163,11 @@ img { max-width: 100%; }
 .sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
-  background-image: 
+  background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='200' viewBox='0 0 120 200'%3E%3Cpath d='M10,-10 C20,30 5,70 15,110 C25,150 10,190 20,230' stroke='rgba(15,10,5,0.4)' stroke-width='1.2' fill='none'/%3E%3Cpath d='M40,-10 C55,40 35,90 50,140 C65,190 45,210 55,230' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M70,-10 C60,30 80,80 65,120 C50,160 75,200 70,230' stroke='rgba(15,10,5,0.4)' stroke-width='1.5' fill='none'/%3E%3Cpath d='M100,-10 C110,40 95,90 105,140 C115,190 100,210 110,230' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,60 C78,65 78,75 72,80 C66,75 66,65 72,60 Z' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3Cpath d='M72,50 C85,60 85,85 72,95 C59,85 59,60 72,50' stroke='rgba(15,10,5,0.2)' stroke-width='1' fill='none'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, #3a2818 0%, #22160d 100%);
+    linear-gradient(180deg, #332315 0%, #1a120c 100%);
   background-repeat: repeat, no-repeat;
-  border-right: 1px solid #2a1d15;
+  border-right: 1px solid #241a10;
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -194,7 +194,7 @@ img { max-width: 100%; }
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  box-shadow: 0 4px 12px rgba(45,106,79,0.25);
+  box-shadow: 0 4px 12px rgba(184,134,63,0.25);
 }
 
 .logo-text {
@@ -232,9 +232,10 @@ img { max-width: 100%; }
 }
 
 .nav-link.active {
-  background: #1f4d2f;
-  color: #fff;
+  background: rgba(184,134,63,0.16);
+  color: #f3e8d0;
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(184,134,63,0.3);
 }
 
 .nav-link.active .nav-icon {
@@ -305,14 +306,14 @@ img { max-width: 100%; }
 
 .hero-orb-1 {
   width: 500px; height: 500px;
-  background: radial-gradient(circle, rgba(45,106,79,0.12), transparent 70%);
+  background: radial-gradient(circle, rgba(184,134,63,0.12), transparent 70%);
   top: -200px; left: -100px;
   animation-delay: 0s;
 }
 
 .hero-orb-2 {
   width: 400px; height: 400px;
-  background: radial-gradient(circle, rgba(180,83,9,0.08), transparent 70%);
+  background: radial-gradient(circle, rgba(156,107,40,0.08), transparent 70%);
   top: -50px; right: -100px;
   animation-delay: -3s;
 }
@@ -338,7 +339,7 @@ img { max-width: 100%; }
   align-items: center;
   gap: 8px;
   background: var(--purple-dim);
-  border: 1px solid rgba(45,106,79,0.3);
+  border: 1px solid rgba(184,134,63,0.3);
   color: var(--purple-light);
   padding: 6px 14px;
   border-radius: 99px;
@@ -571,15 +572,15 @@ img { max-width: 100%; }
 
 /* Individual book card */
 .book-card {
-  background: #ffffff;
-  border: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 24px;
+  padding: 20px;
   cursor: pointer;
   transition: var(--transition);
   position: relative;
   overflow: visible;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 16px rgba(36,26,16,0.08);
 }
 
 .book-card::before {
@@ -587,6 +588,7 @@ img { max-width: 100%; }
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 3px;
+  border-radius: 12px 12px 0 0;
   background: var(--grad-purple);
   opacity: 0;
   transition: var(--transition);
@@ -594,7 +596,7 @@ img { max-width: 100%; }
 
 .book-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 16px 36px rgba(0,0,0,0.08);
+  box-shadow: 0 16px 36px rgba(36,26,16,0.14);
 }
 
 .book-card:hover::before { opacity: 1; }
@@ -604,19 +606,30 @@ img { max-width: 100%; }
   aspect-ratio: 3/4;
   max-height: 180px;
   object-fit: cover;
-  border-radius: 4px;
-  margin-bottom: 24px;
+  border-radius: 5px;
+  margin-bottom: 20px;
   background: var(--bg-elevated);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 16px rgba(0,0,0,0.15);
-  border-bottom: 8px solid #6b4423;
+  box-shadow: inset 0 0 0 1px rgba(36,26,16,0.15), 0 8px 16px rgba(36,26,16,0.2);
+  border-bottom: 8px solid #3d2b1a;
   border-bottom-left-radius: 8px;
   border-bottom-right-radius: 8px;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  overflow: hidden;
   font-size: 40px;
+}
+
+/* Brass corner accent, like a bound-book plate */
+.book-card-cover::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 22px; height: 22px;
+  background: linear-gradient(145deg, #dcb572, #b8863f);
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+  opacity: 0.9;
 }
 
 .book-card-cover-placeholder {
@@ -639,16 +652,16 @@ img { max-width: 100%; }
 }
 
 .book-card-title {
-  font-family: var(--font-body);
-  font-size: 14px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: #1a1a1a;
-  line-height: 1.3;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.25;
   margin-bottom: 4px;
 }
 
 .book-card-author {
+  font-family: var(--font-body);
   font-size: 12px;
   color: var(--text-secondary);
   margin-bottom: 16px;
@@ -664,22 +677,24 @@ img { max-width: 100%; }
 
 .book-card-progress-track {
   flex: 1;
-  height: 4px;
-  background: #e5e5e5;
-  border-radius: 2px;
+  height: 5px;
+  background: var(--bg-hover);
+  border-radius: 99px;
   overflow: hidden;
 }
 
 .book-card-progress-fill {
   height: 100%;
-  background: #1f4d2f;
-  border-radius: 2px;
+  background: linear-gradient(90deg, var(--teal), var(--purple));
+  border-radius: 99px;
 }
 
 .book-card-progress-text {
+  font-family: var(--font-body);
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .book-card-tags {
@@ -689,19 +704,24 @@ img { max-width: 100%; }
 }
 
 .book-tag {
-  background: #3c5b46;
-  color: #ffffff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
+  background: var(--teal-dim);
+  color: var(--teal);
+  padding: 4px 9px;
+  border-radius: 99px;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
+
+.book-tag.tag-brass { background: var(--purple-dim); color: #7d5b28; }
+.book-tag.tag-burgundy { background: rgba(109,37,48,0.10); color: var(--rose); }
 
 /* PDF Upload badge */
 .badge-pdf {
   background: var(--purple-dim);
   color: var(--purple-light);
-  border: 1px solid rgba(45,106,79,0.25);
+  border: 1px solid rgba(184,134,63,0.25);
 }
 
 /* Page count label on PDF book cards */
@@ -1116,7 +1136,7 @@ img { max-width: 100%; }
   background: var(--grad-purple);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 4px 12px rgba(45,106,79,0.15);
+  box-shadow: 0 4px 12px rgba(184,134,63,0.15);
 }
 
 
@@ -1222,7 +1242,7 @@ img { max-width: 100%; }
   font-size: 15px;
   font-weight: 800;
   color: #fff;
-  box-shadow: 0 4px 12px rgba(45,106,79,0.25);
+  box-shadow: 0 4px 12px rgba(184,134,63,0.25);
 }
 
 .feedback-block { margin-bottom: 20px; }
@@ -1344,7 +1364,7 @@ img { max-width: 100%; }
 
 .flashcard-back {
   background: linear-gradient(135deg, var(--purple-dim), rgba(40,145,108,0.06));
-  border: 1px solid rgba(45,106,79,0.25);
+  border: 1px solid rgba(184,134,63,0.25);
   transform: rotateY(180deg);
 }
 
@@ -1389,10 +1409,10 @@ img { max-width: 100%; }
 }
 
 .rate-btn:hover { transform: translateY(-2px); }
-.rate-forgot:hover { background: rgba(186,24,27,0.1); border-color: var(--rose); color: var(--rose); }
+.rate-forgot:hover { background: rgba(109,37,48,0.1); border-color: var(--rose); color: var(--rose); }
 .rate-hard:hover { background: var(--gold-dim); border-color: var(--gold); color: var(--gold); }
 .rate-good:hover { background: var(--teal-dim); border-color: var(--teal); color: var(--teal); }
-.rate-easy:hover { background: rgba(64,145,108,0.1); border-color: var(--indigo); color: var(--indigo); }
+.rate-easy:hover { background: rgba(79,122,108,0.1); border-color: var(--indigo); color: var(--indigo); }
 
 /* ── 20. EMPTY STATES ── */
 .empty-state {
@@ -1631,7 +1651,7 @@ img { max-width: 100%; }
   align-items: flex-start;
   gap: 14px;
   background: var(--gold-dim);
-  border: 1px solid rgba(180,83,9,0.25);
+  border: 1px solid rgba(156,107,40,0.25);
   border-radius: var(--radius-md);
   padding: 16px;
   margin-bottom: 20px;
@@ -2107,7 +2127,7 @@ body.immersive .immersive-only { display: flex !important; }
 }
 
 .signin-title {
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Cormorant Garamond', serif;
   font-size: 36px;
   font-weight: 800;
   margin-bottom: 12px;
@@ -2250,8 +2270,8 @@ body.immersive .immersive-only { display: flex !important; }
   animation: dropPulse 0.8s ease infinite alternate;
 }
 @keyframes dropPulse {
-  from { box-shadow: 0 0 0 3px rgba(45,106,79,0.15); }
-  to   { box-shadow: 0 0 0 6px rgba(45,106,79,0.30); }
+  from { box-shadow: 0 0 0 3px rgba(184,134,63,0.15); }
+  to   { box-shadow: 0 0 0 6px rgba(184,134,63,0.30); }
 }
 .drop-zone-inner {
   display: flex;
@@ -2307,7 +2327,7 @@ body.immersive .immersive-only { display: flex !important; }
   padding: 12px 16px;
   border-radius: var(--radius-md);
   background: var(--purple-dim);
-  border: 1px solid rgba(45,106,79,0.25);
+  border: 1px solid rgba(184,134,63,0.25);
   color: var(--purple-light);
   font-size: 14px;
   font-weight: 500;
