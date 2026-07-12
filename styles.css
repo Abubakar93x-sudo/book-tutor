@@ -53,7 +53,7 @@
   --transition: all 0.2s var(--ease);
 
   /* Layout */
-  --sidebar-w:  240px;
+  --sidebar-w:  268px;
 }
 
 
@@ -185,10 +185,10 @@ img { max-width: 100%; }
 }
 
 .logo-icon {
-  width: 30px;
-  height: 30px;
+  width: 42px;
+  height: 42px;
   background: var(--grad-purple);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -197,28 +197,28 @@ img { max-width: 100%; }
 
 .logo-text {
   font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   color: #f3e8d0;
   letter-spacing: -0.3px;
 }
 
 .sidebar-nav {
   flex: 1;
-  padding: 20px 12px;
+  padding: 24px 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 7px;
+  gap: 14px;
+  padding: 13px 16px;
+  border-radius: 9px;
   color: #cbb794;
-  font-size: 13.5px;
+  font-size: 16px;
   font-weight: 500;
   transition: var(--transition);
   position: relative;
@@ -239,7 +239,7 @@ img { max-width: 100%; }
   background: #c99a52;
 }
 
-.nav-icon { width: 14px; height: 14px; border-radius: 3px; background: #4d3a24; flex-shrink: 0; }
+.nav-icon { width: 19px; height: 19px; border-radius: 4px; background: #4d3a24; flex-shrink: 0; }
 
 .nav-badge {
   margin-left: auto;
@@ -252,19 +252,19 @@ img { max-width: 100%; }
 }
 
 .sidebar-footer {
-  padding: 20px 12px 0;
+  padding: 24px 14px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .sidebar-settings-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
-  padding: 11px 14px;
-  border-radius: var(--radius-sm);
-  color: #e5dfd3;
-  font-size: 14px;
+  padding: 13px 16px;
+  border-radius: 9px;
+  color: #cbb794;
+  font-size: 16px;
   font-weight: 500;
   transition: var(--transition);
 }
@@ -454,9 +454,9 @@ img { max-width: 100%; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 24px;
+  padding-bottom: 28px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 26px;
+  margin-bottom: 32px;
 }
 
 .top-nav-title {
@@ -469,7 +469,7 @@ img { max-width: 100%; }
 .top-nav-actions {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 24px;
 }
 
 .search-bar {
@@ -477,12 +477,12 @@ img { max-width: 100%; }
 }
 
 .search-bar input {
-  padding: 9px 16px 9px 38px;
+  padding: 13px 20px 13px 46px;
   border: 1px solid rgba(36,26,16,0.14);
-  border-radius: 9px;
+  border-radius: 11px;
   background: var(--bg-surface);
-  font-size: 13px;
-  width: 320px;
+  font-size: 15px;
+  width: 360px;
   outline: none;
   color: var(--text-primary);
   transition: var(--transition);
@@ -492,16 +492,16 @@ img { max-width: 100%; }
 
 .search-icon {
   position: absolute;
-  left: 13px;
+  left: 16px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-muted);
   display: flex;
 }
 
-.search-icon svg { width: 18px; height: 18px; }
+.search-icon svg { width: 20px; height: 20px; }
 
-#btn-add-book-trigger { font-size: 13px; padding: 10px 18px; }
+#btn-add-book-trigger { font-size: 15px; padding: 13px 24px; }
 
 /* ── 13. BOOK GRID ── */
 .book-grid {
@@ -2113,17 +2113,17 @@ body.immersive .immersive-only { display: flex !important; }
 .sidebar-user {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px;
-  border-radius: 8px;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
   background: rgba(0,0,0,0.18);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   min-width: 0;
 }
 
 .user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
@@ -2138,7 +2138,7 @@ body.immersive .immersive-only { display: flex !important; }
 }
 
 .user-name {
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 600;
   color: #f3e8d0;
   white-space: nowrap;
@@ -2147,7 +2147,7 @@ body.immersive .immersive-only { display: flex !important; }
 }
 
 .btn-signout {
-  font-size: 11px;
+  font-size: 12px;
   color: #cbb794;
   background: none;
   border: none;
