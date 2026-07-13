@@ -546,6 +546,48 @@ async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
   }
 }
 
+// ── AGENT: ATTENTION CLASSIFIER ──────────────────────────────────────────────
+// Labels every paragraph of a chapter as core / support / skim, once per
+// chapter. Core paragraphs carry the argument and render at full contrast;
+// skim paragraphs (padding, digressions) render dimmed and collapsible —
+// this is where legitimate reading speed comes from.
+async function callSegmentClassifier(paragraphs, chapterTitle, bookTitle) {
+  const numbered = paragraphs
+    .map((p, i) => `[${i}] ${p.length > 400 ? p.slice(0, 400) + '…' : p}`)
+    .join('\n\n')
+    .substring(0, 90000);
+
+  const prompt = `
+    You are a reading coach analysing a chapter from "${bookTitle}"
+    ("${chapterTitle}"). Below are its ${paragraphs.length} paragraphs, each
+    prefixed with its index.
+
+    Classify EVERY paragraph as exactly one of:
+    - "core":    carries the argument — a central claim, mechanism, definition,
+                 or key conclusion. The reader must give this full attention.
+    - "support": evidence, examples, or elaboration worth normal reading.
+    - "skim":    anecdote padding, tangents, repetition of earlier points, or
+                 throat-clearing that a time-pressed reader can safely skim.
+
+    Be honest, not timid: dense books typically have 20-40% skim-able text.
+    But never mark a paragraph "skim" if it introduces an idea needed later.
+
+    PARAGRAPHS:
+    ---
+    ${numbered}
+    ---
+
+    Return ONLY valid JSON, no markdown fences, with exactly ${paragraphs.length} entries:
+    { "labels": ["core", "support", "skim", ...] }
+  `;
+  const result = await queryGemini(prompt, true);
+  const labels = Array.isArray(result.labels) ? result.labels : [];
+  // Align defensively: unknown or missing entries become "support" (neutral)
+  return paragraphs.map((_, i) =>
+    ['core', 'support', 'skim'].includes(labels[i]) ? labels[i] : 'support'
+  );
+}
+
 // ── AGENT: CHECKPOINT QUESTION GENERATOR ─────────────────────────────────────
 // Creates one retrieval question from the segment the student just read.
 // Grounded: the question must be answerable from the passage alone.

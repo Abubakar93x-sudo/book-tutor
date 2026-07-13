@@ -3181,3 +3181,14 @@ body.immersive .immersive-only { display: flex !important; }
 @media (max-width: 768px) {
   .prime-driving { font-size: 1.4rem; }
 }
+
+/* ── Attention layer: skim-classified paragraphs read dimmed, tap to expand ── */
+.reader-segment p.skim {
+  opacity: 0.42;
+  border-left: 2px solid var(--border);
+  padding-left: 0.8rem;
+  cursor: pointer;
+  transition: opacity 0.2s ease-out;
+}
+.reader-segment p.skim:hover { opacity: 0.6; }
+.reader-segment p.skim.expanded { opacity: 1; }

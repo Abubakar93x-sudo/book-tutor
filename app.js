@@ -840,6 +840,7 @@ const Reader = {
     this.renderColumn();
     this.updateTopbar();
     this.startSegmentTimer();
+    this.ensureAttentionLabels();
 
     // Resume where the reader left off
     const scrollEl = document.getElementById('reader-scroll');
@@ -847,6 +848,42 @@ const Reader = {
     const current = document.getElementById(`segment-${this.segmentsDone}`);
     if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
     return true;
+  },
+
+  // ── Attention layer: classify paragraphs core/support/skim, once per
+  //    chapter, in the background — the text is readable immediately and
+  //    dims its skim paragraphs when the labels arrive.
+  ensureAttentionLabels() {
+    const chapter = this.chapter;
+    const book = AppState.selectedBook;
+    if (!chapter || chapter.attentionLabels || AppState.mode === 'demo') {
+      this.applyAttentionLabels();
+      return;
+    }
+    if (!AppState.settings.apiKey) return;
+
+    const paragraphs = this.segments.flatMap(s => s.paragraphs);
+    callSegmentClassifier(paragraphs, chapter.title, book?.title || '')
+      .then(labels => {
+        if (this.chapter !== chapter) return; // user moved on to another chapter
+        chapter.attentionLabels = labels;
+        this.applyAttentionLabels();
+        if (book?.isPdfBook) {
+          dbPutChapter(book.id, { chapterNumber: chapter.number, attentionLabels: labels })
+            .catch(err => console.warn('Attention labels save failed:', err.message));
+        }
+      })
+      .catch(err => console.warn('Attention classification failed (text stays full-contrast):', err.message));
+  },
+
+  applyAttentionLabels() {
+    const labels = this.chapter?.attentionLabels;
+    if (!labels) return;
+    document.querySelectorAll('#reader-column p[data-pidx]').forEach(p => {
+      const label = labels[parseInt(p.dataset.pidx)];
+      p.classList.toggle('skim', label === 'skim');
+      if (label === 'skim') p.title = 'Skim-classified — tap to read at full contrast';
+    });
   },
 
   // Switch to the classic tutor split without tearing down reader state
@@ -888,6 +925,8 @@ const Reader = {
     if (this.segmentsDone >= this.segments.length) {
       col.appendChild(this.buildChapterCompleteEl());
     }
+
+    this.applyAttentionLabels();
   },
 
   buildSegmentEl(segment, index) {
@@ -895,9 +934,13 @@ const Reader = {
     wrap.className = 'reader-segment';
     wrap.id = `segment-${index}`;
 
-    segment.paragraphs.forEach(p => {
+    // Global paragraph index across all segments — attention labels align to it
+    const offset = this.segments.slice(0, index).reduce((n, s) => n + s.paragraphs.length, 0);
+
+    segment.paragraphs.forEach((p, i) => {
       const el = document.createElement('p');
       el.textContent = p;
+      el.dataset.pidx = offset + i;
       wrap.appendChild(el);
     });
 
@@ -997,6 +1040,12 @@ function initReader() {
   document.getElementById('btn-back-to-reader').addEventListener('click', () => Reader.showReader());
   const scrollEl = document.getElementById('reader-scroll');
   scrollEl.addEventListener('scroll', () => Reader.handleScroll(scrollEl), { passive: true });
+
+  // Skim paragraphs expand to full contrast on tap/click
+  document.getElementById('reader-column').addEventListener('click', (e) => {
+    const p = e.target.closest?.('p.skim');
+    if (p) p.classList.toggle('expanded');
+  });
 }
 
 
