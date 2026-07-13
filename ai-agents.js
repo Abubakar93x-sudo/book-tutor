@@ -736,6 +736,32 @@ async function callGapCardGenerator(diff, chapterText, chapterTitle, bookTitle) 
     : [];
 }
 
+// ── AGENT: TRANSFER PROBLEM ──────────────────────────────────────────────────
+// One application problem per chapter — dense-book comprehension is proven by
+// use, not recognition. The answer is graded Socratically by the quiz tutor.
+async function callTransferProblem(chapterText, concepts, chapterTitle, bookTitle) {
+  const prompt = `
+    You are a tutor writing ONE application problem for "${chapterTitle}"
+    from "${bookTitle}".
+
+    CHAPTER TEXT (base the problem on this):
+    ---
+    ${chapterText.substring(0, 20000)}
+    ---
+    Key concepts: ${concepts.join(', ')}
+
+    Write a single realistic scenario the student might actually face, where
+    applying this chapter's framework produces a concrete decision or action.
+    End with a direct question asking what they would do and why.
+    Keep it to 3-5 sentences. Do not hint at the answer.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "problem": "the scenario ending in a question" }
+  `;
+  const result = await queryGemini(prompt, true, null, 'deep');
+  return result.problem || '';
+}
+
 // ── AGENT 4: SOCRATIC TUTOR (TEACH & QUIZ MODES) ─────────────────────────────
 // Powers the two-tab tutor system.
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.

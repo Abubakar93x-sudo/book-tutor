@@ -37,10 +37,11 @@
   --text-secondary: #5c4a36;       /* Secondary grey */
   --text-muted:     #8a7860;       
 
-  /* Fonts */
-  --font-display:  'Cormorant Garamond', serif;
+  /* Two-font system (Quiet Library): Lora for anything book-related,
+     Inter for UI and data. Display duties fold into Lora. */
+  --font-display:  'Lora', serif;
   --font-body:     'Inter', sans-serif;
-  --font-reading:  'Lora', serif;  /* Lora serif for readability */
+  --font-reading:  'Lora', serif;
 
   /* Spacing */
   --radius-sm:  8px;
@@ -89,13 +90,12 @@ img { max-width: 100%; }
 .mt-4 { margin-top: 16px; }
 .mt-5 { margin-top: 20px; }
 
-/* ── 5. GLASS PANEL ── */
+/* ── 5. PANEL (flattened — glassmorphism retired for the Quiet Library look:
+       flat paper surfaces, 1px borders, no blur) ── */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
 }
 
 /* ── 6. BUTTONS ── */
@@ -3294,4 +3294,60 @@ body.immersive .immersive-only { display: flex !important; }
   font-family: var(--font-body);
   font-size: 0.88rem;
   color: var(--text-secondary);
+}
+
+/* ============================================================
+   FOCUS MODE — reading surfaces hide the app chrome
+============================================================ */
+body.focus-mode .mobile-bottom-nav { display: none !important; }
+@media (min-width: 901px) {
+  body.focus-mode .sidebar { display: none; }
+  body.focus-mode .main-content { margin-left: 0; }
+}
+
+/* ============================================================
+   LIBRARY — Continue hero row + time-left on cards
+============================================================ */
+.continue-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.4rem;
+}
+.continue-hero-body { flex: 1; min-width: 0; }
+.continue-hero-label {
+  font-family: var(--font-body);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--purple);
+}
+.continue-hero-title {
+  font-family: var(--font-reading);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0.15rem 0 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.continue-hero-where {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.book-card-timeleft {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
 }

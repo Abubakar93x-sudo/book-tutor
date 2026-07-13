@@ -424,18 +424,39 @@ function bookPaceWpm(book) {
   return Math.round(sorted[Math.floor(sorted.length / 2)]);
 }
 
-async function recordPaceSample(words, seconds) {
+// One write per completed segment: pace sample (when plausible), cumulative
+// words read, and the resume point that powers the library's Continue row.
+async function updateBookReadingProgress(words, seconds, chapterNumber) {
   const book = AppState.selectedBook;
   if (!book) return;
-  // Discard obvious outliers: sub-10s skims and >30min walk-aways
-  if (seconds < 10 || seconds > 1800) return;
-  const wpm = Math.round(words / (seconds / 60));
-  if (wpm < 40 || wpm > 900) return;
 
-  const samples = [...(book.paceSamples || []), wpm].slice(-20);
-  const updated = { ...book, paceSamples: samples, paceWpm: bookPaceWpm({ paceSamples: samples }) };
+  const updated = { ...book };
+  // Pace sample only when plausible: discard sub-10s skims, >30min walk-aways
+  if (seconds >= 10 && seconds <= 1800) {
+    const wpm = Math.round(words / (seconds / 60));
+    if (wpm >= 40 && wpm <= 900) {
+      updated.paceSamples = [...(book.paceSamples || []), wpm].slice(-20);
+      updated.paceWpm = bookPaceWpm(updated);
+    }
+  }
+  updated.wordsRead = (book.wordsRead || 0) + words;
+  updated.lastRead = { chapterNumber, at: Date.now() };
+
   AppState.selectedBook = updated;
   await dbPut('books', updated);
+}
+
+// Minutes left in a whole book at the reader's personal pace, or null when
+// the book has no word-count data (pre-existing books, knowledge books).
+function bookTimeLeftMinutes(book) {
+  if (!book?.wordsTotal) return null;
+  const remaining = Math.max(0, book.wordsTotal - (book.wordsRead || 0));
+  return remaining / bookPaceWpm(book);
+}
+
+// Focus mode: reading surfaces hide the app chrome (sidebar, mobile nav)
+function setFocusMode(on) {
+  document.body.classList.toggle('focus-mode', on);
 }
 
 function formatReadingTime(minutes) {
@@ -1015,6 +1036,44 @@ function initConsolidate() {
     .addEventListener('click', () => Consolidate.close());
 }
 
+// ── TRANSFER PROBLEM ──────────────────────────────────────────────────────────
+// One application scenario per chapter, dropped into the quiz tab where the
+// existing Socratic quiz loop grades the student's answer.
+async function startTransferProblem(triggerBtn) {
+  const chapter = AppState.selectedChapter;
+  const book = AppState.selectedBook;
+  if (!chapter || !book) return;
+
+  if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Building your scenario…'; }
+
+  let problem;
+  try {
+    if (AppState.mode === 'demo') {
+      problem = `Here's your application challenge:\n\nA colleague asks you to explain "${(chapter.concepts || [])[0] || chapter.title}" and how they should use it this week. What would you tell them to do, and why?`;
+    } else {
+      problem = await callTransferProblem(
+        chapter._chapterText || chapter.summary_15m || '',
+        chapter.concepts || [], chapter.title, book.title
+      );
+      problem = `Here's your application challenge:\n\n${problem}`;
+    }
+  } catch (err) {
+    console.warn('Transfer problem generation failed:', err.message);
+    showToast('Could not build an application problem right now.', 'error');
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Try an application problem →'; }
+    return;
+  }
+
+  if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Try an application problem →'; }
+
+  // Hand off to the quiz tab — its Socratic loop grades the answer
+  Reader.showTutor();
+  switchChatTab('quiz');
+  appendChatMessage('tutor', problem, 'quiz');
+  AppState.activeChatHistory.push({ role: 'tutor', content: problem, mode: 'quiz' });
+  saveChatMessageToDB('tutor', problem, 'quiz');
+}
+
 // ── READER ENGINE ─────────────────────────────────────────────────────────────
 // Drives the guided-reading surface: reveals segments progressively, records
 // reading time per segment, persists progress, and shows time-left estimates.
@@ -1043,6 +1102,7 @@ const Reader = {
     document.getElementById('reader-pane').style.display = 'flex';
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
     document.getElementById('btn-back-to-reader').style.display = 'inline-flex';
+    setFocusMode(true);
 
     const book = AppState.selectedBook;
     document.getElementById('reader-chapter-label').textContent =
@@ -1101,12 +1161,14 @@ const Reader = {
   showTutor() {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
+    setFocusMode(false);
   },
 
   showReader() {
     if (!this.active) return;
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
     document.getElementById('reader-pane').style.display = 'flex';
+    setFocusMode(true);
     this.startSegmentTimer(); // reading clock restarts when the text returns
   },
 
@@ -1118,6 +1180,7 @@ const Reader = {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
     document.getElementById('btn-back-to-reader').style.display = 'none';
+    setFocusMode(false);
   },
 
   startSegmentTimer() {
@@ -1183,11 +1246,17 @@ const Reader = {
     if (this.chapter.consolidated) {
       done.innerHTML = `
         <div class="seg-rule">Chapter consolidated ✓</div>
-        <p>Recall checked and review cards scheduled. Revisit the text any time, or talk it through with the tutor.</p>
+        <p>Recall checked and review cards scheduled. Prove it in the field — or talk it through with the tutor.</p>
       `;
+      const transferBtn = document.createElement('button');
+      transferBtn.className = 'btn btn-primary';
+      transferBtn.textContent = 'Try an application problem →';
+      transferBtn.addEventListener('click', () => startTransferProblem(transferBtn));
+      done.appendChild(transferBtn);
+
       const btn = document.createElement('button');
-      btn.className = 'btn btn-ghost';
-      btn.textContent = 'Open tutor →';
+      btn.className = 'cp-skip';
+      btn.textContent = 'Open tutor instead';
       btn.addEventListener('click', () => this.showTutor());
       done.appendChild(btn);
       return done;
@@ -1228,8 +1297,8 @@ const Reader = {
 
     // Persist progress + pace in the background — reading never blocks on I/O
     const book = AppState.selectedBook;
-    recordPaceSample(segment.wordCount, seconds)
-      .catch(err => console.warn('Pace save failed:', err.message));
+    updateBookReadingProgress(segment.wordCount, seconds, this.chapter.number)
+      .catch(err => console.warn('Reading progress save failed:', err.message));
     if (book?.isPdfBook) {
       dbPutChapter(book.id, { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone })
         .catch(err => console.warn('Progress save failed:', err.message));
@@ -1519,6 +1588,35 @@ async function renderLibrary() {
 
   emptyShelf.style.display = 'none';
 
+  // ── Continue hero: most recently read book, one tap to resume ──
+  const heroSlot = document.getElementById('continue-hero-slot');
+  if (heroSlot) {
+    heroSlot.innerHTML = '';
+    const lastBook = books
+      .filter(b => b.lastRead?.at)
+      .sort((a, b) => b.lastRead.at - a.lastRead.at)[0];
+    if (lastBook) {
+      const minsLeft = bookTimeLeftMinutes(lastBook);
+      const hero = document.createElement('div');
+      hero.className = 'continue-hero';
+      hero.innerHTML = `
+        <div class="continue-hero-body">
+          <div class="continue-hero-label">Continue</div>
+          <div class="continue-hero-title">${lastBook.title}</div>
+          <div class="continue-hero-where">Chapter ${lastBook.lastRead.chapterNumber}${
+            minsLeft != null ? ` · ≈ ${formatReadingTime(minsLeft)} left in the book` : ''}</div>
+        </div>
+        <button class="btn btn-primary" id="btn-continue-resume">Resume →</button>
+      `;
+      hero.querySelector('#btn-continue-resume').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await openBook(lastBook.id);
+        await loadChapter(lastBook.lastRead.chapterNumber);
+      });
+      heroSlot.appendChild(hero);
+    }
+  }
+
   // Render a card for each book
   books.forEach(book => {
     const totalChapters   = book.chapters.length;
@@ -1561,6 +1659,11 @@ async function renderLibrary() {
       ? `<div class="book-card-cover-placeholder" style="height: 100%; border-radius: 4px; overflow: hidden;"><img src="${book.coverUrl}" class="book-card-cover-image" alt="Cover" /></div>`
       : `<div class="book-card-cover-placeholder" style="background: linear-gradient(155deg, ${c1}, ${c2}); height: 100%; border-radius: 4px;"></div>`;
 
+    const minsLeft = bookTimeLeftMinutes(book);
+    const timeLeftHtml = minsLeft != null && pct < 100
+      ? `<div class="book-card-timeleft">≈ ${formatReadingTime(minsLeft)} left</div>`
+      : '';
+
     card.innerHTML = `
       <div class="book-card-cover">
         ${coverHtml}
@@ -1572,6 +1675,7 @@ async function renderLibrary() {
           <div class="book-card-progress-fill" style="width:${pct}%"></div>
         </div>
       </div>
+      ${timeLeftHtml}
       <div class="book-card-tags">
         ${tagsHtml}
       </div>
@@ -2714,6 +2818,9 @@ async function generateCurriculum() {
         isPdfBook:     true,
         totalPages,
         totalChapters: chapters.length,
+        // Total word count feeds the library's personalized time-left estimate
+        wordsTotal:    chapters.reduce((n, ch) => n + (ch.text ? ch.text.split(/\s+/).length : 0), 0),
+        wordsRead:     0,
         chapters:      chapters.map(ch => ({ number: ch.number, title: ch.title })),
         readyChapters:   [],
         studiedChapters: [],
@@ -3025,6 +3132,14 @@ function updateReviewBadge(count) {
 async function initReviewSession() {
   const dueCards = shuffleCards(await collectDueCards());
   updateReviewBadge(dueCards.length);
+
+  // Honest session estimate: ~30s per card
+  const subtitle = document.querySelector('#view-review .page-subtitle');
+  if (subtitle) {
+    subtitle.textContent = dueCards.length
+      ? `${dueCards.length} due today · about ${formatReadingTime(dueCards.length * 0.5)} · keys 1–4 rate, Space flips`
+      : 'Nothing due — spaced repetition schedules cards right before your brain would forget them.';
+  }
 
   if (dueCards.length === 0) {
     document.getElementById('review-empty-message').style.display = 'flex';
@@ -3475,6 +3590,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.querySelectorAll('.rate-btn').forEach(btn => {
     btn.addEventListener('click', () => rateCard(btn.dataset.score));
+  });
+
+  // Keyboard-first review: 1–4 rate the card, Space/Enter flips it
+  document.addEventListener('keydown', (e) => {
+    if (AppState.currentView !== 'review') return;
+    if (e.target.matches('input, textarea, select')) return;
+    const deck = document.getElementById('flashcard-deck');
+    if (!deck || deck.style.display === 'none') return;
+
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('flashcard-element').click();
+      return;
+    }
+    const scores = { '1': 'forgot', '2': 'hard', '3': 'good', '4': 'easy' };
+    if (scores[e.key] &&
+        document.getElementById('rating-controls').style.visibility === 'visible') {
+      rateCard(scores[e.key]);
+    }
   });
 
   document.getElementById('btn-restart-review-mock').addEventListener('click', initReviewSession);
