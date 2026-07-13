@@ -829,9 +829,9 @@ function renderChapterUI(chapter) {
   document.getElementById('chat-input').disabled = false;
   document.getElementById('btn-chat-send').disabled = false;
   document.getElementById('chat-mode-label').textContent = `Ch. ${chapter.number}: ${chapter.title}`;
-
-  document.getElementById('tutor-status-dot').className = 'status-dot green';
-  document.getElementById('tutor-status-text').textContent = 'Session Active';
+  document.getElementById('tutor-status-dot').className = 'switcher-dot green';
+  document.getElementById('chapter-switcher-trigger').title = `${book.title} — Ch. ${chapter.number}: ${chapter.title}`;
+  closeChapterSwitcher();
 
   // New chapter, new visuals — the previous chapter's image/diagram no longer applies
   document.getElementById('visual-panel').style.display = 'none';
@@ -989,6 +989,62 @@ function renderMessageBubble(role, content, container) {
   container.appendChild(msg);
 }
 
+// ── 14b. STREAMING TUTOR RESPONSES ──────────────────────────────────────────
+// Live mode streams real Gemini output via SSE; demo mode simulates the same
+// progressive reveal so both feel consistent. Raw text only during streaming
+// (no markdown parsing) to avoid rendering a broken half-open tag mid-stream;
+// finalizeStreamingTutorTurn does the real markdown + mastery-chip pass once
+// the full response is in.
+function createStreamingTutorTurn(container) {
+  const msg = document.createElement('div');
+  msg.className = 'turn tutor';
+  msg.innerHTML = `
+    <div class="avatar tutor">${TUTOR_AVATAR_SVG}</div>
+    <div class="turn-body">
+      <div class="turn-name">Tutor</div>
+      <div class="prose streaming-prose"></div>
+    </div>
+  `;
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+  return msg.querySelector('.prose');
+}
+
+function updateStreamingTutorTurn(proseEl, rawText) {
+  proseEl.textContent = rawText.replace(/\[MASTERED:.*?\]/g, '');
+  const container = proseEl.closest('.chat-history');
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+function finalizeStreamingTutorTurn(proseEl, fullText) {
+  const masteredConcepts = [...fullText.matchAll(/\[MASTERED: (.*?)\]/g)].map(m => m[1]);
+  const cleanContent = fullText.replace(/\[MASTERED:.*?\]/g, '').trim();
+  proseEl.innerHTML = renderMarkdown(cleanContent);
+  proseEl.classList.remove('streaming-prose');
+  const chips = masteredConcepts
+    .map(c => `<span class="mastery-chip">${CHECK_ICON_SVG}Mastered: ${c}</span>`)
+    .join('');
+  if (chips) proseEl.insertAdjacentHTML('afterend', chips);
+}
+
+// Demo mode has no real network stream to piggyback on, so this simulates
+// the same word-by-word reveal client-side against the already-generated text.
+function simulateStreamReveal(fullText, proseEl) {
+  return new Promise(resolve => {
+    const tokens = fullText.split(/(\s+)/); // keep whitespace so spacing looks natural
+    let i = 0;
+    const CHUNK = 3;
+    const timer = setInterval(() => {
+      i += CHUNK;
+      updateStreamingTutorTurn(proseEl, tokens.slice(0, i).join(''));
+      if (i >= tokens.length) {
+        clearInterval(timer);
+        resolve(fullText);
+      }
+    }, 35);
+  });
+}
+
 // ── 15. CHAT TAB SWITCHING ────────────────────────────────────────────────────
 function switchChatTab(mode) {
   AppState.currentChatMode = mode;
@@ -1032,7 +1088,7 @@ async function sendChatMessage() {
   // Show the user's message
   appendChatMessage('user', message, AppState.currentChatMode);
 
-  // Disable input and show a "typing" indicator
+  // Disable input while the response streams in
   input.disabled = true;
   document.getElementById('btn-chat-send').disabled = true;
 
@@ -1040,24 +1096,17 @@ async function sendChatMessage() {
     AppState.currentChatMode === 'teach' ? 'chat-history-teach' : 'chat-history-quiz'
   );
 
-  const typingBubble = document.createElement('div');
-  typingBubble.className = 'chat-msg tutor';
-  typingBubble.id = 'typing-indicator';
-  typingBubble.innerHTML = `<div class="msg-bubble" style="opacity:0.6;">
-    <span style="animation: pulse 1s infinite;">Thinking</span>
-    <span style="animation: pulse 1s 0.3s infinite;">.</span>
-    <span style="animation: pulse 1s 0.6s infinite;">.</span>
-    <span style="animation: pulse 1s 0.9s infinite;">.</span>
-  </div>`;
-  targetContainer.appendChild(typingBubble);
-  targetContainer.scrollTop = targetContainer.scrollHeight;
+  // A live turn that fills in as text arrives, instead of a "Thinking..." bubble
+  // followed by the whole response dropping in at once.
+  const streamEl = createStreamingTutorTurn(targetContainer);
 
   let response = '';
 
   try {
     if (AppState.mode === 'demo') {
-      // Demo mode: generate contextual mock response
-      response = generateDemoResponse(message, AppState.currentChatMode);
+      // Demo mode: generate contextual mock response, revealed the same way live text streams in
+      const full = generateDemoResponse(message, AppState.currentChatMode);
+      response = await simulateStreamReveal(full, streamEl);
     } else {
       // Live mode: fire tutor agent and (only in "+ Visuals" mode) the visual director in parallel.
       const chapter  = AppState.selectedChapter;
@@ -1070,7 +1119,10 @@ async function sendChatMessage() {
       const visualContext = `${activeConcept}. ${chapter.summary_15m.substring(0, 500)}`;
 
       const [tutorReply, visualData] = await Promise.all([
-        callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts, chapter._chapterText || ''),
+        callLiveTutorAgent(
+          message, AppState.currentChatMode, AppState.masteredConcepts, chapter._chapterText || '',
+          (piece, fullSoFar) => updateStreamingTutorTurn(streamEl, fullSoFar)
+        ),
         wantsVisuals
           ? callVisualDirectorAgent(visualContext, book.title, chapter.title)
           : Promise.resolve(null)
@@ -1087,9 +1139,6 @@ async function sendChatMessage() {
     response = `Connection Error: ${err.message}`;
   }
 
-  // Remove typing indicator
-  document.getElementById('typing-indicator')?.remove();
-
   // Check for mastery tags in the response (only in teach mode)
   if (AppState.currentChatMode === 'teach') {
     const masteryMatches = response.match(/\[MASTERED: (.*?)\]/g) || [];
@@ -1105,8 +1154,10 @@ async function sendChatMessage() {
     renderConceptMap(AppState.selectedChapter);
   }
 
-  // Show the AI response
-  appendChatMessage('tutor', response, AppState.currentChatMode);
+  // Replace the raw streamed text with the properly rendered version + mastery chips
+  finalizeStreamingTutorTurn(streamEl, response);
+  AppState.activeChatHistory.push({ role: 'tutor', content: response, mode: AppState.currentChatMode });
+  saveChatMessageToDB('tutor', response, AppState.currentChatMode);
 
   // Narrate the response, only in "+ Listen" mode
   if (AppState.tutorMode === 'listen') {
@@ -1970,11 +2021,37 @@ async function initTutorSelectors() {
     AppState.selectedBook = book;
     chapterSelect.disabled = false;
     populateChapterSelect(book);
+    document.getElementById('chat-mode-label').textContent = `${book.title} — choose a chapter`;
   });
 
   chapterSelect.addEventListener('change', (e) => {
     if (e.target.value) loadChapter(parseInt(e.target.value));
   });
+
+  initChapterSwitcher();
+}
+
+// ── 23b. CHAPTER SWITCHER POPOVER ───────────────────────────────────────────
+// Collapses the book/chapter pickers behind one compact header trigger,
+// instead of a permanent full-width bar, so the chat can run full height.
+function closeChapterSwitcher() {
+  document.getElementById('chapter-switcher-trigger')?.classList.remove('open');
+  document.getElementById('chapter-switcher-popover')?.classList.remove('open');
+}
+
+function initChapterSwitcher() {
+  const trigger = document.getElementById('chapter-switcher-trigger');
+  const popover = document.getElementById('chapter-switcher-popover');
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = popover.classList.toggle('open');
+    trigger.classList.toggle('open', isOpen);
+  });
+
+  popover.addEventListener('click', (e) => e.stopPropagation());
+
+  document.addEventListener('click', closeChapterSwitcher);
 }
 
 // ── 24. RESET DATABASE ────────────────────────────────────────────────────────

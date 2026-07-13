@@ -7,6 +7,7 @@
 
 // Gemini 2.5 Flash — current free tier model.
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_STREAM_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent';
 
 // ── HELPER: GET API KEY ──────────────────────────────────────────────────────
 // Safely retrieves the API key. Checks AppState first, then falls back to the
@@ -106,6 +107,59 @@ async function queryGemini(prompt, responseJson = false, fileUri = null) {
   } catch (e) {
     throw new Error(`Failed to parse JSON response: ${e.message}\nRaw: ${toParse.slice(0, 200)}`);
   }
+}
+
+// ── CORE: GEMINI STREAMING REQUEST ────────────────────────────────────────────
+// Same as queryGemini but uses the streamGenerateContent SSE endpoint, calling
+// onChunk(piece, fullTextSoFar) as text arrives instead of waiting for the
+// whole response. Plain-text only — not used for the JSON curriculum calls,
+// since incremental JSON isn't safely parseable mid-stream.
+async function queryGeminiStream(prompt, onChunk) {
+  const apiKey = getApiKey();
+  const url = `${GEMINI_STREAM_URL}?key=${apiKey}&alt=sse`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || 'Failed to query Gemini API.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE frames are "data: {...}" lines separated by newlines
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep the last (possibly incomplete) line for the next read
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const jsonStr = trimmed.slice(5).trim();
+      if (!jsonStr) continue;
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const piece = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (piece) {
+          fullText += piece;
+          onChunk(piece, fullText);
+        }
+      } catch (_) { /* incomplete JSON fragment split across reads — ignore */ }
+    }
+  }
+
+  if (!fullText) throw new Error('Received empty response from Gemini API.');
+  return fullText;
 }
 
 // ── GEMINI FILE UPLOAD ────────────────────────────────────────────────────────
@@ -478,7 +532,7 @@ async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.
 // "quiz" mode:  Comprehensive chapter review and retention testing.
 // chapterText: raw PDF text for the chapter (optional) — enables direct quoting.
-async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '') {
+async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '', onChunk = null) {
   const bookTitle = AppState.selectedBook.title;
   const chapter = AppState.selectedChapter;
 
@@ -569,7 +623,9 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
   }
 
   try {
-    return await queryGemini(prompt, false);
+    return onChunk
+      ? await queryGeminiStream(prompt, onChunk)
+      : await queryGemini(prompt, false);
   } catch (error) {
     console.error('Tutor API call failed:', error);
     return `[Tutor System] Failed to reach Gemini API. Please check your key and connection.\nError: ${error.message}`;

@@ -142,17 +142,6 @@ img { max-width: 100%; }
 .btn-lg { padding: 14px 28px; font-size: 16px; border-radius: 12px; }
 .btn-sm { padding: 7px 14px; font-size: 13px; }
 
-/* Send button round style */
-.btn-send {
-  width: 46px;
-  height: 46px;
-  padding: 0;
-  border-radius: 12px;
-  flex-shrink: 0;
-  font-size: 18px;
-  justify-content: center;
-}
-
 /* ── 7. APP SHELL LAYOUT ── */
 .app-shell {
   display: flex;
@@ -773,23 +762,73 @@ img { max-width: 100%; }
 .page-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 6px; }
 
 /* ── 16. TUTOR ARENA ── */
-.tutor-bar {
-  padding: 24px 32px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(252, 251, 249, 0.95);
-  backdrop-filter: blur(20px);
-  position: sticky;
-  top: 0;
-  z-index: 50;
+
+/* Chapter switcher — collapses the book/chapter pickers behind one compact
+   trigger in the chat header instead of a permanent full-width bar */
+.chapter-switcher { position: relative; }
+
+.chapter-switcher-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 6px 10px 6px 8px;
+  border-radius: 8px;
+  transition: var(--transition);
+  max-width: 320px;
+}
+.chapter-switcher-trigger:hover { background: var(--bg-hover); }
+
+.chapter-switcher-trigger span:not(.switcher-dot) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.tutor-bar-title {
-  font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 14px;
+.switcher-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
 }
+.switcher-dot.green {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16,185,129,0.5);
+  animation: pulse 2s infinite;
+}
+
+.switcher-chevron { width: 13px; height: 13px; flex-shrink: 0; color: var(--text-muted); transition: transform 0.2s; }
+.chapter-switcher-trigger.open .switcher-chevron { transform: rotate(180deg); }
+
+.chapter-switcher-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 70;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(36,26,16,0.18);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 280px;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.chapter-switcher-popover.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.chapter-switcher-popover .select-input { min-width: 0; width: 100%; }
 
 .selector-row {
   display: flex;
@@ -833,37 +872,11 @@ img { max-width: 100%; }
 .select-input:focus { outline: none; border-color: var(--purple-light); box-shadow: 0 0 0 3px var(--purple-dim); }
 .select-input:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.status-pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-left: auto;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.status-dot.green {
-  background: #10b981;
-  box-shadow: 0 0 8px rgba(16,185,129,0.5);
-  animation: pulse 2s infinite;
-}
-
-/* Tutor split layout — chat is the primary surface, study notes is an on-demand drawer */
+/* Tutor split layout — chat is the primary surface, study notes is an on-demand drawer.
+   No more standalone tutor-bar above it, so this now runs the full viewport height. */
 .tutor-split {
   position: relative;
-  height: calc(100vh - 140px);
+  height: 100vh;
   overflow: hidden;
 }
 
@@ -1058,7 +1071,7 @@ img { max-width: 100%; }
 
 /* ── 17. CHAT PANE ── */
 .chat-header {
-  padding: 18px 24px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
   flex-shrink: 0;
@@ -1152,6 +1165,20 @@ img { max-width: 100%; }
 .prose p:last-child { margin-bottom: 0; }
 .prose strong { color: var(--purple); font-weight: 600; }
 
+/* Streaming reveal — a soft blinking caret while a response is still arriving */
+.streaming-prose { white-space: pre-wrap; }
+.streaming-prose::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--purple);
+  animation: caretBlink 0.9s step-start infinite;
+}
+@keyframes caretBlink { 50% { opacity: 0; } }
+
 .user-bubble {
   font-family: var(--font-body);
   font-size: 14.5px;
@@ -1238,33 +1265,69 @@ img { max-width: 100%; }
 }
 .prompt-chip:hover { color: var(--text-primary); border-color: var(--purple-light); }
 
-/* Chat input bar */
+/* Chat input bar — a floating ChatGPT-style composer: one seamless pill,
+   no toolbar chrome of its own, centered to the same reading column as the
+   message stream above it. */
 .chat-input-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 16px 24px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-surface);
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 4px 24px 20px;
   flex-shrink: 0;
 }
 
-.chat-textarea {
-  flex: 1;
-  background: var(--bg-elevated);
+.composer-pill {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--bg-surface);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
-  color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.6;
-  padding: 11px 14px;
-  resize: none;
+  border-radius: 26px;
+  padding: 8px 8px 8px 20px;
+  box-shadow: 0 8px 24px rgba(36,26,16,0.10);
   transition: var(--transition);
 }
 
-.chat-textarea:focus { outline: none; border-color: var(--purple-light); box-shadow: 0 0 0 3px var(--purple-dim); }
-.chat-textarea:disabled { opacity: 0.4; cursor: not-allowed; }
+.composer-pill:focus-within { border-color: var(--purple-light); box-shadow: 0 0 0 3px var(--purple-dim), 0 8px 24px rgba(36,26,16,0.10); }
+
+.chat-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 9px 0;
+  max-height: 160px;
+  resize: none;
+}
+
+.chat-textarea:focus { outline: none; }
+.chat-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 .chat-textarea::placeholder { color: var(--text-muted); }
+
+.composer-send {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--grad-purple);
+  color: var(--text-primary);
+  transition: var(--transition);
+}
+.composer-send svg { width: 15px; height: 15px; }
+.composer-send:hover:not(:disabled) { transform: scale(1.05); }
+.composer-send:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.composer-hint {
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
 
 /* Resume / recap card shown at the top of chat when returning with saved history */
 .resume-card {
@@ -2015,14 +2078,12 @@ img { max-width: 100%; }
   .tutor-split {
     height: calc(100dvh - 64px - env(safe-area-inset-bottom, 0px)) !important;
   }
-  .tutor-bar { padding: 16px; }
-  .tutor-bar-title { font-size: 18px; }
   .selector-row { gap: 10px; }
   .select-input { min-width: 0; flex: 1; }
-  .status-pill { display: none; } /* Reclaim space on small screens */
 
-  .chat-header { padding: 12px 16px; gap: 10px; }
-  .chat-title { font-size: 15px; }
+  .chat-header { padding: 10px 14px; gap: 10px; }
+  .chapter-switcher-trigger { max-width: 200px; font-size: 12.5px; }
+  .chapter-switcher-popover { width: calc(100vw - 28px); left: 0; }
   .chat-tab { padding: 6px 10px; font-size: 11px; }
   .composer-tools { padding: 0 16px 8px; }
   .chat-history { padding: 16px 16px; }
@@ -2042,8 +2103,8 @@ img { max-width: 100%; }
   .study-pane.drawer-open { transform: translateY(0); }
 
   .chat-history { padding: 16px; }
-  .recap-bar { padding: 0 16px 4px; }
-  .chat-input-bar { padding: 10px 12px; }
+  .chat-input-bar { padding: 4px 16px 16px; }
+  .composer-pill { padding: 6px 6px 6px 16px; }
   .chat-textarea { font-size: 16px; } /* Prevent iOS zoom on input focus */
 
   /* ── Review/Flashcard ── */

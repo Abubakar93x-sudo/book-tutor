@@ -211,31 +211,6 @@
       ============================================================ -->
       <section id="view-tutor" class="view">
 
-        <!-- Tutor Selector Bar -->
-        <div class="tutor-bar">
-          <div class="tutor-bar-left">
-            <h2 class="tutor-bar-title">Tutor Arena</h2>
-            <div class="selector-row">
-              <div class="selector-group">
-                <label for="tutor-book-select">Book</label>
-                <select id="tutor-book-select" class="select-input">
-                  <option value="">-- Choose a Book --</option>
-                </select>
-              </div>
-              <div class="selector-group">
-                <label for="tutor-chapter-select">Chapter</label>
-                <select id="tutor-chapter-select" class="select-input" disabled>
-                  <option value="">-- Choose a Chapter --</option>
-                </select>
-              </div>
-              <div class="status-pill" id="tutor-status-pill">
-                <span class="status-dot" id="tutor-status-dot"></span>
-                <span id="tutor-status-text">Select a book to begin</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Chapter Generating Overlay (PDF books — shown while AI generates chapter curriculum) -->
         <div id="chapter-generating-overlay" style="display:none; position:absolute; inset:0; background:rgba(252,251,249,0.95); backdrop-filter:blur(8px); z-index:200; flex-direction:column; align-items:center; justify-content:center; gap:20px; border-radius:var(--radius-lg);">
           <div style="width:56px; height:56px; border:3px solid rgba(45,106,79,0.2); border-top-color:var(--purple-light); border-radius:50%; animation:spin 0.9s linear infinite;"></div>
@@ -254,9 +229,27 @@
           <div class="chat-pane glass-panel">
             <!-- Chat Header -->
             <div class="chat-header">
-              <div class="chat-header-info">
-                <h3 class="chat-title">Socratic Tutor</h3>
-                <span class="chat-subtitle" id="chat-mode-label">Select a chapter to unlock</span>
+              <!-- Chapter switcher: collapses the book/chapter pickers behind one trigger -->
+              <div class="chapter-switcher">
+                <button class="chapter-switcher-trigger" id="chapter-switcher-trigger" type="button">
+                  <span class="switcher-dot" id="tutor-status-dot"></span>
+                  <span id="chat-mode-label">Select a book to begin</span>
+                  <svg class="switcher-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
+                </button>
+                <div class="chapter-switcher-popover" id="chapter-switcher-popover">
+                  <div class="selector-group">
+                    <label for="tutor-book-select">Book</label>
+                    <select id="tutor-book-select" class="select-input">
+                      <option value="">-- Choose a Book --</option>
+                    </select>
+                  </div>
+                  <div class="selector-group">
+                    <label for="tutor-chapter-select">Chapter</label>
+                    <select id="tutor-chapter-select" class="select-input" disabled>
+                      <option value="">-- Choose a Chapter --</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <!-- Chat Mode Tabs (shown after chapter is selected) -->
@@ -317,16 +310,19 @@
 
             <!-- Chat Input -->
             <div class="chat-input-bar">
-              <textarea
-                id="chat-input"
-                class="chat-textarea"
-                placeholder="Type your response... (Enter to send, Shift+Enter for new line)"
-                rows="2"
-                disabled
-              ></textarea>
-              <button id="btn-chat-send" class="btn btn-primary btn-send" disabled>
-                ➤
-              </button>
+              <div class="composer-pill">
+                <textarea
+                  id="chat-input"
+                  class="chat-textarea"
+                  placeholder="Message the tutor…"
+                  rows="1"
+                  disabled
+                ></textarea>
+                <button id="btn-chat-send" class="composer-send" disabled title="Send">
+                  <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 10l14-7-5 7 5 7-14-7z"/></svg>
+                </button>
+              </div>
+              <div class="composer-hint">Enter to send · Shift + Enter for a new line</div>
             </div>
           </div>
 
