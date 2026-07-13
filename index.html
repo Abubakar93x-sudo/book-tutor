@@ -223,6 +223,29 @@
         </div>
 
 
+        <!-- ============================================================
+          READER PANE — primary learning surface for PDF chapters.
+          Shows the real chapter text in a serif column, split into
+          segments. The tutor split below is summoned on demand.
+        ============================================================ -->
+        <div id="reader-pane" class="reader-pane" style="display:none;">
+          <div class="reader-topbar" id="reader-topbar">
+            <button class="reader-top-btn" id="btn-reader-exit" title="Back to library">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l-5 5 5 5"/></svg>
+            </button>
+            <span class="reader-title" id="reader-chapter-label"></span>
+            <div class="reader-progress-track"><div class="reader-progress-fill" id="reader-progress-fill" style="width:0%"></div></div>
+            <span class="reader-time" id="reader-time-left"></span>
+            <button class="reader-top-btn reader-top-btn-labelled" id="btn-reader-tutor" title="Open tutor &amp; study notes">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-3.5 3v-3H5a2 2 0 01-2-2v-6z"/></svg>
+              Tutor
+            </button>
+          </div>
+          <div class="reader-scroll" id="reader-scroll">
+            <div class="reader-column" id="reader-column"></div>
+          </div>
+        </div>
+
         <div class="tutor-split">
 
           <!-- Chat Pane — now the primary, full-width surface -->
@@ -286,6 +309,10 @@
 
             <!-- Composer tools — mode switch, Recap, and Study Notes live here now, not in the header -->
             <div class="composer-tools" id="composer-tools" style="display:none;">
+              <button id="btn-back-to-reader" class="tool-chip" style="display:none;" title="Back to the chapter text">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5c1.8-.9 3.6-1.3 5.5-1.1 1 .1 1.9.4 2.5.9v11c-.6-.5-1.5-.8-2.5-.9-1.9-.2-3.7.2-5.5 1.1v-11z"/><path d="M18 4.5c-1.8-.9-3.6-1.3-5.5-1.1-1 .1-1.9.4-2.5.9v11c.6-.5 1.5-.8 2.5-.9 1.9-.2 3.7.2 5.5 1.1v-11z"/></svg>
+                Reader
+              </button>
               <button class="tool-chip active" data-mode="read" title="Read silently">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 5h12M4 10h12M4 15h8"/></svg>
                 Read

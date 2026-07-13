@@ -349,6 +349,302 @@ function splitPdfIntoChapters(rawText) {
   return meaningful.map((ch, i) => ({ number: i + 1, title: ch.title, text: ch.text }));
 }
 
+// ── CHAPTER SEGMENTATION (guided reading) ────────────────────────────────────
+// Splits a chapter's raw text into reading segments of ~1,000–1,500 words,
+// breaking only at paragraph boundaries. Segments are derived deterministically
+// from the stored chapter text, so only `segmentsDone` needs persisting.
+
+// PDF.js gives us a stream of lines, not paragraphs. Group lines into readable
+// paragraph blocks: break on blank lines, or once a block has real length and
+// the line ends a sentence.
+function groupLinesIntoParagraphs(text) {
+  const lines = text.split('\n');
+  const paras = [];
+  let cur = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      if (cur.length) { paras.push(cur.join(' ')); cur = []; }
+      continue;
+    }
+    cur.push(line);
+    const joined = cur.join(' ');
+    if (joined.length > 350 && /[.!?"'”’]$/.test(line)) {
+      paras.push(joined);
+      cur = [];
+    }
+  }
+  if (cur.length) paras.push(cur.join(' '));
+  return paras;
+}
+
+function splitChapterIntoSegments(rawText) {
+  const TARGET_WORDS = 1200;
+  const paras = groupLinesIntoParagraphs(rawText);
+
+  const segments = [];
+  let curParas = [];
+  let curWords = 0;
+
+  for (const p of paras) {
+    const w = p.split(/\s+/).length;
+    curParas.push(p);
+    curWords += w;
+    if (curWords >= TARGET_WORDS) {
+      segments.push({ paragraphs: curParas, wordCount: curWords });
+      curParas = [];
+      curWords = 0;
+    }
+  }
+  if (curParas.length) {
+    // A tiny tail reads better merged into the previous segment
+    if (segments.length && curWords < TARGET_WORDS * 0.3) {
+      const last = segments[segments.length - 1];
+      last.paragraphs.push(...curParas);
+      last.wordCount += curWords;
+    } else {
+      segments.push({ paragraphs: curParas, wordCount: curWords });
+    }
+  }
+  return segments.map((s, i) => ({ index: i, ...s }));
+}
+
+// ── READING PACE TRACKING ─────────────────────────────────────────────────────
+// Personal pace = rolling median of per-segment words-per-minute samples,
+// stored on the book doc. Dense books legitimately read slower, so pace is
+// per-book. Cold start uses a conservative default until 3 samples exist.
+
+const READING_DEFAULT_WPM = 200;
+
+function bookPaceWpm(book) {
+  const samples = book?.paceSamples || [];
+  if (samples.length < 3) return READING_DEFAULT_WPM;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return Math.round(sorted[Math.floor(sorted.length / 2)]);
+}
+
+async function recordPaceSample(words, seconds) {
+  const book = AppState.selectedBook;
+  if (!book) return;
+  // Discard obvious outliers: sub-10s skims and >30min walk-aways
+  if (seconds < 10 || seconds > 1800) return;
+  const wpm = Math.round(words / (seconds / 60));
+  if (wpm < 40 || wpm > 900) return;
+
+  const samples = [...(book.paceSamples || []), wpm].slice(-20);
+  const updated = { ...book, paceSamples: samples, paceWpm: bookPaceWpm({ paceSamples: samples }) };
+  AppState.selectedBook = updated;
+  await dbPut('books', updated);
+}
+
+function formatReadingTime(minutes) {
+  if (!isFinite(minutes) || minutes < 0) return '';
+  const m = Math.max(1, Math.round(minutes));
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+// ── READER ENGINE ─────────────────────────────────────────────────────────────
+// Drives the guided-reading surface: reveals segments progressively, records
+// reading time per segment, persists progress, and shows time-left estimates.
+// Segment boundaries are the hook point where checkpoints attach.
+
+const Reader = {
+  active: false,
+  chapter: null,
+  segments: [],
+  segmentsDone: 0,
+  segmentStartedAt: null,
+  _lastScrollY: 0,
+
+  wordsTotal() { return this.segments.reduce((n, s) => n + s.wordCount, 0); },
+  wordsDone()  { return this.segments.slice(0, this.segmentsDone).reduce((n, s) => n + s.wordCount, 0); },
+
+  open(chapter) {
+    const text = chapter._chapterText || '';
+    if (!text) return false;
+
+    this.chapter = chapter;
+    this.segments = splitChapterIntoSegments(text);
+    this.segmentsDone = Math.min(chapter.segmentsDone || 0, this.segments.length);
+    this.active = true;
+
+    document.getElementById('reader-pane').style.display = 'flex';
+    document.querySelector('#view-tutor .tutor-split').style.display = 'none';
+    document.getElementById('btn-back-to-reader').style.display = 'inline-flex';
+
+    const book = AppState.selectedBook;
+    document.getElementById('reader-chapter-label').textContent =
+      `Ch ${chapter.number} · ${chapter.title}`;
+
+    this.renderColumn();
+    this.updateTopbar();
+    this.startSegmentTimer();
+
+    // Resume where the reader left off
+    const scrollEl = document.getElementById('reader-scroll');
+    scrollEl.scrollTop = 0;
+    const current = document.getElementById(`segment-${this.segmentsDone}`);
+    if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
+    return true;
+  },
+
+  // Switch to the classic tutor split without tearing down reader state
+  showTutor() {
+    document.getElementById('reader-pane').style.display = 'none';
+    document.querySelector('#view-tutor .tutor-split').style.display = '';
+  },
+
+  showReader() {
+    if (!this.active) return;
+    document.querySelector('#view-tutor .tutor-split').style.display = 'none';
+    document.getElementById('reader-pane').style.display = 'flex';
+    this.startSegmentTimer(); // reading clock restarts when the text returns
+  },
+
+  close() {
+    this.active = false;
+    this.chapter = null;
+    this.segments = [];
+    this.segmentStartedAt = null;
+    document.getElementById('reader-pane').style.display = 'none';
+    document.querySelector('#view-tutor .tutor-split').style.display = '';
+    document.getElementById('btn-back-to-reader').style.display = 'none';
+  },
+
+  startSegmentTimer() {
+    this.segmentStartedAt = Date.now();
+  },
+
+  renderColumn() {
+    const col = document.getElementById('reader-column');
+    col.innerHTML = '';
+    const visibleCount = Math.min(this.segmentsDone + 1, this.segments.length);
+
+    for (let i = 0; i < visibleCount; i++) {
+      col.appendChild(this.buildSegmentEl(this.segments[i], i));
+    }
+
+    if (this.segmentsDone >= this.segments.length) {
+      col.appendChild(this.buildChapterCompleteEl());
+    }
+  },
+
+  buildSegmentEl(segment, index) {
+    const wrap = document.createElement('div');
+    wrap.className = 'reader-segment';
+    wrap.id = `segment-${index}`;
+
+    segment.paragraphs.forEach(p => {
+      const el = document.createElement('p');
+      el.textContent = p;
+      wrap.appendChild(el);
+    });
+
+    // Boundary after the segment: done segments get a quiet rule; the current
+    // segment gets the continue affordance (replaced by checkpoints in v2.3).
+    const boundary = document.createElement('div');
+    boundary.className = 'segment-boundary';
+
+    const rule = document.createElement('div');
+    rule.className = 'seg-rule';
+    rule.textContent = `Segment ${index + 1} of ${this.segments.length}`;
+    boundary.appendChild(rule);
+
+    if (index === this.segmentsDone) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary btn-continue-segment';
+      btn.textContent = index + 1 === this.segments.length
+        ? 'Finish chapter →'
+        : 'Continue reading →';
+      btn.addEventListener('click', () => this.completeSegment(index));
+      boundary.appendChild(btn);
+    } else {
+      rule.textContent += ' ✓';
+      rule.classList.add('seg-done');
+    }
+
+    wrap.appendChild(boundary);
+    return wrap;
+  },
+
+  buildChapterCompleteEl() {
+    const done = document.createElement('div');
+    done.className = 'reader-chapter-done';
+    done.innerHTML = `
+      <div class="seg-rule">Chapter complete</div>
+      <p>You've read the whole chapter. Review it with the tutor, or head back to the library.</p>
+    `;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = 'Open tutor →';
+    btn.addEventListener('click', () => this.showTutor());
+    done.appendChild(btn);
+    return done;
+  },
+
+  async completeSegment(index) {
+    if (index !== this.segmentsDone) return; // only the current segment advances
+
+    const segment = this.segments[index];
+    const seconds = this.segmentStartedAt ? (Date.now() - this.segmentStartedAt) / 1000 : 0;
+
+    this.segmentsDone = index + 1;
+    this.startSegmentTimer();
+
+    // Reveal the next segment (or the completion card) in place
+    this.renderColumn();
+    const next = document.getElementById(`segment-${this.segmentsDone}`);
+    if (next) next.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    this.updateTopbar();
+
+    // Persist progress + pace in the background — reading never blocks on I/O
+    const book = AppState.selectedBook;
+    recordPaceSample(segment.wordCount, seconds)
+      .catch(err => console.warn('Pace save failed:', err.message));
+    if (book?.isPdfBook) {
+      dbPutChapter(book.id, { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone })
+        .catch(err => console.warn('Progress save failed:', err.message));
+      if (this.segmentsDone >= this.segments.length) {
+        dbUpdateBookProgress(book.id, 'studied', this.chapter.number)
+          .catch(() => {});
+        showToast('Chapter finished — nice work.', 'success');
+      }
+    }
+  },
+
+  updateTopbar() {
+    const total = this.wordsTotal();
+    const done = this.wordsDone();
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    document.getElementById('reader-progress-fill').style.width = `${pct}%`;
+
+    const wpm = bookPaceWpm(AppState.selectedBook);
+    const minutesLeft = (total - done) / wpm;
+    document.getElementById('reader-time-left').textContent =
+      done >= total ? 'Done' : `${formatReadingTime(minutesLeft)} left`;
+  },
+
+  // Top bar hides while scrolling down, returns on scroll-up
+  handleScroll(scrollEl) {
+    const y = scrollEl.scrollTop;
+    const topbar = document.getElementById('reader-topbar');
+    topbar.classList.toggle('topbar-hidden', y > this._lastScrollY && y > 64);
+    this._lastScrollY = y;
+  }
+};
+
+function initReader() {
+  document.getElementById('btn-reader-exit').addEventListener('click', () => {
+    Reader.close();
+    navigateTo('library');
+  });
+  document.getElementById('btn-reader-tutor').addEventListener('click', () => Reader.showTutor());
+  document.getElementById('btn-back-to-reader').addEventListener('click', () => Reader.showReader());
+  const scrollEl = document.getElementById('reader-scroll');
+  scrollEl.addEventListener('scroll', () => Reader.handleScroll(scrollEl), { passive: true });
+}
+
 
 
 // ── FIREBASE AUTH ─────────────────────────────────────────────────────────────
@@ -781,6 +1077,10 @@ async function loadChapter(chapterNumber) {
     const chapterKey = `${book.id}-ch${chapterNum}`;
     await loadChatHistoryFromDB(chapterKey);
     renderChapterUI(chapter);
+
+    // Guided reading: chapters with real text open in the reader pane
+    if (chapter._chapterText) Reader.open(chapter);
+    else Reader.close();
     return;
   }
 
@@ -793,6 +1093,7 @@ async function loadChapter(chapterNumber) {
   const chapterKey = `${book.id}-ch${chapter.number}`;
   await loadChatHistoryFromDB(chapterKey);
   renderChapterUI(chapter);
+  Reader.close(); // knowledge books have no text to read — chat is the surface
 }
 
 // ── 10a2. CHAT EMPTY STATE ───────────────────────────────────────────────────
@@ -2228,8 +2529,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Open IndexedDB (settings only — books/chat use Firestore)
   await openDatabase();
 
-  // Init Firebase Auth (shows sign-in overlay if not logged in)
-  initAuth();
+  // Init Firebase Auth (shows sign-in overlay if not logged in).
+  // Guarded: if the Firebase CDN failed to load (offline or blocked network),
+  // keep the rest of the UI alive instead of dying mid-init with every
+  // event listener below left unwired.
+  try {
+    initAuth();
+  } catch (err) {
+    console.error('Firebase unavailable — cloud sync disabled:', err);
+    showToast('Cloud sync unavailable. Check your connection and reload.', 'error', 8000);
+  }
 
   // Wire up sign-in / sign-out buttons
   document.getElementById('btn-google-signin').addEventListener('click', signInWithGoogle);
@@ -2439,6 +2748,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTutorModeSelect();
   initStudyDrawer();
   initNoteCapture();
+  initReader();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 

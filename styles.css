@@ -2735,3 +2735,163 @@ body.immersive .immersive-only { display: flex !important; }
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* ============================================================
+   READER PANE — guided deep reading surface (v2)
+   The book text is the interface: a quiet serif column with a
+   thin progress top bar that hides while reading.
+============================================================ */
+.reader-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-surface);
+  position: relative;
+}
+
+.reader-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 52px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  transition: transform 0.2s ease-out;
+}
+.reader-topbar.topbar-hidden { transform: translateY(-100%); }
+
+.reader-top-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.reader-top-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.reader-top-btn svg { width: 16px; height: 16px; }
+
+.reader-title {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+}
+
+.reader-progress-track {
+  flex: 1;
+  max-width: 260px;
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(36, 26, 16, 0.07);
+  overflow: hidden;
+}
+.reader-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--purple);
+  transition: width 0.3s ease-out;
+}
+
+.reader-time {
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--purple);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reader-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.reader-column {
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: 2.2rem 1.4rem 5rem;
+  font-family: var(--font-reading);
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: #2c2114;
+}
+
+.reader-segment p {
+  margin: 0 0 1.05rem;
+}
+
+/* Segment boundary: hairline rule + label; current one carries the action */
+.segment-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin: 2rem 0 2.4rem;
+}
+
+.seg-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.seg-rule::before,
+.seg-rule::after {
+  content: '';
+  height: 1px;
+  background: var(--border);
+  flex: 1;
+}
+.seg-rule.seg-done { color: var(--teal); }
+
+.btn-continue-segment { min-width: 220px; }
+
+.reader-chapter-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 2.5rem 0;
+  text-align: center;
+}
+.reader-chapter-done p {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  max-width: 42ch;
+}
+
+@media (max-width: 768px) {
+  .reader-pane { height: 100dvh; }
+  .reader-topbar { gap: 10px; padding: 0 12px; }
+  .reader-title { max-width: 18ch; font-size: 0.76rem; }
+  .reader-progress-track { max-width: 120px; }
+  .reader-top-btn-labelled { font-size: 0.74rem; padding: 5px 8px; }
+  .reader-column { font-size: 0.98rem; line-height: 1.72; padding: 1.6rem 1.1rem 4rem; }
+}
