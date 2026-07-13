@@ -661,6 +661,81 @@ async function callCheckpointGrader(segmentText, question, answer, hintRound = 0
   };
 }
 
+// ── AGENT: RECALL DIFF (brain dump grader) ───────────────────────────────────
+// Diffs the student's end-of-chapter free recall against the chapter's
+// concepts, grounded in the chapter text. Free recall is the single most
+// effective retention technique (Karpicke & Blunt) — this makes it honest.
+async function callRecallDiff(brainDump, concepts, chapterText, chapterTitle, bookTitle) {
+  const prompt = `
+    You are a reading tutor reviewing a student's free-recall "brain dump"
+    written immediately after finishing "${chapterTitle}" from "${bookTitle}".
+
+    CHAPTER TEXT (ground truth — judge against this, not your own knowledge):
+    ---
+    ${chapterText.substring(0, 30000)}
+    ---
+    Chapter concepts: ${concepts.join(', ')}
+
+    STUDENT'S BRAIN DUMP:
+    """
+    ${brainDump.substring(0, 8000)}
+    """
+
+    Sort every chapter concept into exactly one bucket:
+    - "recalled": the dump shows they understood it (their own words count)
+    - "missed":   the dump doesn't mention or imply it
+    - "mixedUp":  the dump gets it wrong or contradicts the text — include a
+                  one-sentence correction and a short exact quote from the text
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "recalled": ["Concept"],
+      "missed": ["Concept"],
+      "mixedUp": [{ "concept": "Concept", "note": "You said X — the text says Y.", "quote": "short exact quote" }]
+    }
+  `;
+  const result = await queryGemini(prompt, true, null, 'deep');
+  return {
+    recalled: Array.isArray(result.recalled) ? result.recalled : [],
+    missed: Array.isArray(result.missed) ? result.missed : [],
+    mixedUp: Array.isArray(result.mixedUp) ? result.mixedUp : []
+  };
+}
+
+// ── AGENT: GAP CARD GENERATOR ────────────────────────────────────────────────
+// Builds review flashcards from the student's ACTUAL gaps: missed and
+// mixed-up concepts get 2 cards each (one recall, one application), solidly
+// recalled concepts get at most 1 light card.
+async function callGapCardGenerator(diff, chapterText, chapterTitle, bookTitle) {
+  const prompt = `
+    You are a spaced-repetition card writer for "${chapterTitle}" from "${bookTitle}".
+
+    The student just free-recalled this chapter with these results:
+    - Recalled well: ${diff.recalled.join(', ') || '(none)'}
+    - Missed entirely: ${diff.missed.join(', ') || '(none)'}
+    - Mixed up: ${diff.mixedUp.map(m => m.concept).join(', ') || '(none)'}
+
+    CHAPTER TEXT (base all cards on this):
+    ---
+    ${chapterText.substring(0, 30000)}
+    ---
+
+    Create flashcards weighted toward their gaps:
+    - Each MISSED or MIXED-UP concept: 2 cards — one plain recall question,
+      one application question ("You're facing situation Z — how does this
+      concept apply?")
+    - Each RECALLED concept: at most 1 light card, or none if trivial
+    - Answers must be concise (1-3 sentences) and faithful to the text
+
+    Return ONLY valid JSON, no markdown fences:
+    { "flashcards": [{ "front": "question", "back": "answer", "concept": "concept name" }] }
+  `;
+  const result = await queryGemini(prompt, true);
+  return Array.isArray(result.flashcards)
+    ? result.flashcards.filter(c => c.front && c.back)
+    : [];
+}
+
 // ── AGENT 4: SOCRATIC TUTOR (TEACH & QUIZ MODES) ─────────────────────────────
 // Powers the two-tab tutor system.
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.

@@ -3192,3 +3192,106 @@ body.immersive .immersive-only { display: flex !important; }
 }
 .reader-segment p.skim:hover { opacity: 0.6; }
 .reader-segment p.skim.expanded { opacity: 1; }
+
+/* ============================================================
+   CONSOLIDATE OVERLAY — brain dump + recall diff
+============================================================ */
+.consolidate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: var(--bg-surface);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 3.5rem 1.4rem 3rem;
+}
+
+.consolidate-body {
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+.consolidate-body .prime-kicker { text-align: center; margin-bottom: 0; }
+
+.consolidate-title {
+  font-family: var(--font-reading);
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.consolidate-canvas {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-reading);
+  font-size: 0.98rem;
+  line-height: 1.6;
+  padding: 1rem 1.1rem;
+  resize: vertical;
+  min-height: 160px;
+}
+.consolidate-canvas:focus { outline: none; border-color: var(--purple); }
+
+.consolidate-actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.4rem;
+}
+
+.recall-buckets {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.recall-col-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.55rem;
+}
+.recall-col-head i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+.recall-col.recalled .recall-col-head { color: var(--teal); }
+.recall-col.recalled .recall-col-head i { background: var(--teal); }
+.recall-col.missed .recall-col-head { color: var(--text-muted); }
+.recall-col.missed .recall-col-head i { background: var(--text-muted); }
+.recall-col.mixed .recall-col-head { color: var(--gold); }
+.recall-col.mixed .recall-col-head i { background: var(--gold); }
+
+.recall-memo {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0.4rem 0.4rem 0;
+  color: var(--text-primary);
+}
+.recall-col.mixed .recall-memo { display: block; }
+
+.consolidate-prediction { margin-top: 0.2rem; }
+.consolidate-prediction .recall-memo { font-style: italic; display: block; }
+
+.consolidate-calibration {
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}

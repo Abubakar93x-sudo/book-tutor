@@ -804,6 +804,217 @@ const Checkpoint = {
   }
 };
 
+// ── CONSOLIDATE CONTROLLER ────────────────────────────────────────────────────
+// End-of-chapter consolidation: one free-recall brain dump, diffed against
+// the chapter's concepts (grounded in the text), then review cards generated
+// from the student's actual gaps. Also surfaces the Prime prediction and the
+// chapter's confidence-vs-accuracy calibration line.
+
+const Consolidate = {
+  chapter: null,
+  diff: null,
+
+  open(chapter) {
+    this.chapter = chapter;
+    this.diff = null;
+    document.getElementById('consolidate-overlay').style.display = 'flex';
+    this.renderDump();
+  },
+
+  close() {
+    document.getElementById('consolidate-overlay').style.display = 'none';
+    this.chapter = null;
+    this.diff = null;
+  },
+
+  renderDump() {
+    const body = document.getElementById('consolidate-body');
+    body.innerHTML = `
+      <div class="prime-kicker">Brain dump · Chapter ${this.chapter.number}</div>
+      <h3 class="consolidate-title">Write everything you remember.<br>Don't look back.</h3>
+      <textarea class="consolidate-canvas" id="consolidate-canvas" rows="7"
+        placeholder="Concepts, arguments, examples — in any order, in your own words…"></textarea>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-consolidate-submit">Check my recall →</button>
+      </div>
+    `;
+    document.getElementById('btn-consolidate-submit')
+      .addEventListener('click', () => this.submitDump());
+    document.getElementById('consolidate-canvas').focus();
+  },
+
+  async submitDump() {
+    const dump = document.getElementById('consolidate-canvas').value.trim();
+    if (dump.length < 20) {
+      showToast('Give it a real attempt — write at least a sentence or two.', 'info');
+      return;
+    }
+
+    const body = document.getElementById('consolidate-body');
+    body.innerHTML = `
+      <div class="cp-loading" style="justify-content:center; padding:3rem 0;">
+        <span class="cp-spinner"></span> Comparing your recall against the chapter…
+      </div>
+    `;
+
+    const chapter = this.chapter;
+    const book = AppState.selectedBook;
+
+    try {
+      let diff;
+      if (AppState.mode === 'demo') {
+        const cs = chapter.concepts || [];
+        diff = { recalled: cs.slice(0, 1), missed: cs.slice(1, 2), mixedUp: [] };
+      } else {
+        diff = await callRecallDiff(
+          dump, chapter.concepts || [], chapter._chapterText || chapter.summary_15m || '',
+          chapter.title, book.title
+        );
+      }
+      this.diff = diff;
+
+      // Persist the dump + diff (background)
+      if (book?.isPdfBook) {
+        dbPutChapter(book.id, {
+          chapterNumber: chapter.number,
+          brainDump: dump,
+          recallDiff: diff
+        }).catch(err => console.warn('Brain dump save failed:', err.message));
+      }
+
+      this.renderResults();
+    } catch (err) {
+      console.warn('Recall diff failed:', err.message);
+      body.innerHTML = `
+        <div class="cp-fallback" style="text-align:center; padding:2rem 0;">
+          Couldn't grade your recall right now — your brain dump still did its job.
+        </div>
+        <div class="consolidate-actions">
+          <button class="btn btn-primary" id="btn-consolidate-done">Done</button>
+        </div>
+      `;
+      document.getElementById('btn-consolidate-done')
+        .addEventListener('click', () => this.finish(false));
+    }
+  },
+
+  renderResults() {
+    const { recalled, missed, mixedUp } = this.diff;
+    const chapter = this.chapter;
+    const body = document.getElementById('consolidate-body');
+
+    const bucket = (title, cls, items) => items.length ? `
+      <div class="recall-col ${cls}">
+        <div class="recall-col-head"><i></i>${title}</div>
+        ${items.join('')}
+      </div>` : '';
+
+    const recalledHtml = bucket('Recalled', 'recalled',
+      recalled.map(c => `<span class="recall-memo">${c}</span>`));
+    const missedHtml = bucket('Missed', 'missed',
+      missed.map(c => `<span class="recall-memo">${c}</span>`));
+    const mixedHtml = bucket('Mixed up', 'mixed',
+      mixedUp.map(m => `<span class="recall-memo">${m.note}${m.quote ? `<blockquote class="cp-quote">“${m.quote}”</blockquote>` : ''}</span>`));
+
+    // Calibration line from this chapter's checkpoints
+    const cps = (chapter._checkpoints || []).filter(c => c.confidence);
+    let calibrationHtml = '';
+    if (cps.length) {
+      const confident = cps.filter(c => c.confidence !== 'shaky');
+      const confidentRight = confident.filter(c => c.result === 'pass');
+      calibrationHtml = `<div class="consolidate-calibration">
+        You felt confident on <strong>${confident.length}</strong> check${confident.length === 1 ? '' : 's'}
+        and were right on <strong>${confidentRight.length}</strong>.
+      </div>`;
+    }
+
+    // Prime prediction, shown back against reality
+    const pred = (chapter.predictions || [])[0];
+    const predHtml = pred ? `
+      <div class="consolidate-prediction">
+        <span class="recall-col-head" style="color:var(--indigo)"><i style="background:var(--indigo)"></i>Your prediction, before reading</span>
+        <span class="recall-memo">“${pred.answer}”</span>
+      </div>` : '';
+
+    const gapCount = missed.length + mixedUp.length;
+    const cta = gapCount
+      ? `Create my review cards →`
+      : `Finish chapter →`;
+
+    body.innerHTML = `
+      <div class="prime-kicker">Recall check · Chapter ${chapter.number}</div>
+      <div class="recall-buckets">
+        ${recalledHtml}${missedHtml}${mixedHtml}
+      </div>
+      ${predHtml}
+      ${calibrationHtml}
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-consolidate-cards">${cta}</button>
+      </div>
+    `;
+    document.getElementById('btn-consolidate-cards')
+      .addEventListener('click', () => this.generateCards());
+  },
+
+  async generateCards() {
+    const chapter = this.chapter;
+    const book = AppState.selectedBook;
+    const btn = document.getElementById('btn-consolidate-cards');
+    btn.disabled = true;
+    btn.textContent = 'Writing your cards…';
+
+    try {
+      let cards;
+      if (AppState.mode === 'demo') {
+        cards = (this.diff.missed || []).map(c => ({
+          front: `What does the chapter say about "${c}"?`,
+          back: chapter.summary_10s || 'See the chapter text.',
+          concept: c
+        }));
+      } else if (this.diff.missed.length + this.diff.mixedUp.length + this.diff.recalled.length === 0) {
+        cards = [];
+      } else {
+        cards = await callGapCardGenerator(
+          this.diff, chapter._chapterText || chapter.summary_15m || '',
+          chapter.title, book.title
+        );
+      }
+
+      if (cards.length) {
+        // Tag provenance so reviews can point back to this chapter
+        const stamped = cards.map(c => ({ ...c, source: 'consolidation', chapterNumber: chapter.number }));
+        chapter.flashcards = [...(chapter.flashcards || []), ...stamped];
+        if (book?.isPdfBook) {
+          await dbPutChapter(book.id, { chapterNumber: chapter.number, flashcards: chapter.flashcards });
+        }
+        showToast(`${stamped.length} review card${stamped.length === 1 ? '' : 's'} added to your deck.`, 'success');
+      }
+      this.finish(true);
+    } catch (err) {
+      console.warn('Gap card generation failed:', err.message);
+      showToast('Could not create cards right now — the recall check still counts.', 'info');
+      this.finish(true);
+    }
+  },
+
+  finish(consolidated) {
+    const chapter = this.chapter;
+    const book = AppState.selectedBook;
+    if (chapter && book?.isPdfBook && consolidated) {
+      chapter.consolidated = true;
+      dbPutChapter(book.id, { chapterNumber: chapter.number, consolidated: true })
+        .catch(() => {});
+    }
+    this.close();
+    if (Reader.active) Reader.renderColumn();
+  }
+};
+
+function initConsolidate() {
+  document.getElementById('btn-consolidate-close')
+    .addEventListener('click', () => Consolidate.close());
+}
+
 // ── READER ENGINE ─────────────────────────────────────────────────────────────
 // Drives the guided-reading surface: reveals segments progressively, records
 // reading time per segment, persists progress, and shows time-left estimates.
@@ -968,15 +1179,35 @@ const Reader = {
   buildChapterCompleteEl() {
     const done = document.createElement('div');
     done.className = 'reader-chapter-done';
+
+    if (this.chapter.consolidated) {
+      done.innerHTML = `
+        <div class="seg-rule">Chapter consolidated ✓</div>
+        <p>Recall checked and review cards scheduled. Revisit the text any time, or talk it through with the tutor.</p>
+      `;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-ghost';
+      btn.textContent = 'Open tutor →';
+      btn.addEventListener('click', () => this.showTutor());
+      done.appendChild(btn);
+      return done;
+    }
+
     done.innerHTML = `
       <div class="seg-rule">Chapter complete</div>
-      <p>You've read the whole chapter. Review it with the tutor, or head back to the library.</p>
+      <p>One last step locks it in: write down everything you remember, and your review cards get built from whatever you miss.</p>
     `;
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
-    btn.textContent = 'Open tutor →';
-    btn.addEventListener('click', () => this.showTutor());
+    btn.textContent = 'Brain dump →';
+    btn.addEventListener('click', () => Consolidate.open(this.chapter));
     done.appendChild(btn);
+
+    const tutorBtn = document.createElement('button');
+    tutorBtn.className = 'cp-skip';
+    tutorBtn.textContent = 'Open tutor instead';
+    tutorBtn.addEventListener('click', () => this.showTutor());
+    done.appendChild(tutorBtn);
     return done;
   },
 
@@ -3178,6 +3409,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initNoteCapture();
   initReader();
   initPrime();
+  initConsolidate();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 
