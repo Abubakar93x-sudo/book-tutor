@@ -10,6 +10,7 @@ const AppState = {
   mode: 'demo',             // 'live' or 'demo'
   currentView: 'library',   // library | tutor | sandbox | review
   currentChatMode: 'teach', // 'teach' or 'quiz'
+  tutorMode: 'read',        // 'read' | 'listen' | 'visuals' — how the tutor delivers each lesson
   selectedBook: null,       // The full book object currently being studied
   selectedChapter: null,    // The full chapter object currently being studied
   activeChatHistory: [],    // Array of { role, content, mode } message objects
@@ -180,6 +181,12 @@ async function dbPut(storeName, data) {
     await col.add(data);
     return;
   }
+  if (storeName === 'notes') {
+    const col = userCol('notes');
+    if (!col) return;
+    await col.add(data);
+    return;
+  }
 }
 
 async function dbGet(storeName, key) {
@@ -204,6 +211,12 @@ async function dbGetAll(storeName) {
     const col = userCol('chat');
     if (!col) return [];
     const snap = await col.orderBy('timestamp').get();
+    return snap.docs.map(d => d.data());
+  }
+  if (storeName === 'notes') {
+    const col = userCol('notes');
+    if (!col) return [];
+    const snap = await col.orderBy('timestamp', 'desc').get();
     return snap.docs.map(d => d.data());
   }
   return [];
@@ -778,14 +791,39 @@ function renderChapterUI(chapter) {
   document.getElementById('tutor-status-dot').className = 'status-dot green';
   document.getElementById('tutor-status-text').textContent = 'Session Active';
 
+  // New chapter, new visuals — the previous chapter's image/diagram no longer applies
+  document.getElementById('visual-panel').style.display = 'none';
+  document.getElementById('recap-bar').style.display = 'flex';
+
   switchChatTab('teach');
 
   const teachHistory = AppState.activeChatHistory.filter(m => m.mode === 'teach');
   if (teachHistory.length === 0) {
     const greeting = `Welcome! You're about to study **Chapter ${chapter.number}: ${chapter.title}** from *${book.title}*.\n\nAre you ready to begin? Just say "yes" when you're ready and I'll start teaching!`;
     appendChatMessage('tutor', greeting, 'teach');
+  } else {
+    const masteredCount = AppState.masteredConcepts.length;
+    const totalCount = chapter.concepts.length;
+    const teachContainer = document.getElementById('chat-history-teach');
+    const card = document.createElement('div');
+    card.className = 'resume-card';
+    card.innerHTML = `
+      <div class="rc-label">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10a6 6 0 1 1 2 4.5"/><path d="M4 14v-3.5H7.5"/></svg>
+        Picking up where you left off
+      </div>
+      <p>You've mastered <b>${masteredCount} of ${totalCount}</b> concepts in this chapter. Want a quick recap, or jump straight back in?</p>
+      <div class="resume-actions">
+        <button class="rc-btn primary" id="btn-resume-recap">Recap last lesson</button>
+        <button class="rc-btn ghost" id="btn-resume-continue">Jump back in</button>
+      </div>
+    `;
+    teachContainer.prepend(card);
+    card.querySelector('#btn-resume-recap').addEventListener('click', () => { card.remove(); requestRecap(); });
+    card.querySelector('#btn-resume-continue').addEventListener('click', () => card.remove());
   }
 
+  renderNotesTab();
   populateSandboxSelectors();
 }
 
@@ -955,10 +993,10 @@ async function sendChatMessage() {
       // Demo mode: generate contextual mock response
       response = generateDemoResponse(message, AppState.currentChatMode);
     } else {
-      // Live mode: fire tutor agent and visual director in parallel.
-      // The visual director runs only in teach mode (not quiz).
+      // Live mode: fire tutor agent and (only in "+ Visuals" mode) the visual director in parallel.
       const chapter  = AppState.selectedChapter;
       const book     = AppState.selectedBook;
+      const wantsVisuals = AppState.tutorMode === 'visuals' && AppState.currentChatMode === 'teach';
 
       // Determine current active concept for the visual director
       const activeConcept = chapter.concepts
@@ -967,7 +1005,7 @@ async function sendChatMessage() {
 
       const [tutorReply, visualData] = await Promise.all([
         callLiveTutorAgent(message, AppState.currentChatMode, AppState.masteredConcepts, chapter._chapterText || ''),
-        AppState.currentChatMode === 'teach'
+        wantsVisuals
           ? callVisualDirectorAgent(visualContext, book.title, chapter.title)
           : Promise.resolve(null)
       ]);
@@ -1004,12 +1042,9 @@ async function sendChatMessage() {
   // Show the AI response
   appendChatMessage('tutor', response, AppState.currentChatMode);
 
-  // Narrate the response
-  NarrationEngine.speak(response);
-
-  // Auto-enter immersive mode on first teach response
-  if (AppState.currentChatMode === 'teach') {
-    enterImmersiveMode();
+  // Narrate the response, only in "+ Listen" mode
+  if (AppState.tutorMode === 'listen') {
+    NarrationEngine.speak(response);
   }
 
   // Re-enable input
@@ -1132,27 +1167,209 @@ async function updateVisualPanel(imagePrompt, diagramDef) {
   }
 }
 
-// ── 18c. IMMERSIVE MODE ─────────────────────────────────────────────────────
-// Fullscreen teaching mode: expands the chat pane to cover the entire screen,
-// moves the AI image to the right column, and shows pause/exit controls.
-function enterImmersiveMode() {
-  if (document.body.classList.contains('immersive')) return;
-  document.body.classList.add('immersive');
-  // Ensure we are on the tutor view
-  navigateTo('tutor');
-  // Scroll chat to bottom
-  const history = document.getElementById(
-    AppState.currentChatMode === 'teach' ? 'chat-history-teach' : 'chat-history-quiz'
-  );
-  if (history) history.scrollTop = history.scrollHeight;
+// ── 18c. TUTOR ARENA v2 — MODE SELECT ───────────────────────────────────────
+// Controls how the tutor delivers each response: silent text, narrated text,
+// or text with generated visuals. Chat is the primary surface by default now,
+// so this replaces the old auto-triggered "immersive mode" fullscreen hack.
+function initTutorModeSelect() {
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      AppState.tutorMode = mode;
+      document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      if (mode !== 'listen') NarrationEngine.stop();
+      if (mode !== 'visuals') {
+        document.getElementById('visual-panel').style.display = 'none';
+      }
+    });
+  });
 }
 
-function exitImmersiveMode() {
-  document.body.classList.remove('immersive');
-  NarrationEngine.stop();
-  // Reset pause button label
-  const pauseBtn = document.getElementById('btn-immersive-pause');
-  if (pauseBtn) { pauseBtn.textContent = '⏸ Pause'; pauseBtn.dataset.paused = ''; }
+// ── 18d. TUTOR ARENA v2 — STUDY NOTES DRAWER ────────────────────────────────
+function initStudyDrawer() {
+  const drawer   = document.getElementById('study-drawer');
+  const backdrop = document.getElementById('drawer-backdrop');
+  const toggle   = document.getElementById('btn-study-drawer-toggle');
+
+  const openDrawer = () => {
+    drawer.classList.add('drawer-open');
+    backdrop.classList.add('visible');
+    toggle.classList.add('is-open');
+  };
+  const closeDrawer = () => {
+    drawer.classList.remove('drawer-open');
+    backdrop.classList.remove('visible');
+    toggle.classList.remove('is-open');
+  };
+
+  toggle.addEventListener('click', () => {
+    drawer.classList.contains('drawer-open') ? closeDrawer() : openDrawer();
+  });
+  document.getElementById('btn-close-drawer').addEventListener('click', closeDrawer);
+  backdrop.addEventListener('click', closeDrawer);
+
+  // Exposed so JS elsewhere (deep dive) can close the drawer programmatically
+  window._closeStudyDrawer = closeDrawer;
+  window._openStudyDrawer = openDrawer;
+}
+
+// ── 18e. TUTOR ARENA v2 — RECAP ON DEMAND ───────────────────────────────────
+// Reuses the existing Socratic Tutor agent (which already receives full chat
+// history + mastery state) with a synthetic recap request — no new agent needed.
+function showRecapMarker(label) {
+  const containerId = AppState.currentChatMode === 'teach' ? 'chat-history-teach' : 'chat-history-quiz';
+  const container = document.getElementById(containerId);
+  const marker = document.createElement('div');
+  marker.className = 'recap-marker';
+  marker.textContent = label;
+  container.appendChild(marker);
+  container.scrollTop = container.scrollHeight;
+}
+
+function requestRecap() {
+  if (!AppState.selectedChapter) return;
+  if (AppState.currentChatMode !== 'teach') switchChatTab('teach');
+  showRecapMarker(`Recapping Chapter ${AppState.selectedChapter.number} so far`);
+  const input = document.getElementById('chat-input');
+  input.value = 'Can you give me a quick recap of everything we\'ve covered in this chapter so far?';
+  sendChatMessage();
+}
+
+function requestDeepDive(quote, chapterNumber, chapterTitle) {
+  if (!AppState.selectedChapter) return;
+  window._closeStudyDrawer && window._closeStudyDrawer();
+  if (AppState.currentChatMode !== 'teach') switchChatTab('teach');
+  showRecapMarker(`Deep-diving: "${quote.length > 60 ? quote.slice(0, 60) + '…' : quote}"`);
+  const input = document.getElementById('chat-input');
+  const fromOtherChapter = chapterNumber !== AppState.selectedChapter.number;
+  input.value = fromOtherChapter
+    ? `Can you go deeper on this idea from Chapter ${chapterNumber} ("${chapterTitle}"): "${quote}"?`
+    : `Can you go deeper on this: "${quote}"?`;
+  sendChatMessage();
+}
+
+// ── 18f. TUTOR ARENA v2 — HIGHLIGHT-TO-NOTE CAPTURE ─────────────────────────
+function initNoteCapture() {
+  const popover  = document.getElementById('selection-popover');
+  const saveBtn  = document.getElementById('btn-save-note');
+  let pendingText = '';
+
+  function hidePopover() {
+    popover.style.display = 'none';
+    pendingText = '';
+  }
+
+  // selectionchange (not mouseup) so this works consistently for both mouse
+  // drag-selection on desktop and press-and-hold selection on touch devices.
+  let selTimer = null;
+  document.addEventListener('selectionchange', () => {
+    clearTimeout(selTimer);
+    selTimer = setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel && sel.toString().trim();
+
+      if (!text || !AppState.selectedChapter) { hidePopover(); return; }
+
+      // Only offer to save selections made inside a tutor message bubble
+      const anchorEl = sel.anchorNode?.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode;
+      const bubble = anchorEl?.closest?.('.chat-msg.tutor .msg-bubble');
+      if (!bubble) { hidePopover(); return; }
+
+      pendingText = text;
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const popoverWidth = 150; // rough estimate to keep it on-screen
+      popover.style.display = 'flex';
+      popover.style.top  = Math.max(8, rect.top - 44) + 'px';
+      popover.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth)) + 'px';
+    }, 200);
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (!popover.contains(e.target)) hidePopover();
+  });
+  document.addEventListener('scroll', hidePopover, true);
+
+  saveBtn.addEventListener('click', async () => {
+    if (!pendingText || !AppState.selectedBook || !AppState.selectedChapter) return;
+    const book = AppState.selectedBook;
+    const chapter = AppState.selectedChapter;
+    await dbPut('notes', {
+      bookId: book.id,
+      bookTitle: book.title,
+      chapterNumber: chapter.number,
+      chapterTitle: chapter.title,
+      quote: pendingText,
+      timestamp: Date.now()
+    });
+    showToast('Saved to Notes', 'success', 1800);
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    await renderNotesTab();
+  });
+}
+
+// ── 18g. TUTOR ARENA v2 — NOTES TAB ─────────────────────────────────────────
+function relativeTime(ts) {
+  const diffMs = Date.now() - ts;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  return `${days}d ago`;
+}
+
+async function renderNotesTab() {
+  const book = AppState.selectedBook;
+  const container = document.getElementById('notes-list-container');
+  const badge = document.getElementById('note-count-badge');
+  const tabCount = document.getElementById('notes-tab-count');
+  if (!book || !container) return;
+
+  const allNotes = await dbGetAll('notes');
+  const notes = allNotes.filter(n => n.bookId === book.id);
+
+  if (notes.length === 0) {
+    container.innerHTML = `<p class="notes-empty-hint">Select any text in the tutor's messages to save it here, tagged with its chapter. Click a note to deep-dive into it.</p>`;
+  } else {
+    container.innerHTML = notes.map(n => `
+      <div class="note-card">
+        <div class="note-meta">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4.5c1.8-.9 3.6-1.3 5.5-1.1 1 .1 1.9.4 2.5.9v11c-.6-.5-1.5-.8-2.5-.9-1.9-.2-3.7.2-5.5 1.1v-11z"/><path d="M18 4.5c-1.8-.9-3.6-1.3-5.5-1.1-1 .1-1.9.4-2.5.9v11c.6-.5 1.5-.8 2.5-.9 1.9-.2 3.7.2 5.5 1.1v-11z"/></svg>
+          Ch. ${n.chapterNumber} — ${n.chapterTitle}
+        </div>
+        <p class="note-quote">"${n.quote}"</p>
+        <div class="note-actions">
+          <span class="note-deepdive" data-quote="${encodeURIComponent(n.quote)}" data-chapter="${n.chapterNumber}" data-chapter-title="${encodeURIComponent(n.chapterTitle)}">
+            Deep dive into this
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
+          </span>
+          <span class="note-date">${relativeTime(n.timestamp)}</span>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.note-deepdive').forEach(el => {
+      el.addEventListener('click', () => {
+        requestDeepDive(
+          decodeURIComponent(el.dataset.quote),
+          parseInt(el.dataset.chapter),
+          decodeURIComponent(el.dataset.chapterTitle)
+        );
+      });
+    });
+  }
+
+  if (tabCount) tabCount.textContent = notes.length > 0 ? ` (${notes.length})` : '';
+  if (badge) {
+    if (notes.length > 0) { badge.style.display = 'flex'; badge.textContent = notes.length; }
+    else badge.style.display = 'none';
+  }
 }
 
 // ── 19. ADD BOOK MODAL FLOW ───────────────────────────────────────────────────
@@ -1922,35 +2139,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── NARRATION ENGINE INIT ──
   NarrationEngine.init();
 
-  // Narration toggle button
-  document.getElementById('btn-narrate-toggle').addEventListener('click', () => {
-    const isOn = NarrationEngine.toggle();
-    const btn = document.getElementById('btn-narrate-toggle');
-    btn.textContent = isOn ? '🔊' : '🔇';
-    btn.classList.toggle('narrate-off', !isOn);
-    showToast(isOn ? 'Narration on' : 'Narration off', 'info', 1500);
-  });
+  // ── TUTOR ARENA v2: mode select, study drawer, recap, note capture ──
+  initTutorModeSelect();
+  initStudyDrawer();
+  initNoteCapture();
 
-  // Immersive pause button
-  document.getElementById('btn-immersive-pause').addEventListener('click', () => {
-    const btn = document.getElementById('btn-immersive-pause');
-    const isPaused = btn.dataset.paused === 'true';
-    if (isPaused) {
-      // Resume: re-enable narration
-      NarrationEngine.enabled = true;
-      btn.textContent = '⏸ Pause';
-      btn.dataset.paused = 'false';
-    } else {
-      // Pause: stop current narration and disable
-      NarrationEngine.stop();
-      NarrationEngine.enabled = false;
-      btn.textContent = '▶ Resume';
-      btn.dataset.paused = 'true';
-    }
-  });
-
-  // Immersive exit button
-  document.getElementById('btn-immersive-exit').addEventListener('click', exitImmersiveMode);
+  document.getElementById('btn-recap').addEventListener('click', requestRecap);
 
   // Stop narration when user starts typing a reply
   document.getElementById('chat-input').addEventListener('input', function () {
