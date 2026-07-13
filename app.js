@@ -770,6 +770,48 @@ async function loadChapter(chapterNumber) {
   renderChapterUI(chapter);
 }
 
+// ── 10a2. CHAT EMPTY STATE ───────────────────────────────────────────────────
+// Shown instead of a plain greeting bubble when a chapter has no history yet.
+// Built dynamically (like the resume-card) rather than sitting static in the
+// HTML, since loadChatHistoryFromDB clears #chat-history-teach's innerHTML on
+// every chapter load — a static element there would be destroyed immediately.
+function showChatEmptyState(chapter, book) {
+  hideChatEmptyState();
+
+  const prompts = [
+    "Yes, let's begin",
+    'Give me the 10-second summary first',
+    "What's the most important idea in this chapter?"
+  ];
+
+  const el = document.createElement('div');
+  el.className = 'empty-state';
+  el.id = 'chat-empty-state';
+  el.innerHTML = `
+    <div class="empty-mark">${TUTOR_AVATAR_SVG}</div>
+    <h3>Ready to start ${chapter.title}?</h3>
+    <p>${chapter.summary_10s || `Chapter ${chapter.number} of ${book.title}.`} Say the word and we'll take it page by page.</p>
+    <div class="prompt-chips">
+      ${prompts.map(p => `<button class="prompt-chip">${p}</button>`).join('')}
+    </div>
+  `;
+
+  el.querySelectorAll('.prompt-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      hideChatEmptyState();
+      const input = document.getElementById('chat-input');
+      input.value = chip.textContent;
+      sendChatMessage();
+    });
+  });
+
+  document.getElementById('chat-history-teach').appendChild(el);
+}
+
+function hideChatEmptyState() {
+  document.getElementById('chat-empty-state')?.remove();
+}
+
 // ── 10b. RENDER CHAPTER UI ───────────────────────────────────────────────────
 // Shared renderer — called by both PDF on-demand path and knowledge-book path.
 function renderChapterUI(chapter) {
@@ -793,15 +835,15 @@ function renderChapterUI(chapter) {
 
   // New chapter, new visuals — the previous chapter's image/diagram no longer applies
   document.getElementById('visual-panel').style.display = 'none';
-  document.getElementById('recap-bar').style.display = 'flex';
+  document.getElementById('composer-tools').style.display = 'flex';
 
   switchChatTab('teach');
 
   const teachHistory = AppState.activeChatHistory.filter(m => m.mode === 'teach');
   if (teachHistory.length === 0) {
-    const greeting = `Welcome! You're about to study **Chapter ${chapter.number}: ${chapter.title}** from *${book.title}*.\n\nAre you ready to begin? Just say "yes" when you're ready and I'll start teaching!`;
-    appendChatMessage('tutor', greeting, 'teach');
+    showChatEmptyState(chapter, book);
   } else {
+    hideChatEmptyState();
     const masteredCount = AppState.masteredConcepts.length;
     const totalCount = chapter.concepts.length;
     const teachContainer = document.getElementById('chat-history-teach');
@@ -909,19 +951,41 @@ function appendChatMessage(role, content, mode) {
   container.scrollTop = container.scrollHeight;
 }
 
+const TUTOR_AVATAR_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.5c1.8-.9 3.6-1.3 5.5-1.1 1 .1 1.9.4 2.5.9v11c-.6-.5-1.5-.8-2.5-.9-1.9-.2-3.7.2-5.5 1.1v-11z"/><path d="M18 4.5c-1.8-.9-3.6-1.3-5.5-1.1-1 .1-1.9.4-2.5.9v11c.6-.5 1.5-.8 2.5-.9 1.9-.2 3.7.2 5.5 1.1v-11z"/></svg>`;
+const CHECK_ICON_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4 4 8-8"/></svg>`;
+
 function renderMessageBubble(role, content, container) {
   const msg = document.createElement('div');
-  msg.className = `chat-msg ${role}`;
 
-  // Parse basic markdown in AI messages
-  const displayContent = role === 'tutor'
-    ? renderMarkdown(content).replace(/\[MASTERED:.*?\]/g, '')
-    : content;
+  // Mastery tags get their own chip rather than being silently stripped
+  const masteredConcepts = [...content.matchAll(/\[MASTERED: (.*?)\]/g)].map(m => m[1]);
+  const cleanContent = content.replace(/\[MASTERED:.*?\]/g, '').trim();
 
-  msg.innerHTML = `
-    <div class="msg-bubble">${displayContent}</div>
-    <div class="msg-meta">${role === 'tutor' ? '🤖 AI Tutor' : '👤 You'} · just now</div>
-  `;
+  if (role === 'tutor') {
+    msg.className = 'turn tutor';
+    const prose = renderMarkdown(cleanContent);
+    const chips = masteredConcepts
+      .map(c => `<span class="mastery-chip">${CHECK_ICON_SVG}Mastered: ${c}</span>`)
+      .join('');
+    msg.innerHTML = `
+      <div class="avatar tutor">${TUTOR_AVATAR_SVG}</div>
+      <div class="turn-body">
+        <div class="turn-name">Tutor</div>
+        <div class="prose">${prose}</div>
+        ${chips}
+      </div>
+    `;
+  } else {
+    msg.className = 'turn user';
+    const initial = (AppState.currentUser?.displayName || AppState.currentUser?.email || 'You').charAt(0).toUpperCase();
+    msg.innerHTML = `
+      <div class="avatar user">${initial}</div>
+      <div class="turn-body">
+        <div class="turn-name">You</div>
+        <span class="user-bubble">${cleanContent}</span>
+      </div>
+    `;
+  }
   container.appendChild(msg);
 }
 
@@ -959,6 +1023,8 @@ async function sendChatMessage() {
 
   if (!message || !AppState.selectedChapter) return;
   if (document.getElementById('btn-chat-send').disabled) return;
+
+  if (AppState.currentChatMode === 'teach') hideChatEmptyState();
 
   input.value = '';
   input.style.height = 'auto';
@@ -1172,11 +1238,11 @@ async function updateVisualPanel(imagePrompt, diagramDef) {
 // or text with generated visuals. Chat is the primary surface by default now,
 // so this replaces the old auto-triggered "immersive mode" fullscreen hack.
 function initTutorModeSelect() {
-  document.querySelectorAll('.mode-btn').forEach(btn => {
+  document.querySelectorAll('.tool-chip[data-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
       AppState.tutorMode = mode;
-      document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tool-chip[data-mode]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
       if (mode !== 'listen') NarrationEngine.stop();
@@ -1196,12 +1262,12 @@ function initStudyDrawer() {
   const openDrawer = () => {
     drawer.classList.add('drawer-open');
     backdrop.classList.add('visible');
-    toggle.classList.add('is-open');
+    toggle.classList.add('active');
   };
   const closeDrawer = () => {
     drawer.classList.remove('drawer-open');
     backdrop.classList.remove('visible');
-    toggle.classList.remove('is-open');
+    toggle.classList.remove('active');
   };
 
   toggle.addEventListener('click', () => {
