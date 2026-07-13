@@ -20,7 +20,9 @@ const AppState = {
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
   currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
-    apiKey: ''
+    apiKey: '',
+    model: 'gemini-2.5-flash',   // default Gemini model for all calls
+    highQualityGrading: false    // route 'deep' grading tasks to Pro when true
   }
 };
 
@@ -260,6 +262,13 @@ async function dbGetChapter(bookId, chapterNumber) {
   return snap.exists ? snap.data() : null;
 }
 
+async function dbGetChaptersForBook(bookId) {
+  const col = userCol('bookChapters');
+  if (!col) return [];
+  const snap = await col.where('bookId', '==', bookId).get();
+  return snap.docs.map(d => d.data());
+}
+
 async function dbDeleteBookChapters(bookId) {
   const col = userCol('bookChapters');
   if (!col) return;
@@ -491,6 +500,8 @@ function navigateTo(viewId) {
 async function loadSettings() {
   const apiKeyRecord = await dbGet('settings', 'apiKey');
   const demoRecord   = await dbGet('settings', 'demoMode');
+  const modelRecord  = await dbGet('settings', 'model');
+  const hqRecord     = await dbGet('settings', 'highQualityGrading');
 
   // ── AUTO-CONFIGURE ON FIRST LAUNCH ──────────────────────────────
   // API key must be entered via Settings — never hardcode it here
@@ -507,6 +518,10 @@ async function loadSettings() {
     AppState.mode = isDemoMode ? 'demo' : 'live';
   }
 
+  // Model preferences (local-only, like the API key)
+  AppState.settings.model = modelRecord?.value || 'gemini-2.5-flash';
+  AppState.settings.highQualityGrading = hqRecord?.value || false;
+
   const isDemoMode = AppState.mode === 'demo';
 
   // Sync the settings UI
@@ -514,6 +529,10 @@ async function loadSettings() {
     document.getElementById('input-api-key').value = AppState.settings.apiKey;
   if (document.getElementById('toggle-demo-mode'))
     document.getElementById('toggle-demo-mode').checked = isDemoMode;
+  if (document.getElementById('select-model'))
+    document.getElementById('select-model').value = AppState.settings.model;
+  if (document.getElementById('toggle-hq-grading'))
+    document.getElementById('toggle-hq-grading').checked = AppState.settings.highQualityGrading;
 
   if (isDemoMode) {
     document.getElementById('btn-demo-banner').style.display = 'inline-flex';
@@ -523,12 +542,18 @@ async function loadSettings() {
 async function saveSettings() {
   const apiKey = document.getElementById('input-api-key').value.trim();
   const isDemoMode = document.getElementById('toggle-demo-mode').checked;
+  const model = document.getElementById('select-model')?.value || 'gemini-2.5-flash';
+  const hqGrading = document.getElementById('toggle-hq-grading')?.checked || false;
 
   AppState.settings.apiKey = apiKey;
+  AppState.settings.model = model;
+  AppState.settings.highQualityGrading = hqGrading;
   AppState.mode = isDemoMode ? 'demo' : 'live';
 
   await dbPut('settings', { key: 'apiKey', value: apiKey });
   await dbPut('settings', { key: 'demoMode', value: isDemoMode });
+  await dbPut('settings', { key: 'model', value: model });
+  await dbPut('settings', { key: 'highQualityGrading', value: hqGrading });
 
   document.getElementById('modal-settings').style.display = 'none';
   document.getElementById('btn-demo-banner').style.display = isDemoMode ? 'inline-flex' : 'none';
@@ -1903,30 +1928,156 @@ async function submitSandboxExplanation() {
 }
 
 // ── 21. FLASHCARD REVIEW SYSTEM ───────────────────────────────────────────────
-async function initReviewSession() {
-  let allFlashcards = [];
+// ── SM-2 SPACED REPETITION SCHEDULER ──────────────────────────────────────────
+// Each flashcard carries { interval (days), repetitionCount, efactor,
+// nextDueDate (epoch ms), lastRating, lastReviewedAt }. Cards with no
+// nextDueDate have never been reviewed and are due immediately.
+
+const SM2_QUALITY = { forgot: 1, hard: 3, good: 4, easy: 5 };
+
+function sm2Schedule(card, score) {
+  const q = SM2_QUALITY[score] ?? 3;
+  let ef       = card.efactor ?? 2.5;
+  let reps     = card.repetitionCount ?? 0;
+  let interval = card.interval ?? 0;
+
+  if (q < 3) {
+    // Failed recall: restart repetitions, see the card again tomorrow.
+    reps = 0;
+    interval = 1;
+  } else {
+    reps += 1;
+    if (reps === 1)      interval = 1;
+    else if (reps === 2) interval = 6;
+    else                 interval = Math.round(interval * ef);
+    ef = Math.max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
+  }
+
+  return {
+    ...card,
+    efactor: ef,
+    repetitionCount: reps,
+    interval,
+    nextDueDate: Date.now() + interval * 24 * 60 * 60 * 1000,
+    lastRating: score,
+    lastReviewedAt: Date.now()
+  };
+}
+
+function isCardDue(card) {
+  if (!card.nextDueDate) return true; // never reviewed — due now
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  return card.nextDueDate <= endOfToday.getTime();
+}
+
+// Fisher–Yates shuffle: interleaves due cards across books and chapters,
+// which improves retention vs. reviewing one book's cards in a run.
+function shuffleCards(cards) {
+  for (let i = cards.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cards[i], cards[j]] = [cards[j], cards[i]];
+  }
+  return cards;
+}
+
+// Collect every DUE flashcard across all books. Cards from AI-knowledge books
+// live on the book doc (book.chapters[].flashcards); cards from PDF books live
+// on their bookChapters docs. Each card is tagged with _src so a rating can be
+// persisted back to the exact document + array slot it came from, and source
+// docs are cached for the session so persistence is read-free.
+async function collectDueCards() {
+  const due = [];
+  AppState._reviewBookCache = {};
+  AppState._reviewChapterCache = {};
 
   const books = await dbGetAll('books');
-  books.forEach(book => {
-    book.chapters.forEach(ch => {
-      (ch.flashcards || []).forEach(card => {
-        allFlashcards.push({ ...card, bookTitle: book.title });
+  for (const book of books) {
+    if (book.isPdfBook) {
+      const chapterDocs = await dbGetChaptersForBook(book.id);
+      for (const chDoc of chapterDocs) {
+        const cards = chDoc.flashcards || [];
+        if (cards.length) {
+          AppState._reviewChapterCache[`${book.id}_ch_${chDoc.chapterNumber}`] = cards;
+        }
+        cards.forEach((card, idx) => {
+          if (isCardDue(card)) {
+            due.push({
+              ...card,
+              bookTitle: book.title,
+              _src: { type: 'chapterDoc', bookId: book.id, chapterNumber: chDoc.chapterNumber, index: idx }
+            });
+          }
+        });
+      }
+    } else {
+      AppState._reviewBookCache[book.id] = book;
+      (book.chapters || []).forEach(ch => {
+        (ch.flashcards || []).forEach((card, idx) => {
+          if (isCardDue(card)) {
+            due.push({
+              ...card,
+              bookTitle: book.title,
+              _src: { type: 'bookDoc', bookId: book.id, chapterNumber: ch.number, index: idx }
+            });
+          }
+        });
       });
-    });
-  });
+    }
+  }
+  return due;
+}
 
-  if (allFlashcards.length === 0) {
+// Persist a rated card's new SM-2 schedule back to its source document.
+async function persistCardSchedule(card) {
+  const src = card._src;
+  if (!src) return;
+
+  // Strip session-only fields before writing
+  const clean = { ...card };
+  delete clean._src;
+  delete clean.bookTitle;
+
+  if (src.type === 'chapterDoc') {
+    const cards = AppState._reviewChapterCache[`${src.bookId}_ch_${src.chapterNumber}`];
+    if (!cards || !cards[src.index]) return;
+    cards[src.index] = clean;
+    await dbPutChapter(src.bookId, { chapterNumber: src.chapterNumber, flashcards: cards });
+  } else {
+    const book = AppState._reviewBookCache[src.bookId];
+    if (!book) return;
+    const ch = (book.chapters || []).find(c => c.number === src.chapterNumber);
+    if (!ch || !ch.flashcards?.[src.index]) return;
+    ch.flashcards[src.index] = clean;
+    await dbPut('books', book);
+  }
+}
+
+function updateReviewBadge(count) {
+  [document.getElementById('review-badge'), document.getElementById('mobile-review-badge')]
+    .forEach(badge => {
+      if (!badge) return;
+      badge.style.display = count > 0 ? 'flex' : 'none';
+      badge.textContent = count;
+    });
+}
+
+async function initReviewSession() {
+  const dueCards = shuffleCards(await collectDueCards());
+  updateReviewBadge(dueCards.length);
+
+  if (dueCards.length === 0) {
     document.getElementById('review-empty-message').style.display = 'flex';
     document.getElementById('flashcard-deck').style.display = 'none';
     document.getElementById('review-finished-message').style.display = 'none';
     return;
   }
 
-  AppState.flashcardSession = allFlashcards;
+  AppState.flashcardSession = dueCards;
   AppState.flashcardIndex = 0;
-  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: allFlashcards.length, done: 0 };
+  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: dueCards.length, done: 0 };
 
-  document.getElementById('review-cards-ratio').textContent = `0 / ${allFlashcards.length}`;
+  document.getElementById('review-cards-ratio').textContent = `0 / ${dueCards.length}`;
   document.getElementById('review-empty-message').style.display = 'none';
   document.getElementById('review-finished-message').style.display = 'none';
   document.getElementById('flashcard-deck').style.display = 'block';
@@ -1957,9 +2108,18 @@ function showNextCard() {
 }
 
 function rateCard(score) {
+  const card = AppState.flashcardSession[AppState.flashcardIndex];
+  if (!card) return;
+
   const stats = AppState.reviewStats;
   stats[score]++;
   stats.done++;
+
+  // Run SM-2 and persist the new schedule to the card's source document.
+  // Fire-and-forget: a failed write shouldn't block the review flow.
+  const scheduled = sm2Schedule(card, score);
+  persistCardSchedule(scheduled)
+    .catch(err => console.warn('Could not save card schedule:', err.message));
 
   // Update UI stats
   const ratio = `${stats.done} / ${stats.total}`;
@@ -1970,15 +2130,8 @@ function rateCard(score) {
   document.getElementById('review-good-count').textContent = stats.good;
   document.getElementById('review-easy-count').textContent = stats.easy;
 
-  // Update review badge
-  const remaining = stats.total - stats.done;
-  const badge = document.getElementById('review-badge');
-  if (remaining > 0) {
-    badge.style.display = 'flex';
-    badge.textContent = remaining;
-  } else {
-    badge.style.display = 'none';
-  }
+  // Update review badge with remaining due cards
+  updateReviewBadge(stats.total - stats.done);
 
   AppState.flashcardIndex++;
   showNextCard();

@@ -1,13 +1,31 @@
 // ============================================================================
 // BookTutor — AI Agents Layer (ai-agents.js)
-// Bridges the web app to Google's Gemini 1.5 Pro API.
+// Bridges the web app to Google's Gemini API.
 // Contains all AI prompt pipelines: Diagnostic, Curriculum Designer,
-// QA Verifier, Socratic Tutor (Teach & Quiz), and Feynman Assessor.
+// Socratic Tutor (Teach & Quiz), and Feynman Assessor.
 // ============================================================================
 
-// Gemini 2.5 Flash — current free tier model.
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-const GEMINI_STREAM_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent';
+// ── MODEL TIERING ─────────────────────────────────────────────────────────────
+// Two tiers of Gemini model, selected per task:
+//   'fast' — the user's default model (Flash unless changed in Settings).
+//            Used for high-frequency grounded calls: question generation,
+//            segment classification, tutor turns. Speed + cost matter here.
+//   'deep' — reasoning-heavy grading (Feynman assessor, recall diff, Socratic
+//            hinting). Routes to Pro when the "Higher quality grading" toggle
+//            is on; otherwise falls back to the user's default model.
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+const GEMINI_DEEP_MODEL    = 'gemini-2.5-pro';
+
+function modelFor(tier = 'fast') {
+  const base = AppState.settings.model || GEMINI_DEFAULT_MODEL;
+  if (tier === 'deep' && AppState.settings.highQualityGrading) return GEMINI_DEEP_MODEL;
+  return base;
+}
+
+function geminiUrl(model, stream = false) {
+  const method = stream ? 'streamGenerateContent' : 'generateContent';
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}`;
+}
 
 // ── HELPER: GET API KEY ──────────────────────────────────────────────────────
 // Safely retrieves the API key. Checks AppState first, then falls back to the
@@ -24,9 +42,10 @@ function getApiKey() {
 // ── CORE: GEMINI HTTP REQUEST ─────────────────────────────────────────────────
 // Sends a prompt to the Gemini API and returns either raw text or parsed JSON.
 // fileUri: optional Gemini File API URI to attach (e.g. uploaded PDF)
-async function queryGemini(prompt, responseJson = false, fileUri = null) {
+// tier:    'fast' (default) or 'deep' — resolved to a model via modelFor()
+async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 'fast') {
   const apiKey = getApiKey();
-  const url = `${GEMINI_API_URL}?key=${apiKey}`;
+  const url = `${geminiUrl(modelFor(tier))}?key=${apiKey}`;
 
   // Build parts array — text always first, file attachment second if provided
   const parts = [{ text: prompt }];
@@ -114,9 +133,9 @@ async function queryGemini(prompt, responseJson = false, fileUri = null) {
 // onChunk(piece, fullTextSoFar) as text arrives instead of waiting for the
 // whole response. Plain-text only — not used for the JSON curriculum calls,
 // since incremental JSON isn't safely parseable mid-stream.
-async function queryGeminiStream(prompt, onChunk) {
+async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
   const apiKey = getApiKey();
-  const url = `${GEMINI_STREAM_URL}?key=${apiKey}&alt=sse`;
+  const url = `${geminiUrl(modelFor(tier), true)}?key=${apiKey}&alt=sse`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -662,7 +681,8 @@ async function callLiveSandboxAssessor(concept, explanation) {
   `;
 
   try {
-    return await queryGemini(prompt, true);
+    // Grading nuance benefits from the deep tier when the user enables it
+    return await queryGemini(prompt, true, null, 'deep');
   } catch (error) {
     console.error('Feynman assessor failed:', error);
     return {
