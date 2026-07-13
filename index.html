@@ -417,8 +417,13 @@
 
         </div>
 
-        <!-- Floating popover shown when the user selects text in a tutor message -->
+        <!-- Floating popover shown when the user selects text in a tutor message
+             or in the reader column (reader selections also offer Explain) -->
         <div id="selection-popover" class="selection-popover" style="display:none;">
+          <button id="btn-explain-selection" class="sp-btn" style="display:none;">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-3.5 3v-3H5a2 2 0 01-2-2v-6z"/></svg>
+            Explain
+          </button>
           <button id="btn-save-note" class="sp-btn">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5-5 3 1-5 5-3-1z"/><path d="M12 4l4 4-2 2-4-4 2-2z"/></svg>
             Save to Notes

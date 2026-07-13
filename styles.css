@@ -2895,3 +2895,144 @@ body.immersive .immersive-only { display: flex !important; }
   .reader-top-btn-labelled { font-size: 0.74rem; padding: 5px 8px; }
   .reader-column { font-size: 0.98rem; line-height: 1.72; padding: 1.6rem 1.1rem 4rem; }
 }
+
+/* ============================================================
+   CHECKPOINT CARD — retrieval check at each segment boundary
+============================================================ */
+.checkpoint-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--purple);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+  font-family: var(--font-body);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.cp-conf-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.cp-conf-row { display: flex; gap: 0.5rem; }
+.cp-chip {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+  min-height: 34px;
+}
+.cp-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.cp-skip {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.3rem 0;
+}
+.cp-skip:hover { color: var(--text-secondary); }
+
+.cp-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.cp-spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(184, 134, 63, 0.25);
+  border-top-color: var(--purple);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+.cp-question {
+  font-family: var(--font-reading);
+  font-size: 1.05rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.cp-answer {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 0.65rem 0.75rem;
+  resize: vertical;
+  min-height: 52px;
+}
+.cp-answer:focus { outline: none; border-color: var(--purple); }
+
+.cp-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.cp-actions .cp-skip { align-self: center; }
+.cp-hint-key {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.cp-verdict {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+}
+.cp-verdict.cp-pass {
+  background: var(--teal-dim);
+  color: var(--teal);
+}
+.cp-verdict.cp-gap {
+  background: var(--gold-dim);
+  color: var(--gold);
+}
+.cp-quote {
+  font-family: var(--font-reading);
+  font-size: 0.86rem;
+  border-left: 2px solid var(--gold);
+  padding-left: 0.7rem;
+  margin: 0.5rem 0 0.2rem;
+  color: var(--text-secondary);
+}
+.cp-shaky-note {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.76rem;
+  opacity: 0.85;
+}
+.cp-fallback {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Shaky concept nodes — failed their checkpoint, get extra review */
+.concept-node.shaky {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-dim);
+}

@@ -546,6 +546,79 @@ async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
   }
 }
 
+// ── AGENT: CHECKPOINT QUESTION GENERATOR ─────────────────────────────────────
+// Creates one retrieval question from the segment the student just read.
+// Grounded: the question must be answerable from the passage alone.
+async function callCheckpointGenerator(segmentText, chapterTitle, bookTitle, concepts = []) {
+  const prompt = `
+    You are a reading tutor creating a comprehension checkpoint.
+    The student has JUST finished reading this passage from "${bookTitle}",
+    chapter "${chapterTitle}":
+    ---
+    ${segmentText.substring(0, 12000)}
+    ---
+    Chapter concepts: ${concepts.join(', ') || '(none listed)'}
+
+    Write ONE retrieval question that tests whether the student understood this
+    passage's key move — its central claim, mechanism, or argument. Prefer a
+    free-recall what/why/how question answerable in 1–2 sentences using ONLY
+    the passage. Never ask about trivia, names, or minor details.
+
+    Also list which of the chapter concepts above this passage meaningfully
+    covers (0–3 of them, exact strings from the list).
+
+    Return ONLY valid JSON, no markdown fences:
+    { "question": "string", "concepts": ["string"] }
+  `;
+  const result = await queryGemini(prompt, true);
+  return {
+    question: result.question || 'In one or two sentences: what was the key idea of the passage you just read?',
+    concepts: Array.isArray(result.concepts) ? result.concepts.filter(c => concepts.includes(c)) : []
+  };
+}
+
+// ── AGENT: CHECKPOINT GRADER ─────────────────────────────────────────────────
+// Grades the student's answer against the passage ONLY. Gap verdicts return a
+// Socratic hint that points back into the text, never the answer itself.
+async function callCheckpointGrader(segmentText, question, answer, hintRound = 0) {
+  const prompt = `
+    You are a reading tutor grading a comprehension checkpoint.
+    Judge SOLELY against this passage — not your own knowledge of the book:
+    ---
+    ${segmentText.substring(0, 12000)}
+    ---
+    Question: "${question}"
+    Student's answer: "${answer}"
+    ${hintRound > 0 ? `This is the student's retry after ${hintRound} Socratic hint(s).` : ''}
+
+    Grade generously on wording, strictly on substance: pass if the answer
+    shows they grasped the key idea in their own words; fail if it misses or
+    contradicts the passage's point.
+
+    If PASS: one warm sentence naming specifically what they got right.
+    If GAP: one Socratic hint that points them back into the passage
+    (e.g. Re-read the part beginning "..." — what does the author say causes ...?).
+    Never reveal the answer inside a hint.
+
+    Either way include a short exact quote from the passage that grounds your
+    judgement.
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "verdict": "pass" or "gap",
+      "feedback": "confirmation sentence (pass) or Socratic hint (gap)",
+      "sourceQuote": "short exact quote from the passage"
+    }
+  `;
+  // Judgement calls benefit from the deep tier when the user enables it
+  const result = await queryGemini(prompt, true, null, 'deep');
+  return {
+    verdict: result.verdict === 'pass' ? 'pass' : 'gap',
+    feedback: result.feedback || '',
+    sourceQuote: result.sourceQuote || ''
+  };
+}
+
 // ── AGENT 4: SOCRATIC TUTOR (TEACH & QUIZ MODES) ─────────────────────────────
 // Powers the two-tab tutor system.
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.
@@ -601,17 +674,29 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
            * At the end, ask: "Do you have any questions on this, or are you ready to turn the page?"
 
       2. If the student says they are ready to proceed (e.g. "next", "ready", "no questions", "continue", "got it"):
-         - Output the mastery tag for the concept just taught: [MASTERED: ${activeConcept}]
-         - Then immediately begin teaching the NEXT concept in depth the same way.
-         - End with: "Do you have any questions on this, or are you ready to turn the page?"
+         - Do NOT mark anything mastered yet — willingness to move on is not evidence of understanding.
+         - Ask ONE short check question that tests the concept just taught ("${activeConcept}").
+           It must require retrieval in their own words (a what/why/how question), never yes/no.
+         - Keep it to 2-3 sentences: acknowledge them briefly, then ask the question.
 
-      3. If the student asks a clarifying question:
+      3. If the student is ANSWERING your check question:
+         - If their answer captures the key idea in substance (wording doesn't matter):
+           * Output the mastery tag: [MASTERED: ${activeConcept}]
+           * Then immediately begin teaching the NEXT concept in depth the same way as rule 1.
+           * End with: "Do you have any questions on this, or are you ready to turn the page?"
+         - If their answer misses or contradicts the key idea:
+           * Give a Socratic hint that points them back toward the idea. Do NOT reveal the answer.
+           * Do NOT output any mastery tag. Invite them to try again.
+           * If they have now missed it twice, explain the answer plainly, then move on to the
+             next concept WITHOUT a mastery tag.
+
+      4. If the student asks a clarifying question:
          - Answer it thoroughly with simple analogies.
          - If raw chapter text is provided, quote the relevant passage if helpful.
          - Do NOT output any mastery tag.
          - End with: "Does that clear it up? Ready to turn the page?"
 
-      4. If all concepts are mastered:
+      5. If all concepts are mastered:
          - Warmly congratulate the student.
          - Tell them to switch to the "Quiz & Review" tab to test their retention.
     `;

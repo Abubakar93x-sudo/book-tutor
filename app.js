@@ -15,6 +15,7 @@ const AppState = {
   selectedChapter: null,    // The full chapter object currently being studied
   activeChatHistory: [],    // Array of { role, content, mode } message objects
   masteredConcepts: [],     // Array of concept strings mastered in this session
+  shakyConcepts: [],        // Concepts that failed their checkpoint (extra review)
   flashcardSession: [],     // Array of flashcard objects for daily review
   flashcardIndex: 0,        // Current flashcard position
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
@@ -444,6 +445,254 @@ function formatReadingTime(minutes) {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
+// ── CHECKPOINT CONTROLLER ─────────────────────────────────────────────────────
+// Retrieval checkpoint at each segment boundary: rate confidence → answer one
+// question generated from the segment text → graded against that text only.
+// Pass marks the covered concepts mastered; two failed hints marks them shaky.
+// Reading is never blocked: AI failures fall back to a plain continue button,
+// and Skip is always available.
+
+const Checkpoint = {
+  MAX_HINTS: 2,
+
+  build(segment, index) {
+    const card = document.createElement('div');
+    card.className = 'checkpoint-card';
+
+    const state = {
+      segment, index,
+      confidence: null,
+      hintRound: 0,
+      question: null,
+      concepts: [],
+      questionPromise: null
+    };
+
+    this.renderConfidence(card, state);
+    return card;
+  },
+
+  segmentText(segment) {
+    return segment.paragraphs.join('\n\n');
+  },
+
+  // Phase 1 — confidence first (calibration data must precede the answer)
+  renderConfidence(card, state) {
+    card.innerHTML = `
+      <div class="cp-conf-label">How well did you follow that?</div>
+      <div class="cp-conf-row"></div>
+      <button class="cp-skip" type="button">Skip check →</button>
+    `;
+    const row = card.querySelector('.cp-conf-row');
+    [['shaky', 'Shaky'], ['ok', 'OK'], ['solid', 'Solid']].forEach(([val, label]) => {
+      const chip = document.createElement('button');
+      chip.className = 'cp-chip';
+      chip.type = 'button';
+      chip.textContent = label;
+      chip.addEventListener('click', () => {
+        state.confidence = val;
+        this.startQuestion(card, state);
+      });
+      row.appendChild(chip);
+    });
+    card.querySelector('.cp-skip').addEventListener('click', () => this.finish(card, state, 'skipped'));
+  },
+
+  // Phase 2 — generate the question (kicked off only after confidence is set)
+  async startQuestion(card, state) {
+    card.innerHTML = `
+      <div class="cp-loading">
+        <span class="cp-spinner"></span> Preparing your check question…
+      </div>
+      <button class="cp-skip" type="button">Skip check →</button>
+    `;
+    card.querySelector('.cp-skip').addEventListener('click', () => this.finish(card, state, 'skipped'));
+
+    try {
+      const chapter = Reader.chapter;
+      const book = AppState.selectedBook;
+      let result;
+      if (AppState.mode === 'demo') {
+        result = {
+          question: 'In one or two sentences: what was the key idea of the passage you just read?',
+          concepts: (chapter.concepts || []).slice(0, 1)
+        };
+      } else {
+        result = await callCheckpointGenerator(
+          this.segmentText(state.segment), chapter.title, book.title, chapter.concepts || []
+        );
+      }
+      state.question = result.question;
+      state.concepts = result.concepts;
+      this.renderQuestion(card, state);
+    } catch (err) {
+      console.warn('Checkpoint generation failed, falling back to continue:', err.message);
+      this.renderFallback(card, state);
+    }
+  },
+
+  // Phase 3 — question + answer box
+  renderQuestion(card, state, verdictHtml = '') {
+    card.innerHTML = `
+      <div class="cp-question">${state.question}</div>
+      ${verdictHtml}
+      <textarea class="cp-answer" rows="2" placeholder="Answer in your own words…"></textarea>
+      <div class="cp-actions">
+        <button class="btn btn-primary cp-check" type="button">Check</button>
+        <button class="cp-skip" type="button">Skip →</button>
+        <span class="cp-hint-key">Enter to submit</span>
+      </div>
+    `;
+    const answerEl = card.querySelector('.cp-answer');
+    const checkBtn = card.querySelector('.cp-check');
+
+    const submit = () => {
+      const answer = answerEl.value.trim();
+      if (!answer) { answerEl.focus(); return; }
+      this.grade(card, state, answer);
+    };
+    checkBtn.addEventListener('click', submit);
+    answerEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    card.querySelector('.cp-skip').addEventListener('click', () => this.finish(card, state, 'skipped'));
+    answerEl.focus();
+  },
+
+  // Phase 4 — grade against the segment text
+  async grade(card, state, answer) {
+    const answerEl = card.querySelector('.cp-answer');
+    const checkBtn = card.querySelector('.cp-check');
+    answerEl.disabled = true;
+    checkBtn.disabled = true;
+    checkBtn.textContent = 'Checking…';
+
+    try {
+      let result;
+      if (AppState.mode === 'demo') {
+        result = answer.length >= 15
+          ? { verdict: 'pass', feedback: 'That captures the core idea well.', sourceQuote: '' }
+          : { verdict: 'gap', feedback: 'Look again at the main claim of the passage — what is the author really arguing?', sourceQuote: '' };
+      } else {
+        result = await callCheckpointGrader(this.segmentText(state.segment), state.question, answer, state.hintRound);
+      }
+
+      if (result.verdict === 'pass') {
+        this.showPass(card, state, result);
+      } else {
+        state.hintRound += 1;
+        if (state.hintRound > this.MAX_HINTS) {
+          this.showReveal(card, state, result);
+        } else {
+          this.showHint(card, state, result);
+        }
+      }
+    } catch (err) {
+      console.warn('Checkpoint grading failed, falling back to continue:', err.message);
+      this.renderFallback(card, state);
+    }
+  },
+
+  showPass(card, state, result) {
+    const conceptNote = state.concepts.length
+      ? ` <strong>${state.concepts.join(', ')}</strong> mastered.`
+      : '';
+    card.innerHTML = `
+      <div class="cp-verdict cp-pass">✓ ${result.feedback}${conceptNote}</div>
+    `;
+    this.markConcepts(state.concepts, 'mastered');
+    this.appendContinue(card, state, 'pass');
+  },
+
+  showHint(card, state, result) {
+    const quote = result.sourceQuote
+      ? `<blockquote class="cp-quote">“${result.sourceQuote}”</blockquote>`
+      : '';
+    const verdictHtml = `
+      <div class="cp-verdict cp-gap">${result.feedback}${quote}</div>
+    `;
+    this.renderQuestion(card, state, verdictHtml);
+  },
+
+  showReveal(card, state, result) {
+    const quote = result.sourceQuote
+      ? `<blockquote class="cp-quote">“${result.sourceQuote}”</blockquote>`
+      : '';
+    card.innerHTML = `
+      <div class="cp-verdict cp-gap">Here's the key passage — worth a re-read before moving on:${quote}
+      <span class="cp-shaky-note">Marked as shaky — it'll get extra review cards.</span></div>
+    `;
+    this.markConcepts(state.concepts, 'shaky');
+    this.appendContinue(card, state, 'shaky');
+  },
+
+  // AI unavailable → plain continue, reading never blocks
+  renderFallback(card, state) {
+    card.innerHTML = `<div class="cp-fallback">Check unavailable right now.</div>`;
+    this.appendContinue(card, state, 'skipped');
+  },
+
+  appendContinue(card, state, result) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary btn-continue-segment';
+    btn.textContent = state.index + 1 === Reader.segments.length
+      ? 'Finish chapter →'
+      : 'Continue reading →';
+    btn.addEventListener('click', () => {
+      this.record(state, result);
+      Reader.completeSegment(state.index);
+    });
+    card.appendChild(btn);
+    btn.focus();
+  },
+
+  finish(card, state, result) {
+    this.record(state, result);
+    Reader.completeSegment(state.index);
+  },
+
+  // Calibration + concept-state persistence on the chapter doc
+  record(state, result) {
+    const chapter = Reader.chapter;
+    const book = AppState.selectedBook;
+    if (!chapter || !book?.isPdfBook) return;
+
+    chapter._checkpoints = chapter._checkpoints || [];
+    chapter._checkpoints.push({
+      segment: state.index,
+      confidence: state.confidence,
+      result,
+      hints: state.hintRound,
+      at: Date.now()
+    });
+    dbPutChapter(book.id, {
+      chapterNumber: chapter.number,
+      checkpoints: chapter._checkpoints,
+      shakyConcepts: AppState.shakyConcepts
+    }).catch(err => console.warn('Checkpoint save failed:', err.message));
+  },
+
+  markConcepts(concepts, status) {
+    if (!concepts.length) return;
+    if (status === 'mastered') {
+      concepts.forEach(c => {
+        if (!AppState.masteredConcepts.includes(c)) AppState.masteredConcepts.push(c);
+        AppState.shakyConcepts = (AppState.shakyConcepts || []).filter(s => s !== c);
+      });
+      showToast(`✓ Mastered: ${concepts.join(', ')}`, 'success');
+      saveMasteryProgress().catch(() => {});
+    } else {
+      AppState.shakyConcepts = AppState.shakyConcepts || [];
+      concepts.forEach(c => {
+        if (!AppState.shakyConcepts.includes(c) && !AppState.masteredConcepts.includes(c)) {
+          AppState.shakyConcepts.push(c);
+        }
+      });
+    }
+    if (AppState.selectedChapter) renderConceptMap(AppState.selectedChapter);
+  }
+};
+
 // ── READER ENGINE ─────────────────────────────────────────────────────────────
 // Drives the guided-reading surface: reveals segments progressively, records
 // reading time per segment, persists progress, and shows time-left estimates.
@@ -552,13 +801,7 @@ const Reader = {
     boundary.appendChild(rule);
 
     if (index === this.segmentsDone) {
-      const btn = document.createElement('button');
-      btn.className = 'btn btn-primary btn-continue-segment';
-      btn.textContent = index + 1 === this.segments.length
-        ? 'Finish chapter →'
-        : 'Continue reading →';
-      btn.addEventListener('click', () => this.completeSegment(index));
-      boundary.appendChild(btn);
+      boundary.appendChild(Checkpoint.build(segment, index));
     } else {
       rule.textContent += ' ✓';
       rule.classList.add('seg-done');
@@ -1068,10 +1311,12 @@ async function loadChapter(chapterNumber) {
     const chapter = {
       ...chapterSkeleton,
       ...chapterData,
-      _chapterText: chapterData?.text || '' // for tutor quoting
+      _chapterText: chapterData?.text || '', // for tutor quoting
+      _checkpoints: chapterData?.checkpoints || []
     };
     AppState.selectedChapter = chapter;
     AppState.masteredConcepts = chapter._masteredConcepts || [];
+    AppState.shakyConcepts = chapterData?.shakyConcepts || [];
     AppState.currentChatMode  = 'teach';
 
     const chapterKey = `${book.id}-ch${chapterNum}`;
@@ -1088,6 +1333,7 @@ async function loadChapter(chapterNumber) {
   const chapter = chapterSkeleton;
   AppState.selectedChapter  = chapter;
   AppState.masteredConcepts = chapter._masteredConcepts || [];
+  AppState.shakyConcepts    = [];
   AppState.currentChatMode  = 'teach';
 
   const chapterKey = `${book.id}-ch${chapter.number}`;
@@ -1222,9 +1468,12 @@ function renderConceptMap(chapter) {
   chapter.concepts.forEach(concept => {
     const node = document.createElement('div');
     const isMastered = AppState.masteredConcepts.includes(concept);
+    const isShaky = !isMastered && (AppState.shakyConcepts || []).includes(concept);
     node.className = 'concept-node';
     if (isMastered) node.classList.add('mastered');
-    node.textContent = isMastered ? `${concept} ✓` : concept;
+    else if (isShaky) node.classList.add('shaky');
+    node.textContent = isMastered ? `${concept} ✓` : isShaky ? `${concept} ⟳` : concept;
+    if (isShaky) node.title = 'Shaky — failed its checkpoint, will get extra review';
     container.appendChild(node);
   });
 }
@@ -1695,8 +1944,9 @@ function requestDeepDive(quote, chapterNumber, chapterTitle) {
 
 // ── 18f. TUTOR ARENA v2 — HIGHLIGHT-TO-NOTE CAPTURE ─────────────────────────
 function initNoteCapture() {
-  const popover  = document.getElementById('selection-popover');
-  const saveBtn  = document.getElementById('btn-save-note');
+  const popover    = document.getElementById('selection-popover');
+  const saveBtn    = document.getElementById('btn-save-note');
+  const explainBtn = document.getElementById('btn-explain-selection');
   let pendingText = '';
 
   function hidePopover() {
@@ -1715,11 +1965,14 @@ function initNoteCapture() {
 
       if (!text || !AppState.selectedChapter) { hidePopover(); return; }
 
-      // Only offer to save selections made inside a tutor message bubble
+      // Selections inside a tutor bubble get Save-to-Notes; selections in the
+      // reader column additionally get Explain (grounded tutor remediation)
       const anchorEl = sel.anchorNode?.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode;
       const bubble = anchorEl?.closest?.('.chat-msg.tutor .msg-bubble');
-      if (!bubble) { hidePopover(); return; }
+      const inReader = anchorEl?.closest?.('#reader-column');
+      if (!bubble && !inReader) { hidePopover(); return; }
 
+      explainBtn.style.display = inReader ? 'flex' : 'none';
       pendingText = text;
       const range = sel.getRangeAt(0);
       const rect = range.getBoundingClientRect();
@@ -1734,6 +1987,16 @@ function initNoteCapture() {
     if (!popover.contains(e.target)) hidePopover();
   });
   document.addEventListener('scroll', hidePopover, true);
+
+  // Explain: jump into the tutor with the selected passage as a grounded question
+  explainBtn.addEventListener('click', () => {
+    if (!pendingText || !AppState.selectedChapter) return;
+    const quote = pendingText;
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    Reader.showTutor();
+    requestDeepDive(quote, AppState.selectedChapter.number, AppState.selectedChapter.title);
+  });
 
   saveBtn.addEventListener('click', async () => {
     if (!pendingText || !AppState.selectedBook || !AppState.selectedChapter) return;
