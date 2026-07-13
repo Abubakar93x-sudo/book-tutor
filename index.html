@@ -224,6 +224,23 @@
 
 
         <!-- ============================================================
+          PRIME OVERLAY — ~3 minutes before reading. One card at a time:
+          driving question → concept skeleton → prediction. Pretesting
+          effect: committing a guess before reading strengthens encoding.
+        ============================================================ -->
+        <div id="prime-overlay" class="prime-overlay" style="display:none;">
+          <button class="prime-close" id="btn-prime-close" title="Skip to reading">✕</button>
+          <div class="prime-stage">
+            <div class="prime-kicker" id="prime-kicker">Before you read</div>
+            <div class="prime-card" id="prime-card-content"></div>
+          </div>
+          <div class="prime-footer">
+            <div class="prime-dots" id="prime-dots"></div>
+            <button class="btn btn-primary" id="btn-prime-next">Continue →</button>
+          </div>
+        </div>
+
+        <!-- ============================================================
           READER PANE — primary learning surface for PDF chapters.
           Shows the real chapter text in a serif column, split into
           segments. The tutor split below is summoned on demand.

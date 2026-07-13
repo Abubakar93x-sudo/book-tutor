@@ -445,6 +445,117 @@ function formatReadingTime(minutes) {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
+// ── PRIME CONTROLLER ──────────────────────────────────────────────────────────
+// The ~3-minute pre-reading sequence, shown once per chapter: the chapter's
+// driving question, the concept skeleton the reader will fill in, and a
+// prediction prompt (pretesting effect — a committed guess before reading
+// measurably strengthens encoding, even when wrong). Predictions persist to
+// the chapter doc and are surfaced back during consolidation.
+
+const Prime = {
+  chapter: null,
+  step: 0,
+  prediction: '',
+
+  open(chapter) {
+    this.chapter = chapter;
+    this.step = 0;
+    this.prediction = '';
+    document.getElementById('prime-kicker').textContent =
+      `Before you read · Chapter ${chapter.number}`;
+    document.getElementById('prime-overlay').style.display = 'flex';
+    this.renderStep();
+  },
+
+  steps() {
+    return ['driving', 'skeleton', 'prediction'];
+  },
+
+  renderStep() {
+    const steps = this.steps();
+    const kind = steps[this.step];
+    const card = document.getElementById('prime-card-content');
+    const chapter = this.chapter;
+
+    if (kind === 'driving') {
+      const words = splitChapterIntoSegments(chapter._chapterText || '')
+        .reduce((n, s) => n + s.wordCount, 0);
+      const minutes = words / bookPaceWpm(AppState.selectedBook);
+      card.innerHTML = `
+        <div class="prime-driving">${chapter.summary_10s || chapter.title}</div>
+        <div class="prime-est">This chapter: about ${formatReadingTime(minutes)} at your pace</div>
+      `;
+    } else if (kind === 'skeleton') {
+      const nodes = (chapter.concepts || [])
+        .map(c => `<span class="prime-node">${c}</span>`).join('');
+      card.innerHTML = `
+        <div class="prime-subhead">You'll be collecting these ideas — they turn green as you prove them at checkpoints.</div>
+        <div class="prime-skeleton">${nodes || '<em>No concepts listed yet.</em>'}</div>
+      `;
+    } else {
+      const concept = (chapter.concepts || [])[0] || chapter.title;
+      card.innerHTML = `
+        <div class="prime-subhead">Commit a guess — being wrong now makes the real answer stick harder.</div>
+        <div class="prime-pred-q">Before reading: what do you think “${concept}” means in this chapter — and why might it matter?</div>
+        <textarea class="prime-pred-input" id="prime-pred-input" rows="3" placeholder="Type a quick prediction — no wrong answers here…"></textarea>
+      `;
+      document.getElementById('prime-pred-input').focus();
+    }
+
+    // Progress dots
+    const dots = document.getElementById('prime-dots');
+    dots.innerHTML = steps
+      .map((_, i) => `<i class="${i === this.step ? 'on' : ''}"></i>`).join('');
+
+    document.getElementById('btn-prime-next').textContent =
+      this.step === steps.length - 1 ? 'Start reading →' : 'Continue →';
+  },
+
+  next() {
+    const steps = this.steps();
+    if (steps[this.step] === 'prediction') {
+      this.prediction = document.getElementById('prime-pred-input')?.value.trim() || '';
+    }
+    if (this.step < steps.length - 1) {
+      this.step += 1;
+      this.renderStep();
+    } else {
+      this.finish(false);
+    }
+  },
+
+  finish(skipped) {
+    document.getElementById('prime-overlay').style.display = 'none';
+    const chapter = this.chapter;
+    const book = AppState.selectedBook;
+    if (!chapter) return;
+
+    chapter.primed = true;
+    if (this.prediction) {
+      chapter.predictions = [...(chapter.predictions || []), {
+        prompt: `What do you think “${(chapter.concepts || [])[0] || chapter.title}” means in this chapter?`,
+        answer: this.prediction,
+        at: Date.now()
+      }];
+    }
+    if (book?.isPdfBook) {
+      dbPutChapter(book.id, {
+        chapterNumber: chapter.number,
+        primed: true,
+        ...(chapter.predictions ? { predictions: chapter.predictions } : {})
+      }).catch(err => console.warn('Prime save failed:', err.message));
+    }
+
+    Reader.open(chapter);
+    this.chapter = null;
+  }
+};
+
+function initPrime() {
+  document.getElementById('btn-prime-next').addEventListener('click', () => Prime.next());
+  document.getElementById('btn-prime-close').addEventListener('click', () => Prime.finish(true));
+}
+
 // ── CHECKPOINT CONTROLLER ─────────────────────────────────────────────────────
 // Retrieval checkpoint at each segment boundary: rate confidence → answer one
 // question generated from the segment text → graded against that text only.
@@ -1323,9 +1434,14 @@ async function loadChapter(chapterNumber) {
     await loadChatHistoryFromDB(chapterKey);
     renderChapterUI(chapter);
 
-    // Guided reading: chapters with real text open in the reader pane
-    if (chapter._chapterText) Reader.open(chapter);
-    else Reader.close();
+    // Guided reading: chapters with real text open in the reader pane,
+    // preceded by the Prime sequence on first open
+    if (chapter._chapterText) {
+      if (chapter.primed) Reader.open(chapter);
+      else Prime.open(chapter);
+    } else {
+      Reader.close();
+    }
     return;
   }
 
@@ -3012,6 +3128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initStudyDrawer();
   initNoteCapture();
   initReader();
+  initPrime();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 
