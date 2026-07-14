@@ -3493,9 +3493,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-generate-book').addEventListener('click', generateCurriculum);
 
   // ── SETTINGS MODAL ──
-  document.getElementById('btn-settings').addEventListener('click', () => {
+  // Two ways in: sidebar button (desktop) and library top-bar gear (the
+  // sidebar is hidden on mobile, so the gear is the phone's only entry).
+  const openSettings = () => {
     document.getElementById('modal-settings').style.display = 'flex';
-  });
+  };
+  document.getElementById('btn-settings').addEventListener('click', openSettings);
+  document.getElementById('btn-settings-topbar')?.addEventListener('click', openSettings);
   document.getElementById('btn-close-settings').addEventListener('click', () => {
     document.getElementById('modal-settings').style.display = 'none';
   });

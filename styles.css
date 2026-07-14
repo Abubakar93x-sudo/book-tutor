@@ -3351,3 +3351,39 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   font-variant-numeric: tabular-nums;
   margin-top: 4px;
 }
+
+/* Library top-bar settings gear — the mobile entry point to Settings
+   (the sidebar and its Settings button are hidden on phones) */
+.topbar-settings-btn {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.topbar-settings-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.topbar-settings-btn svg { width: 19px; height: 19px; }
+
+/* Library top bar on phones: the search box was a fixed 360px, pushing the
+   add-book button and settings gear off the right edge of the screen */
+@media (max-width: 768px) {
+  .library-top-nav {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .top-nav-actions {
+    width: 100%;
+    gap: 10px;
+  }
+  .search-bar { flex: 1; min-width: 0; }
+  .search-bar input { width: 100%; padding: 11px 14px 11px 42px; }
+  #btn-add-book-trigger { white-space: nowrap; flex: none; padding: 10px 14px; }
+  .topbar-settings-btn { width: 42px; height: 42px; }
+}
