@@ -355,6 +355,32 @@ function splitPdfIntoChapters(rawText) {
 // breaking only at paragraph boundaries. Segments are derived deterministically
 // from the stored chapter text, so only `segmentsDone` needs persisting.
 
+// Some PDFs extract with no blank-line breaks at all and hard-wrap lines
+// mid-sentence, so no line ever happens to end on sentence punctuation —
+// the loop above then never flushes, and the entire chapter (tens of
+// thousands of words) collapses into a single "paragraph." That single
+// giant paragraph then becomes a single reading segment with a single
+// checkpoint at the very end of the chapter, so no progress registers no
+// matter how far the reader actually gets before backing out. Re-split any
+// oversized paragraph by sentence boundaries as a fallback.
+function splitLongParagraphBySentences(text, maxWords) {
+  const sentences = text.match(/[^.!?]+[.!?]+["'”’]?\s*/g) || [text];
+  const chunks = [];
+  let cur = '';
+  let curWords = 0;
+  for (const s of sentences) {
+    cur += s;
+    curWords += s.trim().split(/\s+/).length;
+    if (curWords >= maxWords) {
+      chunks.push(cur.trim());
+      cur = '';
+      curWords = 0;
+    }
+  }
+  if (cur.trim()) chunks.push(cur.trim());
+  return chunks;
+}
+
 // PDF.js gives us a stream of lines, not paragraphs. Group lines into readable
 // paragraph blocks: break on blank lines, or once a block has real length and
 // the line ends a sentence.
@@ -376,7 +402,17 @@ function groupLinesIntoParagraphs(text) {
     }
   }
   if (cur.length) paras.push(cur.join(' '));
-  return paras;
+
+  const MAX_PARA_WORDS = 250;
+  const expanded = [];
+  for (const p of paras) {
+    if (p.split(/\s+/).length > MAX_PARA_WORDS) {
+      expanded.push(...splitLongParagraphBySentences(p, MAX_PARA_WORDS));
+    } else {
+      expanded.push(p);
+    }
+  }
+  return expanded;
 }
 
 function splitChapterIntoSegments(rawText) {
@@ -1157,18 +1193,18 @@ const Reader = {
     });
   },
 
-  // Switch to the classic tutor split without tearing down reader state
+  // Switch to the classic tutor split without tearing down reader state.
+  // Focus mode itself stays on — the whole Tutor Arena runs full-screen
+  // now (navigateTo sets it), whether showing the reader or the chat.
   showTutor() {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
-    setFocusMode(false);
   },
 
   showReader() {
     if (!this.active) return;
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
     document.getElementById('reader-pane').style.display = 'flex';
-    setFocusMode(true);
     this.startSegmentTimer(); // reading clock restarts when the text returns
   },
 
@@ -1180,7 +1216,6 @@ const Reader = {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
     document.getElementById('btn-back-to-reader').style.display = 'none';
-    setFocusMode(false);
   },
 
   startSegmentTimer() {
@@ -1493,6 +1528,10 @@ function navigateTo(viewId) {
   if (targetMobNav) targetMobNav.classList.add('active');
 
   AppState.currentView = viewId;
+
+  // Tutor Arena runs full-screen (chat or reader, whichever is showing) —
+  // the sidebar/mobile nav only make sense outside of it.
+  setFocusMode(viewId === 'tutor');
 }
 
 // ── 6. SETTINGS LOAD/SAVE ─────────────────────────────────────────────────────
@@ -1907,7 +1946,7 @@ function renderChapterUI(chapter) {
 
   // New chapter, new visuals — the previous chapter's image/diagram no longer applies
   document.getElementById('visual-panel').style.display = 'none';
-  document.getElementById('composer-tools').style.display = 'flex';
+  document.getElementById('composer-tools-trigger').style.display = 'flex';
 
   switchChatTab('teach');
 
@@ -2575,6 +2614,11 @@ async function renderNotesTab() {
   if (badge) {
     if (notes.length > 0) { badge.style.display = 'flex'; badge.textContent = notes.length; }
     else badge.style.display = 'none';
+  }
+  const menuBadge = document.getElementById('notes-menu-count');
+  if (menuBadge) {
+    if (notes.length > 0) { menuBadge.style.display = 'inline-block'; menuBadge.textContent = notes.length; }
+    else menuBadge.style.display = 'none';
   }
 }
 
@@ -3282,6 +3326,34 @@ function initChapterSwitcher() {
   document.addEventListener('click', closeChapterSwitcher);
 }
 
+// ── 23c. COMPOSER TOOLS POPOVER ─────────────────────────────────────────────
+// Mode switch, Recap, and Study Notes collapse behind one icon button in the
+// composer, instead of a permanent row eating vertical space from the chat.
+function closeComposerTools() {
+  document.getElementById('composer-tools-trigger')?.classList.remove('open');
+  document.getElementById('composer-tools')?.classList.remove('open');
+}
+
+function initComposerToolsPopover() {
+  const trigger = document.getElementById('composer-tools-trigger');
+  const popover = document.getElementById('composer-tools');
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = popover.classList.toggle('open');
+    trigger.classList.toggle('open', isOpen);
+  });
+
+  popover.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Any actual action inside (mode pick, Recap, Notes, back-to-reader)
+    // is a one-shot choice — close the menu once it's made.
+    if (e.target.closest('button')) closeComposerTools();
+  });
+
+  document.addEventListener('click', closeComposerTools);
+}
+
 // ── 24. RESET DATABASE ────────────────────────────────────────────────────────
 async function resetDatabase() {
   if (!confirm('This will permanently delete all books, chat history, and progress. Are you sure?')) return;
@@ -3526,6 +3598,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTutorModeSelect();
   initStudyDrawer();
   initNoteCapture();
+  initComposerToolsPopover();
   initReader();
   initPrime();
   initConsolidate();
