@@ -765,7 +765,23 @@ img { max-width: 100%; }
 
 /* Chapter switcher — collapses the book/chapter pickers behind one compact
    trigger in the chat header instead of a permanent full-width bar */
-.chapter-switcher { position: relative; }
+/* Home button — chat's own way back to the library while focus mode hides
+   the sidebar */
+.chat-home-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: var(--transition);
+}
+.chat-home-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.chat-home-btn svg { width: 16px; height: 16px; }
+
+.chapter-switcher { position: relative; margin-right: auto; }
 
 .chapter-switcher-trigger {
   display: flex;
@@ -1279,11 +1295,11 @@ img { max-width: 100%; }
 .composer-pill {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 4px;
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: 26px;
-  padding: 8px 8px 8px 20px;
+  padding: 6px 8px 6px 6px;
   box-shadow: 0 8px 24px rgba(36,26,16,0.10);
   transition: var(--transition);
 }
@@ -1297,7 +1313,7 @@ img { max-width: 100%; }
   color: var(--text-primary);
   font-size: 15px;
   line-height: 1.5;
-  padding: 9px 0;
+  padding: 10px 4px;
   max-height: 160px;
   resize: none;
 }
@@ -2085,7 +2101,7 @@ img { max-width: 100%; }
   .chapter-switcher-trigger { max-width: 200px; font-size: 12.5px; }
   .chapter-switcher-popover { width: calc(100vw - 28px); left: 0; }
   .chat-tab { padding: 6px 10px; font-size: 11px; }
-  .composer-tools { padding: 0 16px 8px; }
+  .composer-tools { width: min(260px, calc(100vw - 48px)); }
   .chat-history { padding: 16px 16px; }
 
   /* Study Notes drawer becomes a bottom sheet on mobile */
@@ -2104,7 +2120,7 @@ img { max-width: 100%; }
 
   .chat-history { padding: 16px; }
   .chat-input-bar { padding: 4px 16px 16px; }
-  .composer-pill { padding: 6px 6px 6px 16px; }
+  .composer-pill { padding: 5px 6px 5px 5px; }
   .chat-textarea { font-size: 16px; } /* Prevent iOS zoom on input focus */
 
   /* ── Review/Flashcard ── */
@@ -2206,45 +2222,28 @@ img { max-width: 100%; }
 .chat-tab:hover { color: var(--text-primary); }
 .chat-tab.active { background: var(--bg-surface); color: var(--text-primary); box-shadow: 0 1px 3px rgba(36,26,16,0.12); }
 
-/* Mode switch, Recap, and Study Notes — a quiet chip row above the composer,
-   not competing with the header for attention */
-.composer-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 24px 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.composer-tools::-webkit-scrollbar { display: none; }
+/* Mode switch, Recap, and Study Notes — collapsed behind one icon button in
+   the composer, opening a popover upward, instead of a permanent row that
+   ate vertical space from the conversation. */
+.composer-tools-anchor { position: relative; flex-shrink: 0; }
 
-.tool-chip {
+.composer-tools-trigger {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  justify-content: center;
   color: var(--text-secondary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  padding: 7px 13px;
-  border-radius: 99px;
+  position: relative;
   transition: var(--transition);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
+.composer-tools-trigger:hover { background: var(--bg-hover); color: var(--text-primary); }
+.composer-tools-trigger svg { width: 17px; height: 17px; }
 
-.tool-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
-.tool-chip:hover { color: var(--text-primary); }
-
-.tool-chip.active {
-  background: var(--grad-purple);
-  color: var(--text-primary);
-  border-color: transparent;
-  box-shadow: 0 3px 8px rgba(184,134,63,0.3);
-}
-
-.tool-chip .badge {
+.note-badge {
+  position: absolute;
+  top: -2px; right: -2px;
   background: var(--rose);
   color: #fff;
   font-size: 9.5px;
@@ -2254,6 +2253,93 @@ img { max-width: 100%; }
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.composer-tools {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 70;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 36px rgba(36,26,16,0.18);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 260px;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.composer-tools.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+.ct-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+
+.ct-segmented {
+  display: flex;
+  background: var(--bg-elevated);
+  border-radius: 99px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.tool-chip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 7px 8px;
+  border-radius: 99px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+
+.tool-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+.tool-chip:hover { color: var(--text-primary); }
+
+.tool-chip.active {
+  background: var(--grad-purple);
+  color: var(--text-primary);
+  box-shadow: 0 3px 8px rgba(184,134,63,0.3);
+}
+
+.ct-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 9px 10px;
+  border-radius: 9px;
+  transition: var(--transition);
+  text-align: left;
+}
+.ct-item:hover { background: var(--bg-hover); }
+.ct-item svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--text-secondary); }
+
+.ct-item-badge {
+  margin-left: auto;
+  background: var(--rose);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 99px;
 }
 
 /* ── 30. VISUAL PANEL ── */
@@ -2837,6 +2923,15 @@ body.immersive .immersive-only { display: flex !important; }
 
 .reader-segment p {
   margin: 0 0 1.05rem;
+}
+
+/* Highlight-set bookmark: the paragraph the reader resumes from */
+.reader-segment p.bookmarked {
+  border-left: 3px solid var(--purple);
+  background: rgba(184,134,63,0.08);
+  padding: 0.35rem 0.6rem 0.35rem 0.85rem;
+  margin-left: -0.85rem;
+  border-radius: 0 6px 6px 0;
 }
 
 /* Segment boundary: hairline rule + label; current one carries the action */

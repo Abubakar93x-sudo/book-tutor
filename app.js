@@ -410,6 +410,32 @@ function splitPdfIntoChapters(rawText) {
 // breaking only at paragraph boundaries. Segments are derived deterministically
 // from the stored chapter text, so only `segmentsDone` needs persisting.
 
+// Some PDFs extract with no blank-line breaks at all and hard-wrap lines
+// mid-sentence, so no line ever happens to end on sentence punctuation —
+// the loop above then never flushes, and the entire chapter (tens of
+// thousands of words) collapses into a single "paragraph." That single
+// giant paragraph then becomes a single reading segment with a single
+// checkpoint at the very end of the chapter, so no progress registers no
+// matter how far the reader actually gets before backing out. Re-split any
+// oversized paragraph by sentence boundaries as a fallback.
+function splitLongParagraphBySentences(text, maxWords) {
+  const sentences = text.match(/[^.!?]+[.!?]+["'”’]?\s*/g) || [text];
+  const chunks = [];
+  let cur = '';
+  let curWords = 0;
+  for (const s of sentences) {
+    cur += s;
+    curWords += s.trim().split(/\s+/).length;
+    if (curWords >= maxWords) {
+      chunks.push(cur.trim());
+      cur = '';
+      curWords = 0;
+    }
+  }
+  if (cur.trim()) chunks.push(cur.trim());
+  return chunks;
+}
+
 // PDF.js gives us a stream of lines, not paragraphs. Group lines into readable
 // paragraph blocks: break on blank lines, or once a block has real length and
 // the line ends a sentence.
@@ -431,7 +457,17 @@ function groupLinesIntoParagraphs(text) {
     }
   }
   if (cur.length) paras.push(cur.join(' '));
-  return paras;
+
+  const MAX_PARA_WORDS = 250;
+  const expanded = [];
+  for (const p of paras) {
+    if (p.split(/\s+/).length > MAX_PARA_WORDS) {
+      expanded.push(...splitLongParagraphBySentences(p, MAX_PARA_WORDS));
+    } else {
+      expanded.push(p);
+    }
+  }
+  return expanded;
 }
 
 function splitChapterIntoSegments(rawText) {
@@ -1393,7 +1429,7 @@ const Reader = {
 
     document.getElementById('reader-pane').style.display = 'flex';
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
-    document.getElementById('btn-back-to-reader').style.display = 'inline-flex';
+    document.getElementById('btn-back-to-reader').style.display = 'flex';
     setFocusMode(true);
 
     const book = AppState.selectedBook;
@@ -1405,12 +1441,28 @@ const Reader = {
     this.startSegmentTimer();
     this.ensureAttentionLabels();
 
-    // Resume where the reader left off
+    // Resume where the reader left off: a highlight-set bookmark wins over
+    // the coarser last-completed-checkpoint position.
     const scrollEl = document.getElementById('reader-scroll');
     scrollEl.scrollTop = 0;
-    const current = document.getElementById(`segment-${this.segmentsDone}`);
-    if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
+    const bookmarked = chapter.bookmarkPidx != null
+      ? this.markBookmarkedParagraph(chapter.bookmarkPidx)
+      : null;
+    if (bookmarked) {
+      bookmarked.scrollIntoView({ block: 'center' });
+    } else {
+      const current = document.getElementById(`segment-${this.segmentsDone}`);
+      if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
+    }
     return true;
+  },
+
+  // Tag the bookmarked paragraph (clearing any previous one) and return it
+  markBookmarkedParagraph(pidx) {
+    document.querySelectorAll('#reader-column p.bookmarked').forEach(p => p.classList.remove('bookmarked'));
+    const el = document.querySelector(`#reader-column p[data-pidx="${pidx}"]`);
+    if (el) el.classList.add('bookmarked');
+    return el;
   },
 
   // ── Attention layer: classify paragraphs core/support/skim, once per
@@ -1449,18 +1501,18 @@ const Reader = {
     });
   },
 
-  // Switch to the classic tutor split without tearing down reader state
+  // Switch to the classic tutor split without tearing down reader state.
+  // Focus mode itself stays on — the whole Tutor Arena runs full-screen
+  // now (navigateTo sets it), whether showing the reader or the chat.
   showTutor() {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
-    setFocusMode(false);
   },
 
   showReader() {
     if (!this.active) return;
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
     document.getElementById('reader-pane').style.display = 'flex';
-    setFocusMode(true);
     this.startSegmentTimer(); // reading clock restarts when the text returns
   },
 
@@ -1472,7 +1524,6 @@ const Reader = {
     document.getElementById('reader-pane').style.display = 'none';
     document.querySelector('#view-tutor .tutor-split').style.display = '';
     document.getElementById('btn-back-to-reader').style.display = 'none';
-    setFocusMode(false);
   },
 
   startSegmentTimer() {
@@ -1493,6 +1544,9 @@ const Reader = {
     }
 
     this.applyAttentionLabels();
+    if (this.chapter?.bookmarkPidx != null) {
+      this.markBookmarkedParagraph(this.chapter.bookmarkPidx);
+    }
   },
 
   buildSegmentEl(segment, index) {
@@ -1581,6 +1635,18 @@ const Reader = {
     this.segmentsDone = index + 1;
     this.startSegmentTimer();
 
+    // A checkpoint past the bookmark supersedes it — don't drag the reader
+    // backwards on the next open.
+    let clearedBookmark = false;
+    if (this.chapter.bookmarkPidx != null) {
+      const parasCompleted = this.segments.slice(0, this.segmentsDone)
+        .reduce((n, s) => n + s.paragraphs.length, 0);
+      if (this.chapter.bookmarkPidx < parasCompleted) {
+        this.chapter.bookmarkPidx = null;
+        clearedBookmark = true;
+      }
+    }
+
     // Reveal the next segment (or the completion card) in place
     this.renderColumn();
     const next = document.getElementById(`segment-${this.segmentsDone}`);
@@ -1592,7 +1658,9 @@ const Reader = {
     updateBookReadingProgress(segment.wordCount, seconds, this.chapter.number)
       .catch(err => console.warn('Reading progress save failed:', err.message));
     if (book?.isPdfBook) {
-      dbPutChapter(book.id, { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone })
+      const progress = { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone };
+      if (clearedBookmark) progress.bookmarkPidx = null;
+      dbPutChapter(book.id, progress)
         .catch(err => console.warn('Progress save failed:', err.message));
       if (this.segmentsDone >= this.segments.length) {
         dbUpdateBookProgress(book.id, 'studied', this.chapter.number)
@@ -1785,6 +1853,10 @@ function navigateTo(viewId) {
   if (targetMobNav) targetMobNav.classList.add('active');
 
   AppState.currentView = viewId;
+
+  // Tutor Arena runs full-screen (chat or reader, whichever is showing) —
+  // the sidebar/mobile nav only make sense outside of it.
+  setFocusMode(viewId === 'tutor');
 }
 
 // ── 6. SETTINGS LOAD/SAVE ─────────────────────────────────────────────────────
@@ -2199,7 +2271,7 @@ function renderChapterUI(chapter) {
 
   // New chapter, new visuals — the previous chapter's image/diagram no longer applies
   document.getElementById('visual-panel').style.display = 'none';
-  document.getElementById('composer-tools').style.display = 'flex';
+  document.getElementById('composer-tools-trigger').style.display = 'flex';
 
   switchChatTab('teach');
 
@@ -2667,6 +2739,12 @@ function initTutorModeSelect() {
       if (mode !== 'visuals') {
         document.getElementById('visual-panel').style.display = 'none';
       }
+
+      // "Read" doubles as the way back to the book text from the chat —
+      // reading silently means reading the chapter, not staring at the tutor.
+      if (mode === 'read' && Reader.active) {
+        Reader.showReader();
+      }
     });
   });
 }
@@ -2736,14 +2814,17 @@ function requestDeepDive(quote, chapterNumber, chapterTitle) {
 
 // ── 18f. TUTOR ARENA v2 — HIGHLIGHT-TO-NOTE CAPTURE ─────────────────────────
 function initNoteCapture() {
-  const popover    = document.getElementById('selection-popover');
-  const saveBtn    = document.getElementById('btn-save-note');
-  const explainBtn = document.getElementById('btn-explain-selection');
+  const popover     = document.getElementById('selection-popover');
+  const saveBtn     = document.getElementById('btn-save-note');
+  const explainBtn  = document.getElementById('btn-explain-selection');
+  const bookmarkBtn = document.getElementById('btn-bookmark-selection');
   let pendingText = '';
+  let pendingPidx = null; // reader paragraph index the selection starts in
 
   function hidePopover() {
     popover.style.display = 'none';
     pendingText = '';
+    pendingPidx = null;
   }
 
   // selectionchange (not mouseup) so this works consistently for both mouse
@@ -2765,6 +2846,9 @@ function initNoteCapture() {
       if (!bubble && !inReader) { hidePopover(); return; }
 
       explainBtn.style.display = inReader ? 'flex' : 'none';
+      bookmarkBtn.style.display = inReader ? 'flex' : 'none';
+      pendingPidx = inReader ? parseInt(anchorEl.closest('p[data-pidx]')?.dataset.pidx ?? 'NaN') : null;
+      if (Number.isNaN(pendingPidx)) pendingPidx = null;
       pendingText = text;
       const range = sel.getRangeAt(0);
       const rect = range.getBoundingClientRect();
@@ -2779,6 +2863,31 @@ function initNoteCapture() {
     if (!popover.contains(e.target)) hidePopover();
   });
   document.addEventListener('scroll', hidePopover, true);
+
+  // Resume here: bookmark the selected paragraph so reopening the book lands
+  // exactly on it — progress no longer depends on finishing a checkpoint.
+  bookmarkBtn.addEventListener('click', async () => {
+    if (pendingPidx === null || !AppState.selectedBook || !AppState.selectedChapter) return;
+    const book = AppState.selectedBook;
+    const chapter = AppState.selectedChapter;
+    const pidx = pendingPidx;
+
+    chapter.bookmarkPidx = pidx;
+    if (Reader.chapter && Reader.chapter.number === chapter.number) {
+      Reader.chapter.bookmarkPidx = pidx;
+    }
+    Reader.markBookmarkedParagraph(pidx);
+
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    showToast('Bookmarked — you\'ll resume here', 'success', 2200);
+
+    if (book.isPdfBook) {
+      await dbPutChapter(book.id, { chapterNumber: chapter.number, bookmarkPidx: pidx, bookmarkAt: Date.now() });
+    }
+    // Refresh the book's resume point so the library Continue card points here
+    await updateBookReadingProgress(0, 0, chapter.number);
+  });
 
   // Explain: jump into the tutor with the selected passage as a grounded question
   explainBtn.addEventListener('click', () => {
@@ -2867,6 +2976,11 @@ async function renderNotesTab() {
   if (badge) {
     if (notes.length > 0) { badge.style.display = 'flex'; badge.textContent = notes.length; }
     else badge.style.display = 'none';
+  }
+  const menuBadge = document.getElementById('notes-menu-count');
+  if (menuBadge) {
+    if (notes.length > 0) { menuBadge.style.display = 'inline-block'; menuBadge.textContent = notes.length; }
+    else menuBadge.style.display = 'none';
   }
 }
 
@@ -3574,6 +3688,34 @@ function initChapterSwitcher() {
   document.addEventListener('click', closeChapterSwitcher);
 }
 
+// ── 23c. COMPOSER TOOLS POPOVER ─────────────────────────────────────────────
+// Mode switch, Recap, and Study Notes collapse behind one icon button in the
+// composer, instead of a permanent row eating vertical space from the chat.
+function closeComposerTools() {
+  document.getElementById('composer-tools-trigger')?.classList.remove('open');
+  document.getElementById('composer-tools')?.classList.remove('open');
+}
+
+function initComposerToolsPopover() {
+  const trigger = document.getElementById('composer-tools-trigger');
+  const popover = document.getElementById('composer-tools');
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = popover.classList.toggle('open');
+    trigger.classList.toggle('open', isOpen);
+  });
+
+  popover.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Any actual action inside (mode pick, Recap, Notes, back-to-reader)
+    // is a one-shot choice — close the menu once it's made.
+    if (e.target.closest('button')) closeComposerTools();
+  });
+
+  document.addEventListener('click', closeComposerTools);
+}
+
 // ── 24. RESET DATABASE ────────────────────────────────────────────────────────
 async function resetDatabase() {
   if (!confirm('This will permanently delete all books, chat history, and progress. Are you sure?')) return;
@@ -3820,6 +3962,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTutorModeSelect();
   initStudyDrawer();
   initNoteCapture();
+  initComposerToolsPopover();
+  document.getElementById('btn-chat-home').addEventListener('click', () => navigateTo('library'));
   initReader();
   initPrime();
   initConsolidate();
