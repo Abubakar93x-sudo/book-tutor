@@ -280,6 +280,61 @@ async function dbDeleteBookChapters(bookId) {
   await batch.commit();
 }
 
+// ── LANGUAGE LEARNING DB (Firestore) ─────────────────────────────────────────
+// languages/{langId}                — one profile doc per language
+// langCards/{langId}_batch_{n}     — sentence-card batches (≤100 cards/doc,
+//                                    same chunking pattern as bookChapters)
+
+const LANG_CARDS_PER_BATCH = 100;
+
+async function dbPutLanguage(lang) {
+  const col = userCol('languages');
+  if (!col) return;
+  await col.doc(lang.id).set({ ...lang, updatedAt: Date.now() }, { merge: true });
+}
+
+async function dbGetAllLanguages() {
+  const col = userCol('languages');
+  if (!col) return [];
+  const snap = await col.get();
+  return snap.docs.map(d => d.data());
+}
+
+async function dbGetLangCardBatches(langId) {
+  const col = userCol('langCards');
+  if (!col) return [];
+  const snap = await col.where('langId', '==', langId).get();
+  return snap.docs
+    .map(d => d.data())
+    .sort((a, b) => (a.batch || 0) - (b.batch || 0));
+}
+
+async function dbPutLangCardBatch(langId, batchNum, cards) {
+  const col = userCol('langCards');
+  if (!col) return;
+  await col.doc(`${langId}_batch_${batchNum}`).set(
+    { langId, batch: batchNum, flashcards: cards, updatedAt: Date.now() }, { merge: true }
+  );
+}
+
+// Append new cards, filling the last partial batch before starting a new one.
+async function dbAppendLangCards(langId, newCards) {
+  const batches = await dbGetLangCardBatches(langId);
+  let queue = [...newCards];
+
+  const last = batches[batches.length - 1];
+  if (last && (last.flashcards || []).length < LANG_CARDS_PER_BATCH) {
+    const room = LANG_CARDS_PER_BATCH - last.flashcards.length;
+    const fill = queue.splice(0, room);
+    await dbPutLangCardBatch(langId, last.batch, [...last.flashcards, ...fill]);
+  }
+  let nextBatch = last ? last.batch + 1 : 0;
+  while (queue.length) {
+    await dbPutLangCardBatch(langId, nextBatch, queue.splice(0, LANG_CARDS_PER_BATCH));
+    nextBatch += 1;
+  }
+}
+
 // Update readyChapters / studiedChapters arrays stored on the book doc.
 async function dbUpdateBookProgress(bookId, type, chapterNumber) {
   const book = await dbGet('books', bookId);
@@ -1034,6 +1089,243 @@ const Consolidate = {
 function initConsolidate() {
   document.getElementById('btn-consolidate-close')
     .addEventListener('click', () => Consolidate.close());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LANGUAGES SECTION
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── DEMO MOCKS (keyless path) ─────────────────────────────────────────────────
+function demoLanguageProfile(name) {
+  const n = name.toLowerCase();
+  if (n.includes('japan') || n.includes('日本')) {
+    return {
+      name: 'Japanese', nativeName: '日本語', code: 'ja', ttsLangCode: 'ja-JP',
+      script: 'kana-kanji', scriptName: 'Kana + Kanji', romanizationName: 'Rōmaji',
+      notes: 'Two phonetic alphabets plus kanji characters; pitch accent instead of stress.'
+    };
+  }
+  return {
+    name: 'Spanish', nativeName: 'Español', code: 'es', ttsLangCode: 'es-ES',
+    script: 'latin', scriptName: 'Latin alphabet', romanizationName: null,
+    notes: 'Highly phonetic spelling — words sound the way they are written.'
+  };
+}
+
+function demoSeedCards(profile) {
+  if (profile.script !== 'latin') {
+    return [
+      { front: 'こんにちは', back: 'Hello', word: 'こんにちは', romanization: 'konnichiwa', type: 'vocab' },
+      { front: 'ありがとう', back: 'Thank you', word: 'ありがとう', romanization: 'arigatou', type: 'vocab' },
+      { front: 'はい、そうです', back: 'Yes, that\'s right', word: 'はい', romanization: 'hai, sou desu', type: 'vocab' },
+      { front: 'あ', back: 'The sound "a" — like the a in "father"', word: 'あ', romanization: 'a', type: 'script' },
+      { front: 'い', back: 'The sound "i" — like the ee in "see"', word: 'い', romanization: 'i', type: 'script' },
+      { front: 'う', back: 'The sound "u" — like the oo in "food"', word: 'う', romanization: 'u', type: 'script' }
+    ];
+  }
+  return [
+    { front: 'Hola, ¿cómo estás?', back: 'Hello, how are you?', word: 'hola', romanization: null, type: 'vocab' },
+    { front: 'Muchas gracias', back: 'Thank you very much', word: 'gracias', romanization: null, type: 'vocab' },
+    { front: 'Sí, por favor', back: 'Yes, please', word: 'por favor', romanization: null, type: 'vocab' },
+    { front: 'Yo tengo un libro', back: 'I have a book', word: 'tener', romanization: null, type: 'vocab' },
+    { front: 'No entiendo', back: 'I don\'t understand', word: 'entender', romanization: null, type: 'vocab' },
+    { front: '¿Dónde está el baño?', back: 'Where is the bathroom?', word: 'dónde', romanization: null, type: 'vocab' }
+  ];
+}
+
+// ── LANGUAGES VIEW ────────────────────────────────────────────────────────────
+async function renderLanguages() {
+  const grid = document.getElementById('lang-grid');
+  if (!grid) return;
+
+  grid.querySelectorAll('.lang-card').forEach(c => c.remove());
+  const languages = await dbGetAllLanguages();
+
+  for (const lang of languages) {
+    // Due count across this language's card batches
+    let due = 0;
+    try {
+      const batches = await dbGetLangCardBatches(lang.id);
+      batches.forEach(b => (b.flashcards || []).forEach(c => { if (isCardDue(c)) due++; }));
+    } catch (_) { /* card count is decorative — never block the view */ }
+
+    const card = document.createElement('div');
+    card.className = 'lang-card';
+    card.innerHTML = `
+      <div class="lang-card-head">
+        <span class="lang-native">${lang.nativeName}</span>
+        <span class="lang-level-chip">${lang.level}</span>
+      </div>
+      <div class="lang-card-name">${lang.name}</div>
+      <div class="lang-card-meta">
+        <span>${lang.scriptName}</span>
+        <span>·</span>
+        <span>${due} card${due === 1 ? '' : 's'} due</span>
+        ${lang.streak ? `<span>·</span><span>${lang.streak}-day streak</span>` : ''}
+      </div>
+      <button class="btn btn-primary lang-card-cta">Start today's session →</button>
+    `;
+    card.querySelector('.lang-card-cta').addEventListener('click', () => {
+      // Session player arrives in a later step — the deck is usable today
+      showToast('Daily sessions are coming next — your cards are already in the Flashcards deck.', 'info');
+      navigateTo('review');
+      initReviewSession();
+    });
+    grid.insertBefore(card, document.getElementById('btn-add-language'));
+  }
+}
+
+// ── LANGUAGE ONBOARDING ───────────────────────────────────────────────────────
+// Steps: name → profile confirmation (script auto-detection) → level → seed
+// deck generation. Reuses the Prime overlay pattern and styles.
+const LangOnboard = {
+  step: 'name',
+  profile: null,
+  level: 'A0',
+
+  open() {
+    this.step = 'name';
+    this.profile = null;
+    this.level = 'A0';
+    document.getElementById('lang-onboard-overlay').style.display = 'flex';
+    this.render();
+  },
+
+  close() {
+    document.getElementById('lang-onboard-overlay').style.display = 'none';
+  },
+
+  dots() {
+    const order = ['name', 'profile', 'level', 'seed'];
+    const idx = order.indexOf(this.step);
+    document.getElementById('lang-onboard-dots').innerHTML = order
+      .map((_, i) => `<i class="${i === idx ? 'on' : ''}"></i>`).join('');
+  },
+
+  render() {
+    const content = document.getElementById('lang-onboard-content');
+    const nextBtn = document.getElementById('btn-lang-onboard-next');
+    nextBtn.disabled = false;
+    nextBtn.style.display = '';
+    this.dots();
+
+    if (this.step === 'name') {
+      content.innerHTML = `
+        <div class="prime-subhead">Which language do you want to learn? Any language works — the method adapts to its writing system automatically.</div>
+        <input type="text" id="lang-name-input" class="form-input lang-name-input"
+               placeholder="e.g. Spanish, Japanese, Arabic, Yoruba…" autocomplete="off">
+      `;
+      nextBtn.textContent = 'Continue →';
+      const input = document.getElementById('lang-name-input');
+      input.focus();
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') this.next(); });
+
+    } else if (this.step === 'profile') {
+      const p = this.profile;
+      const scriptNote = p.script === 'latin'
+        ? `<p>${p.name} uses the Latin alphabet, so you can start reading immediately.</p>`
+        : `<p>${p.name} is written in <strong>${p.scriptName}</strong> — so alongside vocabulary you'll learn the script itself, and everything shows <strong>${p.romanizationName}</strong> underneath until you don't need it anymore.</p>`;
+      content.innerHTML = `
+        <div class="prime-driving">${p.nativeName}</div>
+        <div class="prime-est">${p.name} · ${p.scriptName}</div>
+        <div class="prime-subhead lang-profile-notes">${scriptNote}<p class="lang-notes-line">${p.notes}</p></div>
+      `;
+      nextBtn.textContent = 'Looks right →';
+
+    } else if (this.step === 'level') {
+      content.innerHTML = `
+        <div class="prime-subhead">How much ${this.profile.name} do you already have? This sets your starting point — the app recalibrates as you go.</div>
+        <div class="lang-level-options">
+          <button class="lang-level-btn" data-level="A0"><strong>Brand new</strong><span>Starting from zero</span></button>
+          <button class="lang-level-btn" data-level="A1"><strong>Know some words</strong><span>Greetings, numbers, scattered vocabulary</span></button>
+          <button class="lang-level-btn" data-level="A2"><strong>Can get by</strong><span>Simple conversations with effort</span></button>
+        </div>
+      `;
+      nextBtn.style.display = 'none'; // level buttons advance directly
+      content.querySelectorAll('.lang-level-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.level = btn.dataset.level;
+          this.step = 'seed';
+          this.render();
+          this.generateSeed();
+        });
+      });
+
+    } else if (this.step === 'seed') {
+      content.innerHTML = `
+        <div class="cp-loading" style="justify-content:center;">
+          <span class="cp-spinner"></span> Building your starter deck — the most frequent words first…
+        </div>
+      `;
+      nextBtn.style.display = 'none';
+    }
+  },
+
+  async next() {
+    if (this.step === 'name') {
+      const name = document.getElementById('lang-name-input')?.value.trim();
+      if (!name) return;
+      const content = document.getElementById('lang-onboard-content');
+      content.innerHTML = `
+        <div class="cp-loading" style="justify-content:center;">
+          <span class="cp-spinner"></span> Looking at ${name}'s writing system…
+        </div>
+      `;
+      document.getElementById('btn-lang-onboard-next').disabled = true;
+      try {
+        this.profile = AppState.mode === 'demo'
+          ? demoLanguageProfile(name)
+          : await callLanguageProfiler(name);
+        this.step = 'profile';
+        this.render();
+      } catch (err) {
+        showToast(err.message, 'error', 6000);
+        this.step = 'name';
+        this.render();
+      }
+    } else if (this.step === 'profile') {
+      this.step = 'level';
+      this.render();
+    }
+  },
+
+  async generateSeed() {
+    const p = this.profile;
+    try {
+      const cards = AppState.mode === 'demo'
+        ? demoSeedCards(p)
+        : await callSeedDeckGenerator(p, this.level);
+
+      const lang = {
+        id: p.code,
+        ...p,
+        level: this.level,
+        knownWords: cards.filter(c => c.type === 'vocab').map(c => c.word).filter(Boolean),
+        wordsLearned: 0,
+        streak: 0,
+        sessionNumber: 0,
+        lastSessionAt: null,
+        createdAt: Date.now()
+      };
+      await dbPutLanguage(lang);
+      await dbAppendLangCards(lang.id, cards);
+
+      this.close();
+      showToast(`${p.name} added — ${cards.length} starter cards are in your deck.`, 'success');
+      await renderLanguages();
+    } catch (err) {
+      console.warn('Seed deck failed:', err.message);
+      showToast('Could not build the starter deck: ' + err.message, 'error', 7000);
+      this.step = 'level';
+      this.render();
+    }
+  }
+};
+
+function initLanguages() {
+  document.getElementById('btn-add-language').addEventListener('click', () => LangOnboard.open());
+  document.getElementById('btn-lang-onboard-next').addEventListener('click', () => LangOnboard.next());
+  document.getElementById('btn-lang-onboard-close').addEventListener('click', () => LangOnboard.close());
 }
 
 // ── TRANSFER PROBLEM ──────────────────────────────────────────────────────────
@@ -3328,6 +3620,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const view = link.dataset.view;
       navigateTo(view);
       if (view === 'review') initReviewSession();
+      if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
     });
   });
@@ -3340,6 +3633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       navigateTo(view);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       if (view === 'review') initReviewSession();
+      if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
     });
   });
@@ -3529,6 +3823,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initReader();
   initPrime();
   initConsolidate();
+  initLanguages();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 

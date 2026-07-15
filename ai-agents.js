@@ -879,6 +879,95 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// LANGUAGE LEARNING AGENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── AGENT: LANGUAGE PROFILER ─────────────────────────────────────────────────
+// Given any language name the user types, returns a normalized profile.
+// The `script` field is the master switch: everything downstream (romanization
+// lines, script bootcamp cards, TTS locale) adjusts off this classification.
+async function callLanguageProfiler(languageName) {
+  const prompt = `
+    A learner wants to study the language: "${languageName}".
+
+    Return a normalized profile of this language. The "script" field must be
+    one of: "latin", "cyrillic", "greek", "arabic", "hebrew", "devanagari",
+    "cjk", "hangul", "kana-kanji", "thai", "other".
+    Use "kana-kanji" for Japanese, "cjk" for Chinese, "hangul" for Korean.
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "name": "English name of the language, e.g. Japanese",
+      "nativeName": "the language's name in itself, e.g. 日本語",
+      "code": "ISO 639-1 code, e.g. ja",
+      "ttsLangCode": "BCP-47 code for speech synthesis, e.g. ja-JP",
+      "script": "one of the values above",
+      "scriptName": "human name of the writing system, e.g. Kana + Kanji",
+      "romanizationName": "name of its standard romanization, e.g. Rōmaji, or null for Latin-script languages",
+      "notes": "one sentence on what makes this language's writing/pronunciation distinctive for a beginner"
+    }
+
+    If the input is not a recognizable human language, return: { "error": "not a language" }
+  `;
+  const result = await queryGemini(prompt, true);
+  if (result.error || !result.code) throw new Error(`Couldn't recognize "${languageName}" as a language.`);
+  return {
+    name: result.name,
+    nativeName: result.nativeName || result.name,
+    code: result.code,
+    ttsLangCode: result.ttsLangCode || result.code,
+    script: result.script || 'latin',
+    scriptName: result.scriptName || 'Latin alphabet',
+    romanizationName: result.script === 'latin' ? null : (result.romanizationName || 'romanization'),
+    notes: result.notes || ''
+  };
+}
+
+// ── AGENT: SEED DECK GENERATOR ───────────────────────────────────────────────
+// First cards for a new language: highest-frequency words in short sentences.
+// Non-Latin scripts also get script cards (letter/kana groups with mnemonics)
+// so the writing system enters the SM-2 deck before vocabulary ramps up.
+async function callSeedDeckGenerator(langProfile, level) {
+  const nonLatin = langProfile.script !== 'latin';
+  const prompt = `
+    You are building the FIRST spaced-repetition deck for a ${level}-level
+    learner of ${langProfile.name} (written in ${langProfile.scriptName}).
+
+    Create ${nonLatin ? '25' : '30'} sentence cards:
+    - Use ONLY the highest-frequency everyday words (greetings, to be/have,
+      pronouns, numbers 1-5, yes/no, please/thanks, common verbs).
+    - Each card's front is a SHORT sentence (2-6 words) in ${langProfile.name}
+      containing the target word. The back is the English translation.
+    - Sentences must be natural, not word lists. Reuse earlier words so the
+      deck compounds.
+    ${nonLatin ? `- Every front sentence must include "romanization" in ${langProfile.romanizationName}.
+
+    ALSO create 12 script cards for the ${langProfile.scriptName} writing system:
+    - front: a single character or letter group as it appears in text
+    - back: its sound/meaning, plus a short vivid mnemonic
+    - romanization: how it is pronounced
+    - type: "script"` : ''}
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "cards": [
+        { "front": "sentence in ${langProfile.name}", "back": "English translation", "word": "target word", ${nonLatin ? '"romanization": "romanized sentence", ' : ''}"type": "vocab" }
+      ]
+    }
+  `;
+  const result = await queryGemini(prompt, true);
+  const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
+  if (!cards.length) throw new Error('Seed deck generation returned no cards.');
+  return cards.map(c => ({
+    front: c.front,
+    back: c.back,
+    word: c.word || '',
+    romanization: c.romanization || null,
+    type: c.type === 'script' ? 'script' : 'vocab'
+  }));
+}
+
 // ── AGENT 5: FEYNMAN SANDBOX ASSESSOR ────────────────────────────────────────
 // Grades the student's Feynman explanation for accuracy, simplicity, and completeness.
 async function callLiveSandboxAssessor(concept, explanation) {

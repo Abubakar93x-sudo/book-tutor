@@ -74,6 +74,10 @@
           <span class="nav-label">Flashcards</span>
           <span class="nav-badge" id="review-badge" style="display:none;">0</span>
         </a>
+        <a href="#languages" class="nav-link" id="nav-languages" data-view="languages">
+          <span class="nav-icon"></span>
+          <span class="nav-label">Languages</span>
+        </a>
       </nav>
 
       <!-- Sidebar Footer: User info + Settings -->
@@ -615,6 +619,37 @@
         </div>
       </section>
 
+      <!-- ============================================================
+        VIEW 5: LANGUAGES — the daily four-strand language loop
+      ============================================================ -->
+      <section id="view-languages" class="view">
+        <div class="page-header">
+          <h2 class="page-title">Languages</h2>
+          <p class="page-subtitle">A ~25-minute daily loop: review your cards, read a story at your level, converse, then shadow out loud.</p>
+        </div>
+
+        <div class="lang-grid" id="lang-grid">
+          <!-- Language cards injected by renderLanguages(); add-card is persistent -->
+          <button class="lang-add-card" id="btn-add-language">
+            <span class="lang-add-plus">+</span>
+            <span>Add a language</span>
+          </button>
+        </div>
+
+        <!-- Language onboarding — reuses the Prime overlay pattern -->
+        <div id="lang-onboard-overlay" class="prime-overlay" style="display:none;">
+          <button class="prime-close" id="btn-lang-onboard-close" title="Cancel">✕</button>
+          <div class="prime-stage">
+            <div class="prime-kicker" id="lang-onboard-kicker">New language</div>
+            <div class="prime-card" id="lang-onboard-content"></div>
+          </div>
+          <div class="prime-footer">
+            <div class="prime-dots" id="lang-onboard-dots"></div>
+            <button class="btn btn-primary" id="btn-lang-onboard-next">Continue →</button>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -832,6 +867,10 @@
       <span class="mobile-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="6.5" width="11" height="8" rx="1.4"/><path d="M3 9.5v5A1.4 1.4 0 004.4 16H13"/></svg></span>
       <span class="mobile-nav-label">Flashcards</span>
       <span class="mobile-nav-badge" id="mobile-review-badge" style="display:none;">0</span>
+    </a>
+    <a href="#languages" class="mobile-nav-item" id="mobile-nav-languages" data-view="languages">
+      <span class="mobile-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c-2.2 2.2-3.3 4.8-3.3 7.5s1.1 5.3 3.3 7.5c2.2-2.2 3.3-4.8 3.3-7.5S12.2 4.7 10 2.5z"/></svg></span>
+      <span class="mobile-nav-label">Languages</span>
     </a>
   </nav>
 
