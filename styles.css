@@ -3607,3 +3607,32 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .lang-grid { padding: 0 16px 40px; grid-template-columns: 1fr; }
   #view-languages .page-header { padding: 24px 16px 16px; }
 }
+
+/* ── Language flashcards: speak button + romanization line ── */
+.card-speak-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: color 0.15s ease-out, border-color 0.15s ease-out;
+}
+.card-speak-btn:hover { color: var(--purple); border-color: var(--purple); }
+.card-speak-btn svg { width: 18px; height: 18px; }
+
+.card-romanization {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 8px;
+}

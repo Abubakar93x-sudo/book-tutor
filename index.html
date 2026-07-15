@@ -600,8 +600,13 @@
                 <div class="flashcard-inner">
                   <div class="flashcard-front">
                     <span class="card-tag" id="card-book-tag">Book</span>
+                    <!-- Language cards only: hear the sentence spoken -->
+                    <button id="card-speak-btn" class="card-speak-btn" style="display:none;" title="Hear it spoken">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8v4h3l4 4V4L6 8H3z"/><path d="M14 7c1 1 1 5 0 6M16.5 5c2 2.4 2 7.6 0 10"/></svg>
+                    </button>
                     <div class="card-body">
                       <p id="card-front-text">Question text</p>
+                      <p id="card-front-romanization" class="card-romanization" style="display:none;"></p>
                     </div>
                     <span class="card-flip-hint">Click to reveal answer</span>
                   </div>
@@ -609,6 +614,7 @@
                     <span class="card-tag" id="card-book-tag-back">Book</span>
                     <div class="card-body">
                       <p id="card-back-text">Answer text</p>
+                      <p id="card-back-romanization" class="card-romanization" style="display:none;"></p>
                     </div>
                     <span class="card-flip-hint">Rate your recall below</span>
                   </div>

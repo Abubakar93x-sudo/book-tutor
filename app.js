@@ -90,6 +90,33 @@ const NarrationEngine = {
     this.enabled = !this.enabled;
     if (!this.enabled) this.stop();
     return this.enabled;
+  },
+
+  // ── Language-learning TTS ──
+  // Speaks text in an arbitrary language, picking the best matching system
+  // voice (exact BCP-47 match, then language-prefix match). Returns false if
+  // the device has no voice for that language — callers degrade gracefully.
+  voiceFor(langCode) {
+    if (!this.synth || !langCode) return null;
+    const voices = this.synth.getVoices();
+    const want = langCode.toLowerCase();
+    const prefix = want.split('-')[0];
+    return voices.find(v => v.lang?.toLowerCase() === want)
+        || voices.find(v => v.lang?.toLowerCase().replace('_', '-').startsWith(prefix))
+        || null;
+  },
+
+  speakLang(text, langCode, rate = 0.95) {
+    const voice = this.voiceFor(langCode);
+    if (!voice || !text) return false;
+    this.synth.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.voice = voice;
+    utt.lang = voice.lang;
+    utt.rate = rate;
+    utt.pitch = 1.0;
+    this.synth.speak(utt);
+    return true;
   }
 };
 
@@ -3463,6 +3490,35 @@ async function collectDueCards() {
   const due = [];
   AppState._reviewBookCache = {};
   AppState._reviewChapterCache = {};
+  AppState._reviewLangCache = {};
+
+  // Language sentence cards share the deck with book cards — interleaving
+  // review across subjects is itself a retention win.
+  try {
+    const languages = await dbGetAllLanguages();
+    for (const lang of languages) {
+      const batches = await dbGetLangCardBatches(lang.id);
+      for (const batch of batches) {
+        const cards = batch.flashcards || [];
+        if (cards.length) {
+          AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
+        }
+        cards.forEach((card, idx) => {
+          if (isCardDue(card)) {
+            due.push({
+              ...card,
+              bookTitle: lang.name,                 // deck tag shows the language
+              _langLevel: lang.level,               // drives the romanization fade
+              _ttsLang: lang.ttsLangCode || lang.code,
+              _src: { type: 'langCards', langId: lang.id, batch: batch.batch, index: idx }
+            });
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Language cards unavailable for review:', err.message);
+  }
 
   const books = await dbGetAll('books');
   for (const book of books) {
@@ -3510,8 +3566,15 @@ async function persistCardSchedule(card) {
   const clean = { ...card };
   delete clean._src;
   delete clean.bookTitle;
+  delete clean._langLevel;
+  delete clean._ttsLang;
 
-  if (src.type === 'chapterDoc') {
+  if (src.type === 'langCards') {
+    const cards = AppState._reviewLangCache[`${src.langId}_batch_${src.batch}`];
+    if (!cards || !cards[src.index]) return;
+    cards[src.index] = clean;
+    await dbPutLangCardBatch(src.langId, src.batch, cards);
+  } else if (src.type === 'chapterDoc') {
     const cards = AppState._reviewChapterCache[`${src.bookId}_ch_${src.chapterNumber}`];
     if (!cards || !cards[src.index]) return;
     cards[src.index] = clean;
@@ -3586,6 +3649,30 @@ function showNextCard() {
   document.getElementById('card-book-tag-back').textContent = card.bookTitle;
   document.getElementById('card-front-text').textContent = card.front;
   document.getElementById('card-back-text').textContent = card.back;
+
+  // ── Language cards: TTS button + romanization fade ──
+  const isLangCard = card._src?.type === 'langCards';
+  const speakBtn = document.getElementById('card-speak-btn');
+  const frontRom = document.getElementById('card-front-romanization');
+  const backRom  = document.getElementById('card-back-romanization');
+
+  speakBtn.style.display = isLangCard ? 'inline-flex' : 'none';
+  speakBtn.onclick = isLangCard ? (e) => {
+    e.stopPropagation(); // don't flip the card
+    if (!NarrationEngine.speakLang(card.front, card._ttsLang)) {
+      showToast(`No ${card.bookTitle} voice on this device — audio unavailable.`, 'info', 3500);
+    }
+  } : null;
+
+  // Romanization fade: fully shown at A0-A1, hidden from A2 up (learners
+  // should be reading the script itself by then). Front shows it while
+  // learning; the back always carries it as the answer's pronunciation.
+  const showRom = isLangCard && !!card.romanization;
+  const earlyLevel = ['A0', 'A1'].includes(card._langLevel);
+  frontRom.style.display = showRom && earlyLevel ? 'block' : 'none';
+  frontRom.textContent = showRom ? card.romanization : '';
+  backRom.style.display = showRom ? 'block' : 'none';
+  backRom.textContent = showRom ? card.romanization : '';
 }
 
 function rateCard(score) {
