@@ -765,7 +765,23 @@ img { max-width: 100%; }
 
 /* Chapter switcher — collapses the book/chapter pickers behind one compact
    trigger in the chat header instead of a permanent full-width bar */
-.chapter-switcher { position: relative; }
+/* Home button — chat's own way back to the library while focus mode hides
+   the sidebar */
+.chat-home-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: var(--transition);
+}
+.chat-home-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.chat-home-btn svg { width: 16px; height: 16px; }
+
+.chapter-switcher { position: relative; margin-right: auto; }
 
 .chapter-switcher-trigger {
   display: flex;
@@ -2907,6 +2923,15 @@ body.immersive .immersive-only { display: flex !important; }
 
 .reader-segment p {
   margin: 0 0 1.05rem;
+}
+
+/* Highlight-set bookmark: the paragraph the reader resumes from */
+.reader-segment p.bookmarked {
+  border-left: 3px solid var(--purple);
+  background: rgba(184,134,63,0.08);
+  padding: 0.35rem 0.6rem 0.35rem 0.85rem;
+  margin-left: -0.85rem;
+  border-radius: 0 6px 6px 0;
 }
 
 /* Segment boundary: hairline rule + label; current one carries the action */

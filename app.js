@@ -1137,7 +1137,7 @@ const Reader = {
 
     document.getElementById('reader-pane').style.display = 'flex';
     document.querySelector('#view-tutor .tutor-split').style.display = 'none';
-    document.getElementById('btn-back-to-reader').style.display = 'inline-flex';
+    document.getElementById('btn-back-to-reader').style.display = 'flex';
     setFocusMode(true);
 
     const book = AppState.selectedBook;
@@ -1149,12 +1149,28 @@ const Reader = {
     this.startSegmentTimer();
     this.ensureAttentionLabels();
 
-    // Resume where the reader left off
+    // Resume where the reader left off: a highlight-set bookmark wins over
+    // the coarser last-completed-checkpoint position.
     const scrollEl = document.getElementById('reader-scroll');
     scrollEl.scrollTop = 0;
-    const current = document.getElementById(`segment-${this.segmentsDone}`);
-    if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
+    const bookmarked = chapter.bookmarkPidx != null
+      ? this.markBookmarkedParagraph(chapter.bookmarkPidx)
+      : null;
+    if (bookmarked) {
+      bookmarked.scrollIntoView({ block: 'center' });
+    } else {
+      const current = document.getElementById(`segment-${this.segmentsDone}`);
+      if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
+    }
     return true;
+  },
+
+  // Tag the bookmarked paragraph (clearing any previous one) and return it
+  markBookmarkedParagraph(pidx) {
+    document.querySelectorAll('#reader-column p.bookmarked').forEach(p => p.classList.remove('bookmarked'));
+    const el = document.querySelector(`#reader-column p[data-pidx="${pidx}"]`);
+    if (el) el.classList.add('bookmarked');
+    return el;
   },
 
   // ── Attention layer: classify paragraphs core/support/skim, once per
@@ -1236,6 +1252,9 @@ const Reader = {
     }
 
     this.applyAttentionLabels();
+    if (this.chapter?.bookmarkPidx != null) {
+      this.markBookmarkedParagraph(this.chapter.bookmarkPidx);
+    }
   },
 
   buildSegmentEl(segment, index) {
@@ -1324,6 +1343,18 @@ const Reader = {
     this.segmentsDone = index + 1;
     this.startSegmentTimer();
 
+    // A checkpoint past the bookmark supersedes it — don't drag the reader
+    // backwards on the next open.
+    let clearedBookmark = false;
+    if (this.chapter.bookmarkPidx != null) {
+      const parasCompleted = this.segments.slice(0, this.segmentsDone)
+        .reduce((n, s) => n + s.paragraphs.length, 0);
+      if (this.chapter.bookmarkPidx < parasCompleted) {
+        this.chapter.bookmarkPidx = null;
+        clearedBookmark = true;
+      }
+    }
+
     // Reveal the next segment (or the completion card) in place
     this.renderColumn();
     const next = document.getElementById(`segment-${this.segmentsDone}`);
@@ -1335,7 +1366,9 @@ const Reader = {
     updateBookReadingProgress(segment.wordCount, seconds, this.chapter.number)
       .catch(err => console.warn('Reading progress save failed:', err.message));
     if (book?.isPdfBook) {
-      dbPutChapter(book.id, { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone })
+      const progress = { chapterNumber: this.chapter.number, segmentsDone: this.segmentsDone };
+      if (clearedBookmark) progress.bookmarkPidx = null;
+      dbPutChapter(book.id, progress)
         .catch(err => console.warn('Progress save failed:', err.message));
       if (this.segmentsDone >= this.segments.length) {
         dbUpdateBookProgress(book.id, 'studied', this.chapter.number)
@@ -2414,6 +2447,12 @@ function initTutorModeSelect() {
       if (mode !== 'visuals') {
         document.getElementById('visual-panel').style.display = 'none';
       }
+
+      // "Read" doubles as the way back to the book text from the chat —
+      // reading silently means reading the chapter, not staring at the tutor.
+      if (mode === 'read' && Reader.active) {
+        Reader.showReader();
+      }
     });
   });
 }
@@ -2483,14 +2522,17 @@ function requestDeepDive(quote, chapterNumber, chapterTitle) {
 
 // ── 18f. TUTOR ARENA v2 — HIGHLIGHT-TO-NOTE CAPTURE ─────────────────────────
 function initNoteCapture() {
-  const popover    = document.getElementById('selection-popover');
-  const saveBtn    = document.getElementById('btn-save-note');
-  const explainBtn = document.getElementById('btn-explain-selection');
+  const popover     = document.getElementById('selection-popover');
+  const saveBtn     = document.getElementById('btn-save-note');
+  const explainBtn  = document.getElementById('btn-explain-selection');
+  const bookmarkBtn = document.getElementById('btn-bookmark-selection');
   let pendingText = '';
+  let pendingPidx = null; // reader paragraph index the selection starts in
 
   function hidePopover() {
     popover.style.display = 'none';
     pendingText = '';
+    pendingPidx = null;
   }
 
   // selectionchange (not mouseup) so this works consistently for both mouse
@@ -2512,6 +2554,9 @@ function initNoteCapture() {
       if (!bubble && !inReader) { hidePopover(); return; }
 
       explainBtn.style.display = inReader ? 'flex' : 'none';
+      bookmarkBtn.style.display = inReader ? 'flex' : 'none';
+      pendingPidx = inReader ? parseInt(anchorEl.closest('p[data-pidx]')?.dataset.pidx ?? 'NaN') : null;
+      if (Number.isNaN(pendingPidx)) pendingPidx = null;
       pendingText = text;
       const range = sel.getRangeAt(0);
       const rect = range.getBoundingClientRect();
@@ -2526,6 +2571,31 @@ function initNoteCapture() {
     if (!popover.contains(e.target)) hidePopover();
   });
   document.addEventListener('scroll', hidePopover, true);
+
+  // Resume here: bookmark the selected paragraph so reopening the book lands
+  // exactly on it — progress no longer depends on finishing a checkpoint.
+  bookmarkBtn.addEventListener('click', async () => {
+    if (pendingPidx === null || !AppState.selectedBook || !AppState.selectedChapter) return;
+    const book = AppState.selectedBook;
+    const chapter = AppState.selectedChapter;
+    const pidx = pendingPidx;
+
+    chapter.bookmarkPidx = pidx;
+    if (Reader.chapter && Reader.chapter.number === chapter.number) {
+      Reader.chapter.bookmarkPidx = pidx;
+    }
+    Reader.markBookmarkedParagraph(pidx);
+
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    showToast('Bookmarked — you\'ll resume here', 'success', 2200);
+
+    if (book.isPdfBook) {
+      await dbPutChapter(book.id, { chapterNumber: chapter.number, bookmarkPidx: pidx, bookmarkAt: Date.now() });
+    }
+    // Refresh the book's resume point so the library Continue card points here
+    await updateBookReadingProgress(0, 0, chapter.number);
+  });
 
   // Explain: jump into the tutor with the selected passage as a grounded question
   explainBtn.addEventListener('click', () => {
@@ -3599,6 +3669,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initStudyDrawer();
   initNoteCapture();
   initComposerToolsPopover();
+  document.getElementById('btn-chat-home').addEventListener('click', () => navigateTo('library'));
   initReader();
   initPrime();
   initConsolidate();

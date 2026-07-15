@@ -287,6 +287,12 @@
           <div class="chat-pane glass-panel">
             <!-- Chat Header -->
             <div class="chat-header">
+              <!-- Home: focus mode hides the sidebar in the Tutor Arena, so the
+                   chat needs its own way back to the library -->
+              <button class="chat-home-btn" id="btn-chat-home" title="Back to library">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L10 3l7 6.5"/><path d="M5 8.5V17h10V8.5"/></svg>
+              </button>
+
               <!-- Chapter switcher: collapses the book/chapter pickers behind one trigger -->
               <div class="chapter-switcher">
                 <button class="chapter-switcher-trigger" id="chapter-switcher-trigger" type="button">
@@ -467,8 +473,13 @@
         </div>
 
         <!-- Floating popover shown when the user selects text in a tutor message
-             or in the reader column (reader selections also offer Explain) -->
+             or in the reader column (reader selections also offer Explain and
+             Resume-here bookmarking) -->
         <div id="selection-popover" class="selection-popover" style="display:none;">
+          <button id="btn-bookmark-selection" class="sp-btn" style="display:none;">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10v14l-5-3.5L5 17V3z"/></svg>
+            Resume here
+          </button>
           <button id="btn-explain-selection" class="sp-btn" style="display:none;">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-3.5 3v-3H5a2 2 0 01-2-2v-6z"/></svg>
             Explain
