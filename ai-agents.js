@@ -968,6 +968,42 @@ async function callSeedDeckGenerator(langProfile, level) {
   }));
 }
 
+// ── AGENT: SCRIPT UNIT GENERATOR ─────────────────────────────────────────────
+// Script bootcamp for non-Latin languages: each unit teaches the NEXT ~10
+// characters of the writing system in pedagogical order (kana rows, alphabet
+// clusters, highest-frequency hanzi with component mnemonics). Cards join the
+// same SM-2 deck as type:'script'.
+async function callScriptUnitGenerator(langProfile, unitNumber, learnedChars = []) {
+  const prompt = `
+    You are teaching the ${langProfile.scriptName} writing system of
+    ${langProfile.name}, one small unit at a time, in the standard
+    pedagogical order for this script (e.g. kana by gojūon row; alphabets by
+    letter groups; Chinese characters by frequency with radical components).
+
+    ALREADY LEARNED (do not repeat): ${learnedChars.join(' ') || '(nothing yet)'}
+    This is unit ${unitNumber}. Teach the NEXT 10 characters/letters.
+
+    For each, create one card:
+    - front: the character exactly as it appears in text
+    - back: its sound and/or meaning, plus a SHORT vivid mnemonic
+      (for logographic characters, name the components: "tree 木 + sun 日 = …")
+    - romanization: how it is pronounced in ${langProfile.romanizationName || 'romanization'}
+
+    Return ONLY valid JSON, no markdown fences:
+    { "cards": [{ "front": "char", "back": "sound/meaning — mnemonic", "romanization": "pronunciation" }] }
+  `;
+  const result = await queryGemini(prompt, true);
+  const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
+  if (!cards.length) throw new Error('Script unit generation returned no cards.');
+  return cards.slice(0, 12).map(c => ({
+    front: c.front,
+    back: c.back,
+    word: c.front,
+    romanization: c.romanization || null,
+    type: 'script'
+  }));
+}
+
 // ── AGENT: GRADED STORY / DAILY LESSON GENERATOR ─────────────────────────────
 // The "i+1" engine: a tiny story using ~95% words the learner already knows
 // plus a handful of new frequency words. Comprehensible input, manufactured.

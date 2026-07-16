@@ -3883,3 +3883,11 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .shadow-rate { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
 .shadow-rate .cp-conf-label { margin-right: 0.2rem; }
 .cp-chip.sel { background: var(--text-primary); color: var(--bg-surface); border-color: var(--text-primary); }
+
+/* Script bootcamp button on non-Latin language cards */
+.lang-script-btn {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  padding: 0.55rem 0.9rem;
+  width: 100%;
+}

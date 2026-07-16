@@ -1249,6 +1249,18 @@ async function renderLanguages() {
       <button class="btn btn-primary lang-card-cta">Start today's session →</button>
     `;
     card.querySelector('.lang-card-cta').addEventListener('click', () => LangSession.start(lang));
+
+    // Script bootcamp: non-Latin languages can pull the next unit of their
+    // writing system into the deck (kana rows, letter groups, hanzi by
+    // frequency). Fades out once the learner is past A1 — by then the script
+    // should carry itself through reading.
+    if (lang.script && lang.script !== 'latin' && ['A0', 'A1'].includes(lang.level)) {
+      const scriptBtn = document.createElement('button');
+      scriptBtn.className = 'btn btn-ghost lang-script-btn';
+      scriptBtn.textContent = `Script bootcamp · unit ${(lang.scriptUnit || 0) + 1} →`;
+      scriptBtn.addEventListener('click', () => startScriptUnit(lang, scriptBtn));
+      card.appendChild(scriptBtn);
+    }
     grid.insertBefore(card, document.getElementById('btn-add-language'));
   }
 }
@@ -1845,6 +1857,43 @@ const LangSession = {
   }
 };
 
+// ── SCRIPT BOOTCAMP ───────────────────────────────────────────────────────────
+// Pulls the next ~10 characters of a non-Latin writing system into the SM-2
+// deck. Tracks which characters have been issued so units never repeat.
+async function startScriptUnit(lang, triggerBtn) {
+  const unit = (lang.scriptUnit || 0) + 1;
+  if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Building the unit…'; }
+
+  try {
+    let cards;
+    if (AppState.mode === 'demo') {
+      const demoUnits = [
+        [{ front: 'か', back: 'The sound "ka" — a Kite (ka!) with a loose string', romanization: 'ka' },
+         { front: 'き', back: 'The sound "ki" — a Key with two teeth', romanization: 'ki' },
+         { front: 'く', back: 'The sound "ku" — a bird\'s beak going "coo"', romanization: 'ku' }],
+        [{ front: 'さ', back: 'The sound "sa" — a fish hook catching Salmon', romanization: 'sa' },
+         { front: 'し', back: 'The sound "shi" — a fishing line, "she" caught it', romanization: 'shi' }]
+      ];
+      cards = (demoUnits[Math.min(unit - 1, demoUnits.length - 1)] || demoUnits[0])
+        .map(c => ({ ...c, word: c.front, type: 'script' }));
+    } else {
+      cards = await callScriptUnitGenerator(lang, unit, lang.learnedChars || []);
+    }
+
+    await dbAppendLangCards(lang.id, cards);
+    lang.scriptUnit = unit;
+    lang.learnedChars = [...(lang.learnedChars || []), ...cards.map(c => c.front)].slice(-300);
+    await dbPutLanguage(lang);
+
+    showToast(`${cards.length} ${lang.scriptName} characters added to your deck.`, 'success');
+    await renderLanguages();
+  } catch (err) {
+    console.warn('Script unit failed:', err.message);
+    showToast('Could not build the script unit: ' + err.message, 'error', 6000);
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = `Script bootcamp · unit ${unit} →`; }
+  }
+}
+
 // ── LANGUAGE ONBOARDING ───────────────────────────────────────────────────────
 // Steps: name → profile confirmation (script auto-detection) → level → seed
 // deck generation. Reuses the Prime overlay pattern and styles.
@@ -1971,6 +2020,8 @@ const LangOnboard = {
         ...p,
         level: this.level,
         knownWords: cards.filter(c => c.type === 'vocab').map(c => c.word).filter(Boolean),
+        learnedChars: cards.filter(c => c.type === 'script').map(c => c.front),
+        scriptUnit: 0,
         wordsLearned: 0,
         streak: 0,
         sessionNumber: 0,
