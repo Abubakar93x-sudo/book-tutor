@@ -968,6 +968,110 @@ async function callSeedDeckGenerator(langProfile, level) {
   }));
 }
 
+// ── AGENT: GRADED STORY / DAILY LESSON GENERATOR ─────────────────────────────
+// The "i+1" engine: a tiny story using ~95% words the learner already knows
+// plus a handful of new frequency words. Comprehensible input, manufactured.
+// Returns a full day's lesson: story + glosses + checkpoints + shadow
+// sentences + a conversation topic (consumed by the other strands).
+async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
+  const nonLatin = langProfile.script !== 'latin';
+  const knownList = knownWords.slice(-400).join(', ');
+  const prompt = `
+    You are a language tutor writing today's micro-lesson for a ${level}-level
+    learner of ${langProfile.name}.
+
+    WORDS THE LEARNER KNOWS (use these for ~95% of the story):
+    ${knownList || '(complete beginner — use only the most universal starter words)'}
+
+    Write a SHORT, warm, slightly funny story or dialogue in ${langProfile.name}:
+    - ${level === 'A0' ? '5-6' : level === 'A1' ? '7-9' : '9-12'} sentences, each short enough to hold in the head
+    - Introduce exactly ${level === 'A0' ? '3' : '4'} NEW high-frequency words not on the known list
+    - Every sentence must be understandable from the known words + the new
+      words + obvious context. No rare vocabulary, no idioms.
+    ${nonLatin ? `- Provide "${langProfile.romanizationName}" romanization for every sentence and word.` : ''}
+
+    Also produce:
+    - a one-line English gloss (translation) for each sentence
+    - the new words with meanings and the story sentence each appears in
+    - 2 comprehension questions in English about the story's content
+    - the 4 best sentences for out-loud shadowing practice
+    - a one-line conversation topic related to the story
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "title": "story title in ${langProfile.name}",
+      "titleGloss": "English title",
+      "sentences": [{ "text": "sentence", ${nonLatin ? '"romanization": "romanized", ' : ''}"gloss": "English translation" }],
+      "newWords": [{ "word": "word", ${nonLatin ? '"romanization": "romanized", ' : ''}"meaning": "English meaning", "exampleSentence": "the story sentence containing it" }],
+      "checkpoints": [{ "question": "English comprehension question" }],
+      "shadowSentences": ["sentence text", "sentence text", "sentence text", "sentence text"],
+      "chatTopic": "one-line topic"
+    }
+  `;
+  const result = await queryGemini(prompt, true);
+  if (!Array.isArray(result.sentences) || !result.sentences.length) {
+    throw new Error('Story generation returned no sentences.');
+  }
+  return {
+    title: result.title || '',
+    titleGloss: result.titleGloss || '',
+    sentences: result.sentences.filter(s => s.text),
+    newWords: Array.isArray(result.newWords) ? result.newWords.filter(w => w.word && w.meaning) : [],
+    checkpoints: Array.isArray(result.checkpoints) ? result.checkpoints.filter(c => c.question).slice(0, 2) : [],
+    shadowSentences: Array.isArray(result.shadowSentences) ? result.shadowSentences.slice(0, 4) : [],
+    chatTopic: result.chatTopic || ''
+  };
+}
+
+// ── AGENT: CONVERSATION PARTNER ──────────────────────────────────────────────
+// The output strand: a patient native-speaker partner who replies at the
+// learner's level, keeps them producing, and corrects errors by RECASTING —
+// repeating the idea correctly in flow, then one marked "✏️" line the UI
+// turns into an optional review card. Never lectures.
+async function callLangPartner(langProfile, level, topic, history, userMessage, onChunk = null) {
+  const nonLatin = langProfile.script !== 'latin';
+  const historyText = history
+    .map(m => `${m.role === 'user' ? 'Learner' : 'Partner'}: ${m.content}`)
+    .join('\n');
+
+  const levelRules = {
+    A0: `Use 3-6 word sentences only. After EVERY ${langProfile.name} sentence, give the English meaning in parentheses.`,
+    A1: `Use short, simple sentences. Give English in parentheses only for words likely to be new.`,
+    A2: `Use simple full sentences, no English unless the learner seems lost.`
+  };
+
+  const prompt = `
+    You are a warm, patient native ${langProfile.name} speaker having a casual
+    chat with a ${level}-level learner. You are NOT a teacher giving a lesson —
+    you are a friend keeping a conversation going.
+
+    Topic to anchor on: "${topic}"
+
+    LEVEL RULES: ${levelRules[level] || levelRules.A1}
+    ${nonLatin ? `SCRIPT: after each ${langProfile.name} phrase, add its ${langProfile.romanizationName} in parentheses.` : ''}
+
+    CONVERSATION RULES:
+    1. Reply mostly in ${langProfile.name}, within the level rules. Keep the
+       whole reply under 70 words.
+    2. If the learner made an error, do NOT point it out directly. First
+       respond naturally, recasting their idea correctly inside your reply.
+       Then, at the END, add one line starting with exactly "✏️ " in this
+       format: ✏️ corrected sentence — brief English reason (max 10 words)
+    3. If there was no error, no ✏️ line.
+    4. ALWAYS end with a simple question to keep them talking.
+    5. Understand them even when their grammar is broken — meaning first.
+
+    CONVERSATION SO FAR:
+    ${historyText || '(you speak first — greet them and open the topic)'}
+
+    Learner's message: "${userMessage}"
+  `;
+
+  return onChunk
+    ? await queryGeminiStream(prompt, onChunk)
+    : await queryGemini(prompt, false);
+}
+
 // ── AGENT 5: FEYNMAN SANDBOX ASSESSOR ────────────────────────────────────────
 // Grades the student's Feynman explanation for accuracy, simplicity, and completeness.
 async function callLiveSandboxAssessor(concept, explanation) {

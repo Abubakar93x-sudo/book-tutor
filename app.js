@@ -362,6 +362,26 @@ async function dbAppendLangCards(langId, newCards) {
   }
 }
 
+// langLessons/{langId}_{YYYY-MM-DD} — one generated lesson per language per
+// day, cached so reopening the session replays the same content (cost control).
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function dbGetLangLesson(langId, dateKey) {
+  const col = userCol('langLessons');
+  if (!col) return null;
+  const snap = await col.doc(`${langId}_${dateKey}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function dbPutLangLesson(langId, dateKey, lesson) {
+  const col = userCol('langLessons');
+  if (!col) return;
+  await col.doc(`${langId}_${dateKey}`).set({ ...lesson, langId, dateKey, updatedAt: Date.now() }, { merge: true });
+}
+
 // Update readyChapters / studiedChapters arrays stored on the book doc.
 async function dbUpdateBookProgress(bookId, type, chapterNumber) {
   const book = await dbGet('books', bookId);
@@ -1228,15 +1248,602 @@ async function renderLanguages() {
       </div>
       <button class="btn btn-primary lang-card-cta">Start today's session →</button>
     `;
-    card.querySelector('.lang-card-cta').addEventListener('click', () => {
-      // Session player arrives in a later step — the deck is usable today
-      showToast('Daily sessions are coming next — your cards are already in the Flashcards deck.', 'info');
-      navigateTo('review');
-      initReviewSession();
-    });
+    card.querySelector('.lang-card-cta').addEventListener('click', () => LangSession.start(lang));
     grid.insertBefore(card, document.getElementById('btn-add-language'));
   }
 }
+
+// ── DAILY SESSION PLAYER ──────────────────────────────────────────────────────
+// One overlay, one activity at a time. Currently: Story (input strand) → Wrap.
+// Review lives in the Flashcards deck; Converse and Shadow strands join the
+// player in the next build steps.
+
+function demoLangLesson(lang) {
+  if (lang.script && lang.script !== 'latin') {
+    return {
+      title: 'ねこと さかな', titleGloss: 'The Cat and the Fish',
+      sentences: [
+        { text: 'ねこが います。', romanization: 'neko ga imasu.', gloss: 'There is a cat.' },
+        { text: 'ねこは さかなが すきです。', romanization: 'neko wa sakana ga suki desu.', gloss: 'The cat likes fish.' },
+        { text: 'でも、さかなは いません。', romanization: 'demo, sakana wa imasen.', gloss: 'But there is no fish.' },
+        { text: 'ねこは かなしいです。', romanization: 'neko wa kanashii desu.', gloss: 'The cat is sad.' }
+      ],
+      newWords: [
+        { word: 'ねこ', romanization: 'neko', meaning: 'cat', exampleSentence: 'ねこが います。' },
+        { word: 'さかな', romanization: 'sakana', meaning: 'fish', exampleSentence: 'ねこは さかなが すきです。' },
+        { word: 'かなしい', romanization: 'kanashii', meaning: 'sad', exampleSentence: 'ねこは かなしいです。' }
+      ],
+      checkpoints: [{ question: 'What does the cat like?' }, { question: 'Why is the cat sad at the end?' }],
+      shadowSentences: ['ねこが います。', 'ねこは さかなが すきです。'],
+      chatTopic: 'Do you have a pet? What does it like?'
+    };
+  }
+  return {
+    title: 'El gato y el pescado', titleGloss: 'The Cat and the Fish',
+    sentences: [
+      { text: 'Hay un gato.', romanization: null, gloss: 'There is a cat.' },
+      { text: 'El gato quiere pescado.', romanization: null, gloss: 'The cat wants fish.' },
+      { text: 'Pero no hay pescado en la casa.', romanization: null, gloss: 'But there is no fish in the house.' },
+      { text: 'El gato está triste.', romanization: null, gloss: 'The cat is sad.' }
+    ],
+    newWords: [
+      { word: 'gato', romanization: null, meaning: 'cat', exampleSentence: 'Hay un gato.' },
+      { word: 'pescado', romanization: null, meaning: 'fish', exampleSentence: 'El gato quiere pescado.' },
+      { word: 'triste', romanization: null, meaning: 'sad', exampleSentence: 'El gato está triste.' }
+    ],
+    checkpoints: [{ question: 'What does the cat want?' }, { question: 'Why is the cat sad at the end?' }],
+    shadowSentences: ['Hay un gato.', 'El gato quiere pescado.'],
+    chatTopic: 'Do you have a pet? What does it like?'
+  };
+}
+
+const LangSession = {
+  lang: null,
+  lesson: null,
+  activityIdx: 0,
+  activities: ['review', 'story', 'converse', 'shadow', 'wrap'],
+  checkpointsPassed: 0,
+  chatHistory: [],
+  reviewQueue: [],
+  shadowRatings: {},
+
+  async start(lang) {
+    this.lang = lang;
+    this.activityIdx = 0;
+    this.checkpointsPassed = 0;
+    this.chatHistory = [];
+    this.reviewQueue = [];
+    this.shadowRatings = {};
+
+    const overlay = document.getElementById('lang-session-overlay');
+    const body = document.getElementById('lang-session-body');
+    overlay.style.display = 'flex';
+    body.innerHTML = `
+      <div class="cp-loading" style="justify-content:center; padding:3rem 0;">
+        <span class="cp-spinner"></span> Writing today's ${lang.name} story at your level…
+      </div>
+    `;
+
+    try {
+      const dateKey = todayKey();
+      let lesson = await dbGetLangLesson(lang.id, dateKey);
+      if (!lesson) {
+        lesson = AppState.mode === 'demo'
+          ? demoLangLesson(lang)
+          : await callGradedStoryGenerator(lang, lang.level, lang.knownWords || []);
+        await dbPutLangLesson(lang.id, dateKey, lesson);
+      }
+      // Rough shadow sentences from the previous session come back for redo
+      if (Array.isArray(lang.roughShadow) && lang.roughShadow.length) {
+        lesson.shadowSentences = [...new Set([...lang.roughShadow, ...(lesson.shadowSentences || [])])].slice(0, 6);
+      }
+
+      this.lesson = lesson;
+      this.renderActivity();
+    } catch (err) {
+      console.warn('Lesson generation failed:', err.message);
+      body.innerHTML = `
+        <div class="cp-fallback" style="text-align:center; padding:2rem 0;">
+          Couldn't build today's lesson: ${err.message}
+        </div>
+        <div class="consolidate-actions"><button class="btn btn-ghost" onclick="LangSession.close()">Close</button></div>
+      `;
+    }
+  },
+
+  close() {
+    document.getElementById('lang-session-overlay').style.display = 'none';
+    this.lang = null;
+    this.lesson = null;
+  },
+
+  dotsHtml() {
+    return `<div class="prime-dots lang-session-dots">${this.activities
+      .map((_, i) => `<i class="${i === this.activityIdx ? 'on' : ''}"></i>`).join('')}</div>`;
+  },
+
+  next() {
+    if (this.activityIdx < this.activities.length - 1) {
+      this.activityIdx += 1;
+      this.renderActivity();
+      document.getElementById('lang-session-overlay').scrollTop = 0;
+    }
+  },
+
+  renderActivity() {
+    const kind = this.activities[this.activityIdx];
+    if (kind === 'review') this.renderReview();
+    else if (kind === 'story') this.renderStory();
+    else if (kind === 'converse') this.renderConverse();
+    else if (kind === 'shadow') this.renderShadow();
+    else this.renderWrap();
+  },
+
+  // ── REVIEW (vocab strand) ──
+  // Due cards for THIS language, inline (capped at 10 — the full unified deck
+  // lives in the Flashcards tab). Ratings run the same SM-2 persistence path.
+  async renderReview() {
+    const { lang } = this;
+    const body = document.getElementById('lang-session-body');
+    body.innerHTML = `
+      <div class="cp-loading" style="justify-content:center; padding:2rem 0;">
+        <span class="cp-spinner"></span> Checking what's due…
+      </div>
+    `;
+
+    try {
+      const allDue = await collectDueCards();
+      this.reviewQueue = allDue.filter(c => c._src?.type === 'langCards' && c._src.langId === lang.id).slice(0, 10);
+    } catch (err) {
+      console.warn('Review collection failed:', err.message);
+      this.reviewQueue = [];
+    }
+
+    if (!this.reviewQueue.length) {
+      this.next(); // nothing due — straight to the story
+      return;
+    }
+    this.renderReviewCard(0);
+  },
+
+  renderReviewCard(idx) {
+    const { lang } = this;
+    const body = document.getElementById('lang-session-body');
+
+    if (idx >= this.reviewQueue.length) { this.next(); return; }
+    const card = this.reviewQueue[idx];
+    const earlyLevel = ['A0', 'A1'].includes(lang.level);
+
+    body.innerHTML = `
+      <div class="prime-kicker">Review · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <p class="story-title-gloss">${idx + 1} of ${this.reviewQueue.length} due</p>
+      <div class="session-card" id="session-review-card">
+        <div class="session-card-front">
+          <span class="session-card-text">${card.front}</span>
+          ${card.romanization && earlyLevel ? `<span class="story-rom">${card.romanization}</span>` : ''}
+        </div>
+        <div class="session-card-back" style="display:none;">
+          <span class="session-card-answer">${card.back}</span>
+          ${card.romanization && !earlyLevel ? `<span class="story-rom">${card.romanization}</span>` : ''}
+        </div>
+        <span class="card-flip-hint" id="session-flip-hint">Tap to reveal</span>
+      </div>
+      <div class="session-rate-row" id="session-rate-row" style="visibility:hidden;">
+        <button class="session-rate-btn" data-score="forgot">Forgot</button>
+        <button class="session-rate-btn" data-score="hard">Hard</button>
+        <button class="session-rate-btn" data-score="good">Good</button>
+        <button class="session-rate-btn" data-score="easy">Easy</button>
+      </div>
+      <div class="consolidate-actions" style="gap:0.8rem;">
+        <button class="btn btn-ghost" id="btn-review-speak">🔊 Hear it</button>
+        <button class="cp-skip" id="btn-review-skip">Skip review →</button>
+      </div>
+    `;
+
+    const cardEl = document.getElementById('session-review-card');
+    cardEl.addEventListener('click', () => {
+      cardEl.querySelector('.session-card-back').style.display = 'block';
+      document.getElementById('session-flip-hint').style.display = 'none';
+      document.getElementById('session-rate-row').style.visibility = 'visible';
+    });
+
+    document.getElementById('btn-review-speak').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!NarrationEngine.speakLang(card.front, lang.ttsLangCode || lang.code)) {
+        showToast(`No ${lang.name} voice on this device.`, 'info', 3000);
+      }
+    });
+
+    body.querySelectorAll('.session-rate-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scheduled = sm2Schedule(card, btn.dataset.score);
+        persistCardSchedule(scheduled).catch(err => console.warn('Card save failed:', err.message));
+        this.renderReviewCard(idx + 1);
+      });
+    });
+
+    document.getElementById('btn-review-skip').addEventListener('click', () => this.next());
+  },
+
+  // ── STORY (input strand) ──
+  renderStory() {
+    const { lang, lesson } = this;
+    const earlyLevel = ['A0', 'A1'].includes(lang.level);
+    const body = document.getElementById('lang-session-body');
+
+    const sentencesHtml = lesson.sentences.map((s, i) => `
+      <div class="story-sentence" data-idx="${i}">
+        <button class="story-play" data-idx="${i}" title="Hear it">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+        </button>
+        <div class="story-sentence-text">
+          <span class="story-target">${s.text}</span>
+          ${s.romanization && earlyLevel ? `<span class="story-rom">${s.romanization}</span>` : ''}
+          <span class="story-gloss" style="display:none;">${s.gloss}${s.romanization && !earlyLevel ? ` · ${s.romanization}` : ''}</span>
+        </div>
+      </div>
+    `).join('');
+
+    const checkpointsHtml = lesson.checkpoints.map((c, i) => `
+      <div class="lang-checkpoint" data-idx="${i}">
+        <div class="cp-question">${c.question}</div>
+        <textarea class="cp-answer" rows="2" placeholder="Answer in English — show you followed the story…"></textarea>
+        <div class="cp-actions">
+          <button class="btn btn-primary lang-cp-check" data-idx="${i}">Check</button>
+        </div>
+        <div class="lang-cp-verdict"></div>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Today's story · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title story-title">${lesson.title}</h3>
+      <p class="story-title-gloss">${lesson.titleGloss} · tap a sentence for its meaning</p>
+      <div class="story-body">${sentencesHtml}</div>
+      <div class="story-checkpoints">
+        <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>Did you follow it?</div>
+        ${checkpointsHtml}
+      </div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-story-continue">Continue →</button>
+      </div>
+    `;
+
+    // Tap a sentence → toggle its gloss
+    body.querySelectorAll('.story-sentence-text').forEach(el => {
+      el.addEventListener('click', () => {
+        const gloss = el.querySelector('.story-gloss');
+        gloss.style.display = gloss.style.display === 'none' ? 'block' : 'none';
+      });
+    });
+
+    // ▶ speaks the sentence
+    body.querySelectorAll('.story-play').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const s = lesson.sentences[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(s.text, lang.ttsLangCode || lang.code, 0.85)) {
+          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3500);
+        }
+      });
+    });
+
+    // Comprehension checks, graded against the story + glosses
+    const storyGroundTruth = lesson.sentences.map(s => `${s.text} (${s.gloss})`).join('\n');
+    body.querySelectorAll('.lang-cp-check').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const wrap = btn.closest('.lang-checkpoint');
+        const answerEl = wrap.querySelector('.cp-answer');
+        const verdictEl = wrap.querySelector('.lang-cp-verdict');
+        const answer = answerEl.value.trim();
+        if (!answer) { answerEl.focus(); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Checking…';
+        try {
+          const q = lesson.checkpoints[parseInt(wrap.dataset.idx)].question;
+          const result = AppState.mode === 'demo'
+            ? (answer.length >= 10
+                ? { verdict: 'pass', feedback: 'Right — you followed the story.', sourceQuote: '' }
+                : { verdict: 'gap', feedback: 'Look at the story again — what happens to the fish?', sourceQuote: '' })
+            : await callCheckpointGrader(storyGroundTruth, q, answer, 0);
+
+          verdictEl.innerHTML = result.verdict === 'pass'
+            ? `<div class="cp-verdict cp-pass">✓ ${result.feedback}</div>`
+            : `<div class="cp-verdict cp-gap">${result.feedback}</div>`;
+          if (result.verdict === 'pass') {
+            this.checkpointsPassed += 1;
+            btn.style.display = 'none';
+            answerEl.disabled = true;
+          } else {
+            btn.disabled = false;
+            btn.textContent = 'Check again';
+          }
+        } catch (err) {
+          verdictEl.innerHTML = `<div class="cp-fallback">Check unavailable — keep going.</div>`;
+          btn.style.display = 'none';
+        }
+      });
+    });
+
+    document.getElementById('btn-story-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── CONVERSE (output strand) ──
+  // Chat with the partner about the story's topic. Corrections arrive as
+  // ✏️ recast lines, each offering a one-tap "+ Card" into the review deck.
+  renderConverse() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Talk about it · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title lang-chat-topic">${lesson.chatTopic || 'Tell me about the story.'}</h3>
+      <p class="story-title-gloss">Answer in ${lang.name} as best you can — broken sentences are welcome. Mistakes come back as corrections you can keep.</p>
+      <div class="lang-chat" id="lang-chat"></div>
+      <div class="lang-chat-input-row">
+        <textarea id="lang-chat-input" class="cp-answer" rows="2" placeholder="Reply in ${lang.name}…"></textarea>
+        <button class="btn btn-primary" id="btn-lang-chat-send">Send</button>
+      </div>
+      <div class="consolidate-actions">
+        <button class="btn btn-ghost" id="btn-converse-continue">Continue →</button>
+      </div>
+    `;
+
+    const chatEl = document.getElementById('lang-chat');
+    const inputEl = document.getElementById('lang-chat-input');
+    const sendBtn = document.getElementById('btn-lang-chat-send');
+
+    const addBubble = (role, content) => {
+      const div = document.createElement('div');
+      div.className = `lang-bubble ${role}`;
+      div.textContent = content;
+      chatEl.appendChild(div);
+      this.renderCorrections(div, content);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return div;
+    };
+
+    // Restore a same-day conversation, or have the partner open
+    if (Array.isArray(lesson.chat) && lesson.chat.length) {
+      this.chatHistory = [...lesson.chat];
+      this.chatHistory.forEach(m => addBubble(m.role, m.content));
+    } else {
+      this.partnerTurn('(start the conversation)', addBubble, true);
+    }
+
+    const send = () => {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = '';
+      addBubble('user', text);
+      this.chatHistory.push({ role: 'user', content: text });
+      this.partnerTurn(text, addBubble);
+    };
+    sendBtn.addEventListener('click', send);
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+
+    document.getElementById('btn-converse-continue').addEventListener('click', () => this.next());
+    inputEl.focus();
+  },
+
+  async partnerTurn(userMessage, addBubble, isOpener = false) {
+    const { lang, lesson } = this;
+    const sendBtn = document.getElementById('btn-lang-chat-send');
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+      let reply;
+      if (AppState.mode === 'demo') {
+        const turn = this.chatHistory.filter(m => m.role === 'partner').length;
+        const demoTurns = lang.script && lang.script !== 'latin'
+          ? [
+              'こんにちは！ (Hello!) ねこが すきですか。 (Do you like cats?)',
+              'そうですか！ (I see!) わたしも ねこが すきです。 (I like cats too.) いぬは？ (What about dogs?)\n✏️ ねこが すきです — "suki" needs が, not を',
+              'いいですね！ (Nice!) また あした はなしましょう。 (Let\'s talk again tomorrow.)'
+            ]
+          : [
+              '¡Hola! (Hello!) ¿Te gustan los gatos? (Do you like cats?)',
+              '¡Qué bien! (Great!) A mí también me gustan. (I like them too.) ¿Tienes un gato? (Do you have a cat?)\n✏️ Me gustan los gatos — "gustar" agrees with the thing liked',
+              '¡Perfecto! Hablamos mañana. (We\'ll talk tomorrow.)'
+            ];
+        reply = demoTurns[Math.min(turn, demoTurns.length - 1)];
+      } else {
+        reply = await callLangPartner(lang, lang.level, lesson.chatTopic || '', this.chatHistory, userMessage);
+      }
+
+      addBubble('partner', reply);
+      this.chatHistory.push({ role: 'partner', content: reply });
+
+      // Cache the conversation so a same-day reopen restores it
+      dbPutLangLesson(lang.id, todayKey(), { chat: this.chatHistory }).catch(() => {});
+    } catch (err) {
+      console.warn('Partner reply failed:', err.message);
+      addBubble('partner', `(Connection hiccup — try again.)`);
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+    }
+  },
+
+  // Parse ✏️ recast lines out of a partner bubble into "+ Card" chips
+  renderCorrections(bubbleEl, content) {
+    if (bubbleEl.classList.contains('user')) return;
+    const corrections = [...content.matchAll(/✏️\s*(.+?)(?:\s+—\s+(.+))?$/gm)];
+    if (!corrections.length) return;
+
+    // Remove the raw ✏️ lines from the visible bubble; re-render them as chips
+    bubbleEl.textContent = content.replace(/^✏️.*$/gm, '').trim();
+
+    corrections.forEach(m => {
+      const sentence = (m[1] || '').trim();
+      const reason = (m[2] || '').trim();
+      if (!sentence) return;
+      const chip = document.createElement('div');
+      chip.className = 'correction-chip';
+      chip.innerHTML = `
+        <span class="correction-text">✏️ ${sentence}${reason ? ` <em>— ${reason}</em>` : ''}</span>
+        <button class="correction-add" type="button">+ Card</button>
+      `;
+      chip.querySelector('.correction-add').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await dbAppendLangCards(this.lang.id, [{
+            front: sentence,
+            back: reason || 'Correction from conversation',
+            word: '',
+            romanization: null,
+            type: 'correction'
+          }]);
+          btn.textContent = '✓ In deck';
+        } catch (err) {
+          btn.disabled = false;
+          showToast('Could not save the card: ' + err.message, 'error');
+        }
+      });
+      bubbleEl.insertAdjacentElement('afterend', chip);
+    });
+  },
+
+  // ── SHADOW (fluency strand) ──
+  // Hear a sentence at normal or slow speed, echo it out loud, self-rate.
+  // Rough sentences come back at the start of tomorrow's shadow round.
+  renderShadow() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+    const sentences = lesson.shadowSentences || [];
+    const earlyLevel = ['A0', 'A1'].includes(lang.level);
+
+    if (!sentences.length) { this.next(); return; }
+
+    // Sentence text → romanization, when the story carries it
+    const romFor = (text) => lesson.sentences?.find(s => s.text === text)?.romanization || null;
+
+    const rows = sentences.map((text, i) => `
+      <div class="shadow-row" data-idx="${i}">
+        <div class="shadow-sentence">
+          <span class="session-card-text">${text}</span>
+          ${romFor(text) && earlyLevel ? `<span class="story-rom">${romFor(text)}</span>` : ''}
+        </div>
+        <div class="shadow-controls">
+          <button class="btn btn-ghost shadow-play" data-idx="${i}" data-rate="0.85">▶ Normal</button>
+          <button class="btn btn-ghost shadow-play" data-idx="${i}" data-rate="0.6">🐢 Slow</button>
+        </div>
+        <div class="shadow-rate">
+          <span class="cp-conf-label">How did it feel out loud?</span>
+          <button class="cp-chip shadow-self" data-idx="${i}" data-r="rough">Rough</button>
+          <button class="cp-chip shadow-self" data-idx="${i}" data-r="ok">OK</button>
+          <button class="cp-chip shadow-self" data-idx="${i}" data-r="smooth">Smooth</button>
+        </div>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Shadow · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title">Say it with the voice, out loud.</h3>
+      <p class="story-title-gloss">Play a sentence, speak along with it — match the rhythm, not just the words. Rate yourself honestly; rough ones return tomorrow.</p>
+      <div class="shadow-list">${rows}</div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-shadow-continue">Continue →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.shadow-play').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const text = sentences[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(text, lang.ttsLangCode || lang.code, parseFloat(btn.dataset.rate))) {
+          showToast(`No ${lang.name} voice on this device — read it aloud from the text instead.`, 'info', 3500);
+        }
+      });
+    });
+
+    body.querySelectorAll('.shadow-self').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = btn.dataset.idx;
+        this.shadowRatings[idx] = btn.dataset.r;
+        btn.closest('.shadow-rate').querySelectorAll('.cp-chip').forEach(c => c.classList.remove('sel'));
+        btn.classList.add('sel');
+      });
+    });
+
+    document.getElementById('btn-shadow-continue').addEventListener('click', async () => {
+      // Rough sentences re-queue into tomorrow's shadow round
+      const rough = sentences.filter((_, i) => this.shadowRatings[i] === 'rough');
+      this.lang.roughShadow = rough.slice(0, 4);
+      dbPutLanguage(this.lang).catch(() => {});
+      this.next();
+    });
+  },
+
+  // ── WRAP: new words → cards, streak, done ──
+  async renderWrap() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+    const words = lesson.newWords || [];
+
+    const wordsHtml = words.map(w => `
+      <div class="new-word-row">
+        <span class="new-word">${w.word}${w.romanization ? ` <em>${w.romanization}</em>` : ''}</span>
+        <span class="new-word-meaning">${w.meaning}</span>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Session wrap · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title">${words.length ? `${words.length} new word${words.length === 1 ? '' : 's'} joined your deck` : 'Nice work today'}</h3>
+      <div class="new-words-list">${wordsHtml}</div>
+      <div class="consolidate-calibration">${this.checkpointsPassed}/${(lesson.checkpoints || []).length} comprehension checks passed · they'll come due for review tomorrow</div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-session-done">Done for today →</button>
+      </div>
+    `;
+
+    // Add new words as sentence cards + update the language profile — once per lesson
+    if (words.length && !lesson.cardsAdded) {
+      lesson.cardsAdded = true;
+      const cards = words.map(w => ({
+        front: w.exampleSentence || w.word,
+        back: `${w.meaning}${w.exampleSentence ? ` — "${w.word}"` : ''}`,
+        word: w.word,
+        romanization: w.romanization || null,
+        type: 'vocab'
+      }));
+      try {
+        await dbAppendLangCards(lang.id, cards);
+        await dbPutLangLesson(lang.id, todayKey(), { cardsAdded: true });
+
+        // Streak: bump once per calendar day
+        const today = todayKey();
+        const last = lang.lastSessionAt ? new Date(lang.lastSessionAt) : null;
+        const lastKey = last ? `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}` : null;
+        if (lastKey !== today) {
+          const yesterday = new Date(Date.now() - 86400000);
+          const yKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+          lang.streak = lastKey === yKey ? (lang.streak || 0) + 1 : 1;
+          lang.sessionNumber = (lang.sessionNumber || 0) + 1;
+          lang.lastSessionAt = Date.now();
+        }
+        lang.knownWords = [...(lang.knownWords || []), ...words.map(w => w.word)].slice(-500);
+        lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+        await dbPutLanguage(lang);
+      } catch (err) {
+        console.warn('Session wrap persistence failed:', err.message);
+      }
+    }
+
+    document.getElementById('btn-session-done').addEventListener('click', async () => {
+      this.close();
+      await renderLanguages();
+    });
+  }
+};
 
 // ── LANGUAGE ONBOARDING ───────────────────────────────────────────────────────
 // Steps: name → profile confirmation (script auto-detection) → level → seed
@@ -1389,6 +1996,7 @@ function initLanguages() {
   document.getElementById('btn-add-language').addEventListener('click', () => LangOnboard.open());
   document.getElementById('btn-lang-onboard-next').addEventListener('click', () => LangOnboard.next());
   document.getElementById('btn-lang-onboard-close').addEventListener('click', () => LangOnboard.close());
+  document.getElementById('btn-lang-session-close').addEventListener('click', () => LangSession.close());
 }
 
 // ── TRANSFER PROBLEM ──────────────────────────────────────────────────────────
