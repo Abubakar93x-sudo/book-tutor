@@ -18,6 +18,8 @@ const AppState = {
   shakyConcepts: [],        // Concepts that failed their checkpoint (extra review)
   flashcardSession: [],     // Array of flashcard objects for daily review
   flashcardIndex: 0,        // Current flashcard position
+  reviewFilter: 'all',      // 'all' | 'book:{id}' | 'lang:{id}' — deck source filter
+  practiceMode: false,      // random-practice session: ratings don't touch SM-2
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
   currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
@@ -3556,12 +3558,24 @@ function initNoteCapture() {
       pendingPidx = inReader ? parseInt(anchorEl.closest('p[data-pidx]')?.dataset.pidx ?? 'NaN') : null;
       if (Number.isNaN(pendingPidx)) pendingPidx = null;
       pendingText = text;
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const popoverWidth = 150; // rough estimate to keep it on-screen
+
+      // Touch devices: dock the bar at the bottom of the screen. iOS draws
+      // its own Copy/Look Up menu right next to the selection and web pages
+      // cannot suppress it — floating ours there guarantees a collision.
+      // Bottom-docked, the two can never overlap (and it's thumb-reachable).
+      const isTouch = window.matchMedia('(pointer: coarse)').matches;
+      popover.classList.toggle('sp-dock', isTouch);
       popover.style.display = 'flex';
-      popover.style.top  = Math.max(8, rect.top - 44) + 'px';
-      popover.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth)) + 'px';
+      if (isTouch) {
+        popover.style.top = '';
+        popover.style.left = '';
+      } else {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const popoverWidth = 150; // rough estimate to keep it on-screen
+        popover.style.top  = Math.max(8, rect.top - 44) + 'px';
+        popover.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth)) + 'px';
+      }
     }, 200);
   });
 
@@ -4190,8 +4204,11 @@ function shuffleCards(cards) {
 // on their bookChapters docs. Each card is tagged with _src so a rating can be
 // persisted back to the exact document + array slot it came from, and source
 // docs are cached for the session so persistence is read-free.
-async function collectDueCards() {
-  const due = [];
+// Collect flashcards from every source (books + languages), tagged with _src
+// so ratings persist to the exact document slot. dueOnly=false powers the
+// random-practice deck and the source filter list.
+async function collectCards({ dueOnly = true } = {}) {
+  const out = [];
   AppState._reviewBookCache = {};
   AppState._reviewChapterCache = {};
   AppState._reviewLangCache = {};
@@ -4208,8 +4225,8 @@ async function collectDueCards() {
           AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
         }
         cards.forEach((card, idx) => {
-          if (isCardDue(card)) {
-            due.push({
+          if (!dueOnly || isCardDue(card)) {
+            out.push({
               ...card,
               bookTitle: lang.name,                 // deck tag shows the language
               _langLevel: lang.level,               // drives the romanization fade
@@ -4234,8 +4251,8 @@ async function collectDueCards() {
           AppState._reviewChapterCache[`${book.id}_ch_${chDoc.chapterNumber}`] = cards;
         }
         cards.forEach((card, idx) => {
-          if (isCardDue(card)) {
-            due.push({
+          if (!dueOnly || isCardDue(card)) {
+            out.push({
               ...card,
               bookTitle: book.title,
               _src: { type: 'chapterDoc', bookId: book.id, chapterNumber: chDoc.chapterNumber, index: idx }
@@ -4247,8 +4264,8 @@ async function collectDueCards() {
       AppState._reviewBookCache[book.id] = book;
       (book.chapters || []).forEach(ch => {
         (ch.flashcards || []).forEach((card, idx) => {
-          if (isCardDue(card)) {
-            due.push({
+          if (!dueOnly || isCardDue(card)) {
+            out.push({
               ...card,
               bookTitle: book.title,
               _src: { type: 'bookDoc', bookId: book.id, chapterNumber: ch.number, index: idx }
@@ -4258,7 +4275,70 @@ async function collectDueCards() {
       });
     }
   }
-  return due;
+  return out;
+}
+
+// Kept for existing callers (badge refresh, session review activity)
+async function collectDueCards() {
+  return collectCards({ dueOnly: true });
+}
+
+// ── SOURCE FILTER + RANDOM PRACTICE ──────────────────────────────────────────
+
+function reviewSourceKey(card) {
+  const src = card._src || {};
+  return src.type === 'langCards' ? `lang:${src.langId}` : `book:${src.bookId}`;
+}
+
+function matchesReviewFilter(card) {
+  const filter = AppState.reviewFilter || 'all';
+  return filter === 'all' || reviewSourceKey(card) === filter;
+}
+
+// Rebuild the source dropdown from whatever actually has cards
+function populateReviewFilter(allCards) {
+  const select = document.getElementById('review-source-filter');
+  if (!select) return;
+  const sources = new Map();
+  allCards.forEach(c => sources.set(reviewSourceKey(c), c.bookTitle));
+
+  select.innerHTML = '<option value="all">All sources</option>' +
+    [...sources.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([key, title]) => `<option value="${key}">${title}</option>`)
+      .join('');
+  // Keep the selection if that source still exists
+  select.value = sources.has(AppState.reviewFilter) ? AppState.reviewFilter : 'all';
+  AppState.reviewFilter = select.value;
+}
+
+// Practice deck: up to 20 random cards from the selected source, due or not.
+// Ratings in practice mode never touch SM-2 schedules — the scheduled reviews
+// stay the source of truth; practice is extra reps.
+async function startRandomPractice() {
+  const all = await collectCards({ dueOnly: false });
+  populateReviewFilter(all);
+  const pool = shuffleCards(all.filter(matchesReviewFilter)).slice(0, 20);
+
+  if (!pool.length) {
+    showToast('No cards in this source yet — study a chapter or add a language first.', 'info');
+    return;
+  }
+
+  AppState.practiceMode = true;
+  AppState.flashcardSession = pool;
+  AppState.flashcardIndex = 0;
+  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: pool.length, done: 0 };
+
+  const subtitle = document.querySelector('#view-review .page-subtitle');
+  if (subtitle) subtitle.textContent =
+    `Practice deck — ${pool.length} random card${pool.length === 1 ? '' : 's'}, schedules untouched · keys 1–4 rate, Space flips`;
+
+  document.getElementById('review-cards-ratio').textContent = `0 / ${pool.length}`;
+  document.getElementById('review-empty-message').style.display = 'none';
+  document.getElementById('review-finished-message').style.display = 'none';
+  document.getElementById('flashcard-deck').style.display = 'block';
+  showNextCard();
 }
 
 // Persist a rated card's new SM-2 schedule back to its source document.
@@ -4303,15 +4383,22 @@ function updateReviewBadge(count) {
 }
 
 async function initReviewSession() {
-  const dueCards = shuffleCards(await collectDueCards());
-  updateReviewBadge(dueCards.length);
+  AppState.practiceMode = false;
+
+  // One traversal: all cards feed the filter dropdown; due ones feed the deck
+  const allCards = await collectCards({ dueOnly: false });
+  populateReviewFilter(allCards);
+  const allDue = allCards.filter(isCardDue);
+  updateReviewBadge(allDue.length); // nav badge always shows the global due count
+  const dueCards = shuffleCards(allDue.filter(matchesReviewFilter));
 
   // Honest session estimate: ~30s per card
+  const filterLabel = AppState.reviewFilter === 'all' ? '' : ' in this source';
   const subtitle = document.querySelector('#view-review .page-subtitle');
   if (subtitle) {
     subtitle.textContent = dueCards.length
-      ? `${dueCards.length} due today · about ${formatReadingTime(dueCards.length * 0.5)} · keys 1–4 rate, Space flips`
-      : 'Nothing due — spaced repetition schedules cards right before your brain would forget them.';
+      ? `${dueCards.length} due today${filterLabel} · about ${formatReadingTime(dueCards.length * 0.5)} · keys 1–4 rate, Space flips`
+      : `Nothing due${filterLabel} — spaced repetition schedules cards right before your brain would forget them.`;
   }
 
   if (dueCards.length === 0) {
@@ -4340,7 +4427,14 @@ function showNextCard() {
   if (idx >= cards.length) {
     // Session complete
     document.getElementById('flashcard-deck').style.display = 'none';
-    document.getElementById('review-finished-message').style.display = 'flex';
+    const finished = document.getElementById('review-finished-message');
+    finished.style.display = 'flex';
+    const finishedText = finished.querySelector('p');
+    if (finishedText) {
+      finishedText.textContent = AppState.practiceMode
+        ? 'Practice round done — extra reps never hurt, and your scheduled reviews are untouched.'
+        : "You've reviewed all cards due today. Come back tomorrow for your next session.";
+    }
     return;
   }
 
@@ -4389,9 +4483,13 @@ function rateCard(score) {
 
   // Run SM-2 and persist the new schedule to the card's source document.
   // Fire-and-forget: a failed write shouldn't block the review flow.
-  const scheduled = sm2Schedule(card, score);
-  persistCardSchedule(scheduled)
-    .catch(err => console.warn('Could not save card schedule:', err.message));
+  // Practice mode is the exception: random-shuffle reps must not rewrite the
+  // spaced-repetition schedule, or casual practice would break the spacing.
+  if (!AppState.practiceMode) {
+    const scheduled = sm2Schedule(card, score);
+    persistCardSchedule(scheduled)
+      .catch(err => console.warn('Could not save card schedule:', err.message));
+  }
 
   // Update UI stats
   const ratio = `${stats.done} / ${stats.total}`;
@@ -4402,8 +4500,8 @@ function rateCard(score) {
   document.getElementById('review-good-count').textContent = stats.good;
   document.getElementById('review-easy-count').textContent = stats.easy;
 
-  // Update review badge with remaining due cards
-  updateReviewBadge(stats.total - stats.done);
+  // Update review badge with remaining due cards (practice doesn't change it)
+  if (!AppState.practiceMode) updateReviewBadge(stats.total - stats.done);
 
   AppState.flashcardIndex++;
   showNextCard();
@@ -4847,6 +4945,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('btn-restart-review-mock').addEventListener('click', initReviewSession);
   document.getElementById('btn-seed-review-demo').addEventListener('click', initReviewSession);
+
+  // Source filter + random practice
+  document.getElementById('review-source-filter').addEventListener('change', (e) => {
+    AppState.reviewFilter = e.target.value;
+    initReviewSession();
+  });
+  document.getElementById('btn-random-practice').addEventListener('click', startRandomPractice);
+  document.getElementById('btn-random-practice-empty').addEventListener('click', startRandomPractice);
 
   // ── CLOSE MODALS BY CLICKING OVERLAY ──
   document.querySelectorAll('.modal-overlay').forEach(overlay => {

@@ -575,6 +575,16 @@
         <div class="page-header">
           <h2 class="page-title">Daily Flashcard Review</h2>
           <p class="page-subtitle">Spaced repetition schedules cards to appear right before your brain would forget them.</p>
+          <!-- Pick a source to review, or deal a random practice hand -->
+          <div class="review-controls">
+            <select id="review-source-filter" class="form-input review-filter">
+              <option value="all">All sources</option>
+            </select>
+            <button id="btn-random-practice" class="btn btn-ghost">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h3.5c1.5 0 2.5 1 3.5 2.5S12 13 13.5 13H17M3 13h3.5c.8 0 1.5-.3 2-.8M17 6h-3.5c-.8 0-1.5.3-2 .8"/><path d="M15 4l2 2-2 2M15 11l2 2-2 2"/></svg>
+              Shuffle random cards
+            </button>
+          </div>
         </div>
 
         <div class="review-layout">
@@ -649,7 +659,8 @@
               <div class="empty-icon">📭</div>
               <h2>No Cards Due Today</h2>
               <p>Study some chapters to generate flashcards. They'll appear here when they're due.</p>
-              <button id="btn-seed-review-demo" class="btn btn-primary mt-4">Load Demo Deck</button>
+              <button id="btn-random-practice-empty" class="btn btn-primary mt-4">Shuffle random cards instead</button>
+              <button id="btn-seed-review-demo" class="btn btn-ghost mt-4">Load Demo Deck</button>
             </div>
 
           </div>

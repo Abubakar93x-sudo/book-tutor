@@ -3919,3 +3919,46 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   padding: 0.6rem 1rem;
   height: 40px;
 }
+
+/* Touch devices: the selection bar docks to the bottom of the screen so it
+   can never collide with iOS's native Copy/Look Up menu (which always sits
+   next to the selected text and cannot be suppressed by a web page). */
+.selection-popover.sp-dock {
+  top: auto !important;
+  left: 12px !important;
+  right: 12px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  gap: 6px;
+  padding: 8px;
+  border-radius: 14px;
+  z-index: 500; /* above reader chrome and bottom nav */
+}
+.selection-popover.sp-dock .sp-btn {
+  flex: 1;
+  justify-content: center;
+  min-height: 44px; /* Apple HIG touch target */
+  font-size: 12.5px;
+  padding: 7px 6px;
+}
+
+/* ── Review controls: source filter + random practice ── */
+.review-controls {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+.review-filter {
+  max-width: 280px;
+  font-size: 0.85rem;
+  padding: 0.55rem 0.75rem;
+}
+#btn-random-practice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  padding: 0.55rem 0.95rem;
+}
+#btn-random-practice svg { width: 15px; height: 15px; }
