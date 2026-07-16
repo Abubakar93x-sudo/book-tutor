@@ -2767,6 +2767,24 @@ async function openBook(bookId) {
 
   populateChapterSelect(book);
   navigateTo('tutor');
+
+  // Resume where you left off: the last-read chapter loads automatically.
+  // (Within the chapter, the reader then restores the exact bookmark spot.)
+  const resumeChapter = book.lastRead?.chapterNumber;
+  if (resumeChapter && book.chapters.some(c => c.number === resumeChapter)) {
+    document.getElementById('tutor-chapter-select').value = resumeChapter;
+    await loadChapter(resumeChapter);
+  }
+}
+
+// Remember the last-opened chapter on the book doc — powers both the library
+// Continue hero and the click-a-book auto-resume. Fire-and-forget write.
+function rememberLastRead(chapterNumber) {
+  const book = AppState.selectedBook;
+  if (!book) return;
+  const updated = { ...book, lastRead: { chapterNumber, at: Date.now() } };
+  AppState.selectedBook = updated;
+  dbPut('books', updated).catch(() => {});
 }
 
 // ── 9. POPULATE CHAPTER SELECT ────────────────────────────────────────────────
@@ -2867,6 +2885,7 @@ async function loadChapter(chapterNumber) {
     const chapterKey = `${book.id}-ch${chapterNum}`;
     await loadChatHistoryFromDB(chapterKey);
     renderChapterUI(chapter);
+    rememberLastRead(chapterNum);
 
     // Guided reading: chapters with real text open in the reader pane,
     // preceded by the Prime sequence on first open
@@ -2889,6 +2908,7 @@ async function loadChapter(chapterNumber) {
   const chapterKey = `${book.id}-ch${chapter.number}`;
   await loadChatHistoryFromDB(chapterKey);
   renderChapterUI(chapter);
+  rememberLastRead(chapter.number);
   Reader.close(); // knowledge books have no text to read — chat is the surface
 }
 
@@ -3585,6 +3605,31 @@ function initNoteCapture() {
     requestDeepDive(quote, AppState.selectedChapter.number, AppState.selectedChapter.title);
   });
 
+  // Manual note composer: paste or type straight into the Notes tab
+  const composerInput = document.getElementById('note-composer-input');
+  const composerAdd = document.getElementById('btn-add-note');
+  if (composerAdd) {
+    composerAdd.addEventListener('click', async () => {
+      const text = composerInput.value.trim();
+      if (!text) { composerInput.focus(); return; }
+      const book = AppState.selectedBook;
+      if (!book) { showToast('Open a book first — notes are tagged to their book.', 'info'); return; }
+      const chapter = AppState.selectedChapter;
+      await dbPut('notes', {
+        bookId: book.id,
+        bookTitle: book.title,
+        chapterNumber: chapter?.number ?? 0,
+        chapterTitle: chapter?.title ?? '',
+        quote: text,
+        manual: true,
+        timestamp: Date.now()
+      });
+      composerInput.value = '';
+      showToast('Note added', 'success', 1600);
+      await renderNotesTab();
+    });
+  }
+
   saveBtn.addEventListener('click', async () => {
     if (!pendingText || !AppState.selectedBook || !AppState.selectedChapter) return;
     const book = AppState.selectedBook;
@@ -3634,7 +3679,7 @@ async function renderNotesTab() {
       <div class="note-card">
         <div class="note-meta">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4.5c1.8-.9 3.6-1.3 5.5-1.1 1 .1 1.9.4 2.5.9v11c-.6-.5-1.5-.8-2.5-.9-1.9-.2-3.7.2-5.5 1.1v-11z"/><path d="M18 4.5c-1.8-.9-3.6-1.3-5.5-1.1-1 .1-1.9.4-2.5.9v11c.6-.5 1.5-.8 2.5-.9 1.9-.2 3.7.2 5.5 1.1v-11z"/></svg>
-          Ch. ${n.chapterNumber} — ${n.chapterTitle}
+          ${n.chapterNumber ? `Ch. ${n.chapterNumber} — ${n.chapterTitle}` : 'General note'}
         </div>
         <p class="note-quote">"${n.quote}"</p>
         <div class="note-actions">

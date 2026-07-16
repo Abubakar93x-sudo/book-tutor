@@ -467,6 +467,12 @@
 
               <!-- Tab 5: Notes (highlighted quotes, tagged by chapter) -->
               <div class="tab-panel" id="tab-notes">
+                <!-- Paste or type a note directly — selections still work too -->
+                <div class="note-composer">
+                  <textarea id="note-composer-input" class="note-composer-input" rows="2"
+                    placeholder="Paste or type a note — it's tagged to the current chapter…"></textarea>
+                  <button id="btn-add-note" class="btn btn-primary note-composer-add">Add note</button>
+                </div>
                 <div id="notes-list-container" class="notes-list">
                   <p class="notes-empty-hint">Select any text in the tutor's messages to save it here, tagged with its chapter. Click a note to deep-dive into it.</p>
                 </div>
