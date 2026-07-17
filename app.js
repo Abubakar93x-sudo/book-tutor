@@ -4445,8 +4445,16 @@ function showNextCard() {
 
   document.getElementById('card-book-tag').textContent = card.bookTitle;
   document.getElementById('card-book-tag-back').textContent = card.bookTitle;
-  document.getElementById('card-front-text').textContent = card.front;
-  document.getElementById('card-back-text').textContent = card.back;
+  const frontText = document.getElementById('card-front-text');
+  const backText  = document.getElementById('card-back-text');
+  frontText.textContent = card.front;
+  backText.textContent = card.back;
+
+  // Long text steps down in size and scrolls inside the card instead of
+  // overflowing onto the rating buttons below it
+  frontText.classList.toggle('long', (card.front || '').length > 220);
+  backText.classList.toggle('long', (card.back || '').length > 220);
+  document.querySelectorAll('#flashcard-element .card-body').forEach(b => { b.scrollTop = 0; });
 
   // ── Language cards: TTS button + romanization fade ──
   const isLangCard = card._src?.type === 'langCards';
