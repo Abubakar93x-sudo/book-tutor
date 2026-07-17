@@ -3983,3 +3983,50 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   padding: 0.55rem 0.95rem;
 }
 #btn-random-practice svg { width: 15px; height: 15px; }
+
+/* ============================================================
+   NAV-REVEAL BUTTON — focus mode hides the phone's bottom nav
+   while reading; this floating button summons it back.
+============================================================ */
+.nav-reveal-btn {
+  display: none;
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 960;
+  box-shadow: 0 8px 22px -8px rgba(36, 26, 16, 0.35);
+  transition: transform 0.18s ease-out, background 0.18s ease-out, color 0.18s ease-out;
+}
+.nav-reveal-btn svg { width: 20px; height: 20px; }
+
+@media (max-width: 768px) {
+  /* Only exists where the nav is actually hidden */
+  body.focus-mode .nav-reveal-btn { display: flex; }
+
+  /* Revealed state: nav returns above the reading surface… */
+  body.focus-mode.nav-revealed .mobile-bottom-nav {
+    display: flex !important;
+    z-index: 955;
+    box-shadow: 0 -8px 24px -12px rgba(36, 26, 16, 0.25);
+  }
+  /* …and the button moves up out of its way, turning brass + ✕-like */
+  body.focus-mode.nav-revealed .nav-reveal-btn {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    background: var(--purple);
+    border-color: var(--purple);
+    color: #fff;
+    transform: rotate(90deg);
+  }
+
+  /* Keep it clear of the docked selection bar while text is selected */
+  body.sel-active .nav-reveal-btn { display: none; }
+}

@@ -2545,6 +2545,16 @@ function navigateTo(viewId) {
   // Tutor Arena runs full-screen (chat or reader, whichever is showing) —
   // the sidebar/mobile nav only make sense outside of it.
   setFocusMode(viewId === 'tutor');
+  // Any navigation collapses a summoned nav back into focus
+  document.body.classList.remove('nav-revealed');
+}
+
+// The floating menu button: while focus mode hides the phone's bottom nav,
+// this summons it back in place — no rotating the device required.
+function initNavReveal() {
+  document.getElementById('btn-nav-reveal').addEventListener('click', () => {
+    document.body.classList.toggle('nav-revealed');
+  });
 }
 
 // ── 6. SETTINGS LOAD/SAVE ─────────────────────────────────────────────────────
@@ -3531,6 +3541,7 @@ function initNoteCapture() {
 
   function hidePopover() {
     popover.style.display = 'none';
+    document.body.classList.remove('sel-active');
     pendingText = '';
     pendingPidx = null;
   }
@@ -3566,6 +3577,7 @@ function initNoteCapture() {
       const isTouch = window.matchMedia('(pointer: coarse)').matches;
       popover.classList.toggle('sp-dock', isTouch);
       popover.style.display = 'flex';
+      document.body.classList.add('sel-active'); // FAB yields to the docked bar
       if (isTouch) {
         popover.style.top = '';
         popover.style.left = '';
@@ -4865,6 +4877,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPrime();
   initConsolidate();
   initLanguages();
+  initNavReveal();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 
