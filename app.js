@@ -559,9 +559,14 @@ const READING_DEFAULT_WPM = 200;
 
 function bookPaceWpm(book) {
   const samples = book?.paceSamples || [];
-  if (samples.length < 3) return READING_DEFAULT_WPM;
+  if (!samples.length) return READING_DEFAULT_WPM;
   const sorted = [...samples].sort((a, b) => a - b);
-  return Math.round(sorted[Math.floor(sorted.length / 2)]);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  // Blend from the cold-start default toward the measured median so time
+  // estimates converge smoothly instead of lurching the moment enough
+  // samples exist (the user watched 5h30 jump to 8h from that cliff).
+  const w = Math.min(1, samples.length / 6);
+  return Math.round(READING_DEFAULT_WPM * (1 - w) + median * w);
 }
 
 // One write per completed segment: pace sample (when plausible), cumulative
@@ -762,12 +767,16 @@ const Checkpoint = {
       chip.type = 'button';
       chip.textContent = label;
       chip.addEventListener('click', () => {
+        Reader.markReadingEnd(); // answering starts — stop the reading clock
         state.confidence = val;
         this.startQuestion(card, state);
       });
       row.appendChild(chip);
     });
-    card.querySelector('.cp-skip').addEventListener('click', () => this.finish(card, state, 'skipped'));
+    card.querySelector('.cp-skip').addEventListener('click', () => {
+      Reader.markReadingEnd();
+      this.finish(card, state, 'skipped');
+    });
   },
 
   // Phase 2 — generate the question (kicked off only after confidence is set)
@@ -2216,6 +2225,16 @@ const Reader = {
 
   startSegmentTimer() {
     this.segmentStartedAt = Date.now();
+    this.frozenReadSeconds = null;
+  },
+
+  // Called at the first checkpoint interaction: reading is over, answering
+  // begins — checkpoint time must not count against reading pace (it was
+  // silently deflating measured WPM and inflating the time-left estimates).
+  markReadingEnd() {
+    if (this.frozenReadSeconds == null && this.segmentStartedAt) {
+      this.frozenReadSeconds = (Date.now() - this.segmentStartedAt) / 1000;
+    }
   },
 
   renderColumn() {
@@ -2318,7 +2337,10 @@ const Reader = {
     if (index !== this.segmentsDone) return; // only the current segment advances
 
     const segment = this.segments[index];
-    const seconds = this.segmentStartedAt ? (Date.now() - this.segmentStartedAt) / 1000 : 0;
+    // Prefer the duration frozen at first checkpoint interaction — answering
+    // time is not reading time
+    const seconds = this.frozenReadSeconds
+      ?? (this.segmentStartedAt ? (Date.now() - this.segmentStartedAt) / 1000 : 0);
 
     this.segmentsDone = index + 1;
     this.startSegmentTimer();
@@ -4075,15 +4097,20 @@ async function generateCurriculum() {
 
 
 // ── 20. FEYNMAN SANDBOX ────────────────────────────────────────────────────────
-function populateSandboxSelectors() {
+async function populateSandboxSelectors() {
   const bookSelect = document.getElementById('sandbox-book-select');
   bookSelect.innerHTML = '<option value="">-- Choose a Book --</option>';
 
-  if (AppState.selectedBook) {
+  // Every book is explorable here, not just the one currently open
+  const books = await dbGetAll('books').catch(() => []);
+  books.forEach(book => {
     const opt = document.createElement('option');
-    opt.value = AppState.selectedBook.id;
-    opt.textContent = AppState.selectedBook.title;
+    opt.value = book.id;
+    opt.textContent = book.title;
     bookSelect.appendChild(opt);
+  });
+
+  if (AppState.selectedBook && books.some(b => b.id === AppState.selectedBook.id)) {
     bookSelect.value = AppState.selectedBook.id;
     populateSandboxConcepts(AppState.selectedBook);
   }
@@ -4091,16 +4118,42 @@ function populateSandboxSelectors() {
 
 async function populateSandboxConcepts(book) {
   const conceptSelect = document.getElementById('sandbox-concept-select');
+  conceptSelect.innerHTML = '<option value="">Loading concepts…</option>';
+  conceptSelect.disabled = true;
+
+  // PDF books keep their concepts on the per-chapter docs (generated on
+  // demand), not on the book skeleton — read them from there.
+  const entries = [];
+  try {
+    if (book.isPdfBook) {
+      const chapterDocs = await dbGetChaptersForBook(book.id);
+      chapterDocs
+        .filter(ch => Array.isArray(ch.concepts) && ch.concepts.length)
+        .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0))
+        .forEach(ch => ch.concepts.forEach(concept =>
+          entries.push({ concept, chapter: ch.chapterNumber, summary: ch.summary_15m || '' })));
+    } else {
+      (book.chapters || []).forEach(ch =>
+        (ch.concepts || []).forEach(concept =>
+          entries.push({ concept, chapter: ch.number, summary: ch.summary_15m || '' })));
+    }
+  } catch (err) {
+    console.warn('Sandbox concepts unavailable:', err.message);
+  }
+
+  if (!entries.length) {
+    conceptSelect.innerHTML = '<option value="">No concepts yet — open one of this book\'s chapters first</option>';
+    conceptSelect.disabled = true;
+    return;
+  }
+
   conceptSelect.innerHTML = '<option value="">-- Choose a Concept --</option>';
   conceptSelect.disabled = false;
-
-  book.chapters.forEach(ch => {
-    ch.concepts.forEach(concept => {
-      const opt = document.createElement('option');
-      opt.value = JSON.stringify({ concept, chapter: ch.number, summary: ch.summary_15m });
-      opt.textContent = `Ch.${ch.number}: ${concept}`;
-      conceptSelect.appendChild(opt);
-    });
+  entries.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify(e);
+    opt.textContent = `Ch.${e.chapter}: ${e.concept}`;
+    conceptSelect.appendChild(opt);
   });
 }
 
@@ -4225,12 +4278,29 @@ async function collectCards({ dueOnly = true } = {}) {
   AppState._reviewChapterCache = {};
   AppState._reviewLangCache = {};
 
+  // All Firestore reads happen in parallel — chapter docs are heavy (they
+  // carry the raw chapter text), so sequential awaits made this crawl.
+  const [languages, books] = await Promise.all([
+    dbGetAllLanguages().catch(err => {
+      console.warn('Language cards unavailable for review:', err.message);
+      return [];
+    }),
+    dbGetAll('books')
+  ]);
+
+  const [langBatchSets, pdfChapterSets] = await Promise.all([
+    Promise.all(languages.map(lang =>
+      dbGetLangCardBatches(lang.id).then(batches => ({ lang, batches })).catch(() => ({ lang, batches: [] }))
+    )),
+    Promise.all(books.filter(b => b.isPdfBook).map(book =>
+      dbGetChaptersForBook(book.id).then(chapterDocs => ({ book, chapterDocs })).catch(() => ({ book, chapterDocs: [] }))
+    ))
+  ]);
+
   // Language sentence cards share the deck with book cards — interleaving
   // review across subjects is itself a retention win.
   try {
-    const languages = await dbGetAllLanguages();
-    for (const lang of languages) {
-      const batches = await dbGetLangCardBatches(lang.id);
+    for (const { lang, batches } of langBatchSets) {
       for (const batch of batches) {
         const cards = batch.flashcards || [];
         if (cards.length) {
@@ -4253,10 +4323,10 @@ async function collectCards({ dueOnly = true } = {}) {
     console.warn('Language cards unavailable for review:', err.message);
   }
 
-  const books = await dbGetAll('books');
+  const pdfChaptersByBook = new Map(pdfChapterSets.map(s => [s.book.id, s.chapterDocs]));
   for (const book of books) {
     if (book.isPdfBook) {
-      const chapterDocs = await dbGetChaptersForBook(book.id);
+      const chapterDocs = pdfChaptersByBook.get(book.id) || [];
       for (const chDoc of chapterDocs) {
         const cards = chDoc.flashcards || [];
         if (cards.length) {
@@ -4307,20 +4377,41 @@ function matchesReviewFilter(card) {
   return filter === 'all' || reviewSourceKey(card) === filter;
 }
 
-// Rebuild the source dropdown from whatever actually has cards
-function populateReviewFilter(allCards) {
+// Build the source dropdown from lightweight metadata (book + language
+// titles — two small reads), NOT from the full card traversal, so it appears
+// instantly. Books and Languages sit in separate groups; "Random" is the
+// explicit everything-mixed option. The choice persists across sessions.
+async function populateReviewFilterFromMeta() {
   const select = document.getElementById('review-source-filter');
   if (!select) return;
-  const sources = new Map();
-  allCards.forEach(c => sources.set(reviewSourceKey(c), c.bookTitle));
 
-  select.innerHTML = '<option value="all">All sources</option>' +
-    [...sources.entries()]
-      .sort((a, b) => a[1].localeCompare(b[1]))
-      .map(([key, title]) => `<option value="${key}">${title}</option>`)
-      .join('');
-  // Keep the selection if that source still exists
-  select.value = sources.has(AppState.reviewFilter) ? AppState.reviewFilter : 'all';
+  const [books, languages] = await Promise.all([
+    dbGetAll('books').catch(() => []),
+    dbGetAllLanguages().catch(() => [])
+  ]);
+
+  const bookOpts = books
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map(b => `<option value="book:${b.id}">${b.title}</option>`).join('');
+  const langOpts = languages
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(l => `<option value="lang:${l.id}">${l.name}</option>`).join('');
+
+  select.innerHTML =
+    '<option value="all">Random — everything mixed</option>' +
+    (bookOpts ? `<optgroup label="Books">${bookOpts}</optgroup>` : '') +
+    (langOpts ? `<optgroup label="Languages">${langOpts}</optgroup>` : '');
+
+  // Restore the persisted choice once per app load
+  if (!AppState._reviewFilterLoaded) {
+    AppState._reviewFilterLoaded = true;
+    try {
+      const rec = await dbGet('settings', 'reviewFilter');
+      if (rec?.value) AppState.reviewFilter = rec.value;
+    } catch (_) { /* default stands */ }
+  }
+  const exists = [...select.options].some(o => o.value === AppState.reviewFilter);
+  select.value = exists ? AppState.reviewFilter : 'all';
   AppState.reviewFilter = select.value;
 }
 
@@ -4328,12 +4419,17 @@ function populateReviewFilter(allCards) {
 // Ratings in practice mode never touch SM-2 schedules — the scheduled reviews
 // stay the source of truth; practice is extra reps.
 async function startRandomPractice() {
+  const loadingEl = document.getElementById('review-loading');
+  document.getElementById('review-empty-message').style.display = 'none';
+  document.getElementById('flashcard-deck').style.display = 'none';
+  if (loadingEl) loadingEl.style.display = 'flex';
   const all = await collectCards({ dueOnly: false });
-  populateReviewFilter(all);
+  if (loadingEl) loadingEl.style.display = 'none';
   const pool = shuffleCards(all.filter(matchesReviewFilter)).slice(0, 20);
 
   if (!pool.length) {
     showToast('No cards in this source yet — study a chapter or add a language first.', 'info');
+    document.getElementById('review-empty-message').style.display = 'flex';
     return;
   }
 
@@ -4397,9 +4493,17 @@ function updateReviewBadge(count) {
 async function initReviewSession() {
   AppState.practiceMode = false;
 
-  // One traversal: all cards feed the filter dropdown; due ones feed the deck
+  // Dropdown appears instantly from metadata; the deck loads behind a spinner
+  await populateReviewFilterFromMeta();
+  document.getElementById('review-empty-message').style.display = 'none';
+  document.getElementById('review-finished-message').style.display = 'none';
+  document.getElementById('flashcard-deck').style.display = 'none';
+  const loadingEl = document.getElementById('review-loading');
+  if (loadingEl) loadingEl.style.display = 'flex';
+
   const allCards = await collectCards({ dueOnly: false });
-  populateReviewFilter(allCards);
+  if (loadingEl) loadingEl.style.display = 'none';
+
   const allDue = allCards.filter(isCardDue);
   updateReviewBadge(allDue.length); // nav badge always shows the global due count
   const dueCards = shuffleCards(allDue.filter(matchesReviewFilter));
@@ -4970,6 +5074,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Source filter + random practice
   document.getElementById('review-source-filter').addEventListener('change', (e) => {
     AppState.reviewFilter = e.target.value;
+    // Remember the chosen topic across sessions (local-only, like other settings)
+    dbPut('settings', { key: 'reviewFilter', value: e.target.value }).catch(() => {});
     initReviewSession();
   });
   document.getElementById('btn-random-practice').addEventListener('click', startRandomPractice);

@@ -1668,17 +1668,26 @@ img { max-width: 100%; }
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  /* Faces MUST be fully opaque: WebKit's backface-visibility breaks when a
+     child composites (the scrollable card body), letting the hidden face's
+     text show through any transparency. An opaque background guarantees no
+     bleed-through even where backface handling fails. */
 }
 
 .flashcard-front {
-  background: linear-gradient(135deg, var(--bg-elevated), var(--bg-hover));
+  /* Opaque backstop color under the gradient, same as the back face */
+  background: linear-gradient(135deg, var(--bg-elevated), var(--bg-hover)), var(--bg-elevated);
   border: 1px solid var(--border-light);
+  transform: translateZ(1px); /* physical separation from the back face */
 }
 
 .flashcard-back {
-  background: linear-gradient(135deg, var(--purple-dim), rgba(40,145,108,0.06));
+  /* Same tint as before, but layered over an OPAQUE surface color */
+  background:
+    linear-gradient(135deg, var(--purple-dim), rgba(40,145,108,0.06)),
+    var(--bg-surface);
   border: 1px solid rgba(184,134,63,0.25);
-  transform: rotateY(180deg);
+  transform: rotateY(180deg) translateZ(1px);
 }
 
 .card-tag {
@@ -4029,4 +4038,38 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 
   /* Keep it clear of the docked selection bar while text is selected */
   body.sel-active .nav-reveal-btn { display: none; }
+}
+
+/* ============================================================
+   MOBILE OVERFLOW GUARDS — nothing may push past the viewport
+============================================================ */
+@media (max-width: 768px) {
+  /* Belt-and-braces: horizontal scroll is never the answer on a phone */
+  .main-content, .view { overflow-x: hidden; }
+
+  /* Tutor header: switcher + Teach/Quiz pills were a nowrap row wider than
+     the screen — let it wrap onto two lines and ellipsize the title */
+  .chat-header { flex-wrap: wrap; row-gap: 8px; }
+  .chapter-switcher { min-width: 0; max-width: 100%; flex: 1 1 100%; }
+  .chapter-switcher-trigger { max-width: 100%; min-width: 0; }
+  .chapter-switcher-trigger span:not(.switcher-dot) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .chat-tabs { max-width: 100%; }
+  .chat-tab { padding: 7px 12px; font-size: 11.5px; }
+
+  /* Sandbox: selector rows wrap, panels stay inside the screen */
+  #view-sandbox .page-header { padding: 24px 16px 12px; }
+  .sandbox-selectors { flex-wrap: wrap; gap: 10px; padding: 0 16px; }
+  .sandbox-selectors select { width: 100%; max-width: 100%; min-width: 0; }
+  .sandbox-workspace { padding: 0 16px; }
+  .sandbox-workspace textarea { max-width: 100%; }
+  #view-sandbox .progress-track, #view-sandbox .summary-card { max-width: 100%; }
+
+  /* Generic flex-child guard for the rows that carry long titles */
+  .continue-hero-body, .lang-card-head, .turn-body, .prose { min-width: 0; }
+  .prose { overflow-wrap: break-word; }
 }
