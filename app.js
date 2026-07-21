@@ -1196,13 +1196,36 @@ function demoLanguageProfile(name) {
     return {
       name: 'Japanese', nativeName: '日本語', code: 'ja', ttsLangCode: 'ja-JP',
       script: 'kana-kanji', scriptName: 'Kana + Kanji', romanizationName: 'Rōmaji',
-      notes: 'Two phonetic alphabets plus kanji characters; pitch accent instead of stress.'
+      notes: 'Two phonetic alphabets plus kanji characters; pitch accent instead of stress.',
+      altScripts: []
+    };
+  }
+  if (n.includes('urdu')) {
+    return {
+      name: 'Urdu', nativeName: 'اردو', code: 'ur', ttsLangCode: 'ur-PK',
+      script: 'arabic', scriptName: 'Nastaliq (Perso-Arabic)', romanizationName: 'Roman Urdu',
+      notes: 'Written right-to-left in flowing Nastaliq; short vowels are usually unwritten — much easier if you already speak it.',
+      altScripts: []
+    };
+  }
+  if (n.includes('punjab')) {
+    return {
+      name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', code: 'pa', ttsLangCode: 'pa-IN',
+      script: 'other', scriptName: 'Gurmukhi', romanizationName: 'romanization',
+      notes: 'Spoken across India and Pakistan — but written in two different scripts depending on where.',
+      altScripts: [
+        { script: 'other', scriptName: 'Gurmukhi', romanizationName: 'romanization',
+          note: 'Used in Indian Punjab — the script of the Guru Granth Sahib' },
+        { script: 'arabic', scriptName: 'Shahmukhi', romanizationName: 'Roman Punjabi',
+          note: 'Used in Pakistani Punjab — if you read Urdu script you nearly have it already' }
+      ]
     };
   }
   return {
     name: 'Spanish', nativeName: 'Español', code: 'es', ttsLangCode: 'es-ES',
     script: 'latin', scriptName: 'Latin alphabet', romanizationName: null,
-    notes: 'Highly phonetic spelling — words sound the way they are written.'
+    notes: 'Highly phonetic spelling — words sound the way they are written.',
+    altScripts: []
   };
 }
 
@@ -1235,6 +1258,9 @@ async function renderLanguages() {
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
   const languages = await dbGetAllLanguages();
 
+  // Keep the reader's "Add to vocab" harvest target fresh
+  AppState._harvestLang = languages.find(l => getRecipe(l).id === 'vocabExpand') || null;
+
   for (const lang of languages) {
     // Due count across this language's card batches
     let due = 0;
@@ -1242,6 +1268,15 @@ async function renderLanguages() {
       const batches = await dbGetLangCardBatches(lang.id);
       batches.forEach(b => (b.flashcards || []).forEach(c => { if (isCardDue(c)) due++; }));
     } catch (_) { /* card count is decorative — never block the view */ }
+
+    const recipe = getRecipe(lang);
+    const coverageHtml = recipe.ui?.coverageMeter ? (() => {
+      const pct = (quranCoverage(lang.rootsLearned || []) * 100).toFixed(1);
+      return `<div class="lang-coverage">
+        <div class="lang-coverage-track"><div class="lang-coverage-fill" style="width:${pct}%"></div></div>
+        <span class="lang-coverage-label">${pct}% of the Quran readable</span>
+      </div>`;
+    })() : '';
 
     const card = document.createElement('div');
     card.className = 'lang-card';
@@ -1257,15 +1292,17 @@ async function renderLanguages() {
         <span>${due} card${due === 1 ? '' : 's'} due</span>
         ${lang.streak ? `<span>·</span><span>${lang.streak}-day streak</span>` : ''}
       </div>
+      ${coverageHtml}
       <button class="btn btn-primary lang-card-cta">Start today's session →</button>
     `;
     card.querySelector('.lang-card-cta').addEventListener('click', () => LangSession.start(lang));
 
     // Script bootcamp: non-Latin languages can pull the next unit of their
     // writing system into the deck (kana rows, letter groups, hanzi by
-    // frequency). Fades out once the learner is past A1 — by then the script
-    // should carry itself through reading.
-    if (lang.script && lang.script !== 'latin' && ['A0', 'A1'].includes(lang.level)) {
+    // frequency). Fades out once the learner is past A1 — except for the
+    // literacy recipe, where the script IS the course and it always shows.
+    if (lang.script && lang.script !== 'latin'
+        && (['A0', 'A1'].includes(lang.level) || recipe.id === 'literacy')) {
       const scriptBtn = document.createElement('button');
       scriptBtn.className = 'btn btn-ghost lang-script-btn';
       scriptBtn.textContent = `Script bootcamp · unit ${(lang.scriptUnit || 0) + 1} →`;
@@ -1320,9 +1357,243 @@ function demoLangLesson(lang) {
   };
 }
 
+// ── QURANIC ROOT LESSONS ──────────────────────────────────────────────────────
+// One root family (or function-word group) per session, in corpus-frequency
+// order from quran-roots-data.js. The static file owns WHICH root and its
+// frequency; the LLM writes the teaching content around it.
+
+function demoRootLesson(entry) {
+  return {
+    waznExplanation: 'The pattern faʿīl turns a root into an intensive "doer" word — raḥīm (ever-merciful) grows from r-ḥ-m the way karīm (ever-generous) grows from k-r-m.',
+    derivedWords: [
+      { word: 'رَحْمَة', romanization: 'raḥmah', meaning: 'mercy', pattern: 'faʿlah' },
+      { word: 'رَحِيم', romanization: 'raḥīm', meaning: 'most merciful', pattern: 'faʿīl' },
+      { word: 'رَحْمَٰن', romanization: 'raḥmān', meaning: 'the Most Gracious', pattern: 'faʿlān' }
+    ],
+    verses: [
+      { arabic: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', reference: 'Al-Fātiḥah 1:1',
+        romanization: 'bismi llāhi r-raḥmāni r-raḥīm',
+        gloss: 'In the name of Allah, the Most Gracious, the Most Merciful.',
+        wordGlosses: [
+          { word: 'بِسْمِ', gloss: 'in the name of' }, { word: 'اللَّهِ', gloss: 'Allah' },
+          { word: 'الرَّحْمَٰنِ', gloss: 'the Most Gracious' }, { word: 'الرَّحِيمِ', gloss: 'the Most Merciful' }
+        ] }
+    ],
+    checkpoints: [
+      { question: 'Which two words in this verse come from the same root family?' },
+      { question: 'What is the core meaning shared by the whole r-ḥ-m family?' }
+    ]
+  };
+}
+
+async function generateQuranicLesson(lang) {
+  const entry = nextQuranRoot(lang.rootsLearned || []);
+  if (!entry) {
+    // Whole curriculum finished — a review-only session
+    return { kind: 'quranic', complete: true, rootId: null, derivedWords: [], verses: [],
+             checkpoints: [], shadowSentences: [], newWords: [], chatTopic: '' };
+  }
+
+  const learnedTranslits = (lang.rootsLearned || [])
+    .map(id => QURAN_ROOTS.find(r => r.id === id)?.translit)
+    .filter(Boolean);
+
+  const core = AppState.mode === 'demo'
+    ? demoRootLesson(entry)
+    : await callRootLessonGenerator(entry, learnedTranslits);
+
+  return {
+    kind: 'quranic',
+    rootId: entry.id,
+    root: entry.root,
+    translit: entry.translit,
+    rootGloss: entry.gloss,
+    rootKind: entry.kind,
+    rootCount: entry.count,
+    waznExplanation: core.waznExplanation,
+    derivedWords: core.derivedWords,
+    verses: core.verses,
+    checkpoints: core.checkpoints,
+    shadowSentences: core.verses.map(v => v.arabic).slice(0, 3),
+    newWords: core.derivedWords.map(w => ({
+      word: w.word,
+      romanization: w.romanization || null,
+      meaning: w.meaning,
+      exampleSentence: core.verses[0]?.arabic || ''
+    })),
+    chatTopic: ''
+  };
+}
+
+registerRecipeLessonGenerator('quranic', generateQuranicLesson);
+
+// ── LITERACY LESSONS (heritage speakers: script is the course) ───────────────
+
+function demoLiteracyLesson(lang) {
+  return {
+    kind: 'literacy',
+    drills: [
+      { written: 'پانی', romanization: 'paani', meaning: 'water', distractors: ['bread', 'door'] },
+      { written: 'گھر', romanization: 'ghar', meaning: 'house/home', distractors: ['street', 'tree'] },
+      { written: 'کتاب', romanization: 'kitaab', meaning: 'book', distractors: ['pen', 'table'] }
+    ],
+    shadowSentences: ['پانی', 'گھر', 'کتاب'],
+    newWords: [
+      { word: 'پانی', romanization: 'paani', meaning: 'water', exampleSentence: 'پانی' },
+      { word: 'گھر', romanization: 'ghar', meaning: 'house/home', exampleSentence: 'گھر' },
+      { word: 'کتاب', romanization: 'kitaab', meaning: 'book', exampleSentence: 'کتاب' }
+    ],
+    checkpoints: [],
+    chatTopic: ''
+  };
+}
+
+async function generateLiteracyLesson(lang) {
+  const drills = AppState.mode === 'demo'
+    ? demoLiteracyLesson(lang).drills
+    : await callDecodeDrillGenerator(lang, lang.learnedChars || [], lang.knownWords || []);
+
+  return {
+    kind: 'literacy',
+    drills,
+    // Recite the words you just decoded — hearing them closes the loop
+    shadowSentences: drills.map(d => d.written).slice(0, 4),
+    newWords: drills.map(d => ({
+      word: d.written,
+      romanization: d.romanization || null,
+      meaning: d.meaning,
+      exampleSentence: d.written
+    })),
+    checkpoints: [],
+    chatTopic: ''
+  };
+}
+
+registerRecipeLessonGenerator('literacy', generateLiteracyLesson);
+
+// ── VOCAB-EXPANSION LESSONS (fluent speakers: the long tail) ─────────────────
+
+function demoVocabLesson(lang) {
+  return {
+    kind: 'vocabExpand',
+    precisionWords: [
+      { word: 'parsimonious', meaning: 'extremely unwilling to spend resources; stingy in a principled way',
+        example: 'The committee was parsimonious with its praise, granting it only when truly earned.',
+        cloze: 'The committee was _____ with its praise, granting it only when truly earned.',
+        contrast: 'Unlike "frugal" (a virtue of thrift), it implies a withholding nature.' },
+      { word: 'perfunctory', meaning: 'done as a routine duty, without real interest or care',
+        example: 'He gave the report a perfunctory glance and signed it.',
+        cloze: 'He gave the report a _____ glance and signed it.',
+        contrast: 'Unlike "careless", it implies going through the motions of an obligation.' }
+    ],
+    checkpoints: [],
+    shadowSentences: [],
+    chatTopic: '',
+    newWords: [
+      { word: 'parsimonious', romanization: null, meaning: 'extremely unwilling to spend; stingy',
+        exampleSentence: 'The committee was _____ with its praise, granting it only when truly earned.' },
+      { word: 'perfunctory', romanization: null, meaning: 'done as routine duty, without care',
+        exampleSentence: 'He gave the report a _____ glance and signed it.' }
+    ]
+  };
+}
+
+async function generateVocabExpandLesson(lang) {
+  if (AppState.mode === 'demo') return demoVocabLesson(lang);
+
+  const words = await callPrecisionWords(lang, lang.frontierBand || 4, lang.knownWords || []);
+  return {
+    kind: 'vocabExpand',
+    precisionWords: words,
+    checkpoints: [],
+    shadowSentences: [],
+    chatTopic: '',
+    // Cards: front = cloze sentence, back = word + meaning (precision, not translation)
+    newWords: words.map(w => ({
+      word: w.word,
+      romanization: null,
+      meaning: w.meaning,
+      exampleSentence: w.cloze
+    }))
+  };
+}
+
+registerRecipeLessonGenerator('vocabExpand', generateVocabExpandLesson);
+
+// ── CONTINUOUS LEVEL RECALIBRATION ───────────────────────────────────────────
+// levelScore (0-100) is the running estimate of the learner's level; the CEFR
+// string is DERIVED from it (never set independently — the romanization fade
+// and level chips key off the string). Every real interaction is evidence:
+// story checkpoints, card grades, shadow self-rates, conversation turns.
+// Deltas accumulate per language and flush to Firestore debounced, with a
+// ±3-points-per-day movement cap so no single session swings the level.
+
+function levelFromScore(score) {
+  if (score < 15) return 'A0';
+  if (score < 35) return 'A1';
+  if (score < 55) return 'A2';
+  if (score < 75) return 'B1';
+  return 'B2';
+}
+
+const _levelFlushTimers = {};
+
+function updateLevelEstimate(langId, delta) {
+  if (!langId || !delta) return;
+  if (!AppState._langLevelDeltas) AppState._langLevelDeltas = {};
+  AppState._langLevelDeltas[langId] = (AppState._langLevelDeltas[langId] || 0) + delta;
+  clearTimeout(_levelFlushTimers[langId]);
+  _levelFlushTimers[langId] = setTimeout(() => flushLevelEstimate(langId), 4000);
+}
+
+async function flushLevelEstimate(langId) {
+  const delta = AppState._langLevelDeltas?.[langId] || 0;
+  if (!delta) return;
+  AppState._langLevelDeltas[langId] = 0;
+
+  try {
+    const col = userCol('languages');
+    if (!col) return;
+    const snap = await col.doc(langId).get();
+    if (!snap.exists) return;
+    const lang = snap.data();
+
+    // Daily movement budget: |total movement today| ≤ 3 points
+    const today = todayKey();
+    const movedToday = lang.levelMoveDay === today ? (lang.levelMovedToday || 0) : 0;
+    const applied = Math.max(-3 - movedToday, Math.min(3 - movedToday, delta));
+    if (!applied) return;
+
+    const levelScore = Math.max(0, Math.min(100, (lang.levelScore ?? 8) + applied));
+    const level = levelFromScore(levelScore);
+    const levelEvidence = [...(lang.levelEvidence || []), { at: Date.now(), delta: Math.round(applied * 10) / 10 }].slice(-20);
+
+    await col.doc(langId).set({
+      levelScore, level, levelEvidence,
+      levelMoveDay: today, levelMovedToday: movedToday + applied
+    }, { merge: true });
+
+    // Keep any live in-memory copy coherent with what was just written
+    if (LangSession.lang?.id === langId) {
+      LangSession.lang.levelScore = levelScore;
+      LangSession.lang.level = level;
+    }
+  } catch (err) {
+    console.warn('Level estimate flush failed:', err.message);
+  }
+}
+
+// Card grades in the unified SM-2 deck are level evidence for language cards
+function signalCardGrade(card, score) {
+  if (card._src?.type !== 'langCards') return;
+  const delta = { easy: 0.3, good: 0.3, hard: -0.1, forgot: -0.4 }[score] || 0;
+  if (delta) updateLevelEstimate(card._src.langId, delta);
+}
+
 const LangSession = {
   lang: null,
   lesson: null,
+  recipe: null,
   activityIdx: 0,
   activities: ['review', 'story', 'converse', 'shadow', 'wrap'],
   checkpointsPassed: 0,
@@ -1332,6 +1603,8 @@ const LangSession = {
 
   async start(lang) {
     this.lang = lang;
+    this.recipe = getRecipe(lang);
+    this.activities = [...this.recipe.strands];
     this.activityIdx = 0;
     this.checkpointsPassed = 0;
     this.chatHistory = [];
@@ -1343,7 +1616,7 @@ const LangSession = {
     overlay.style.display = 'flex';
     body.innerHTML = `
       <div class="cp-loading" style="justify-content:center; padding:3rem 0;">
-        <span class="cp-spinner"></span> Writing today's ${lang.name} story at your level…
+        <span class="cp-spinner"></span> ${this.recipe.loadingCopy(lang)}
       </div>
     `;
 
@@ -1351,9 +1624,7 @@ const LangSession = {
       const dateKey = todayKey();
       let lesson = await dbGetLangLesson(lang.id, dateKey);
       if (!lesson) {
-        lesson = AppState.mode === 'demo'
-          ? demoLangLesson(lang)
-          : await callGradedStoryGenerator(lang, lang.level, lang.knownWords || []);
+        lesson = await getLessonGenerator(this.recipe.id)(lang);
         await dbPutLangLesson(lang.id, dateKey, lesson);
       }
       // Rough shadow sentences from the previous session come back for redo
@@ -1395,10 +1666,14 @@ const LangSession = {
 
   renderActivity() {
     const kind = this.activities[this.activityIdx];
+    const recipeMethod = RECIPE_ACTIVITY_RENDERERS[kind];
     if (kind === 'review') this.renderReview();
     else if (kind === 'story') this.renderStory();
     else if (kind === 'converse') this.renderConverse();
     else if (kind === 'shadow') this.renderShadow();
+    // Recipe-specific strands (decode, rootLesson, verses, recite, precision)
+    // must dispatch BEFORE the wrap catch-all below.
+    else if (recipeMethod && typeof this[recipeMethod] === 'function') this[recipeMethod]();
     else this.renderWrap();
   },
 
@@ -1481,6 +1756,7 @@ const LangSession = {
     body.querySelectorAll('.session-rate-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const scheduled = sm2Schedule(card, btn.dataset.score);
+        signalCardGrade(card, btn.dataset.score);
         persistCardSchedule(scheduled).catch(err => console.warn('Card save failed:', err.message));
         this.renderReviewCard(idx + 1);
       });
@@ -1578,9 +1854,11 @@ const LangSession = {
             : `<div class="cp-verdict cp-gap">${result.feedback}</div>`;
           if (result.verdict === 'pass') {
             this.checkpointsPassed += 1;
+            updateLevelEstimate(lang.id, 1.5);
             btn.style.display = 'none';
             answerEl.disabled = true;
           } else {
+            updateLevelEstimate(lang.id, -1.5);
             btn.disabled = false;
             btn.textContent = 'Check again';
           }
@@ -1644,6 +1922,7 @@ const LangSession = {
       inputEl.value = '';
       addBubble('user', text);
       this.chatHistory.push({ role: 'user', content: text });
+      updateLevelEstimate(lang.id, 0.2); // producing output at all is evidence
       this.partnerTurn(text, addBubble);
     };
     sendBtn.addEventListener('click', send);
@@ -1744,8 +2023,11 @@ const LangSession = {
 
     if (!sentences.length) { this.next(); return; }
 
-    // Sentence text → romanization, when the story carries it
-    const romFor = (text) => lesson.sentences?.find(s => s.text === text)?.romanization || null;
+    // Sentence text → romanization, when the story (or the verses) carry it
+    const romFor = (text) =>
+      lesson.sentences?.find(s => s.text === text)?.romanization
+      || lesson.verses?.find(v => v.arabic === text)?.romanization
+      || null;
 
     const rows = sentences.map((text, i) => `
       <div class="shadow-row" data-idx="${i}">
@@ -1766,11 +2048,14 @@ const LangSession = {
       </div>
     `).join('');
 
+    const isRecite = this.activities[this.activityIdx] === 'recite';
     body.innerHTML = `
-      <div class="prime-kicker">Shadow · ${lang.name}</div>
+      <div class="prime-kicker">${isRecite ? 'Recite' : 'Shadow'} · ${lang.name}</div>
       ${this.dotsHtml()}
-      <h3 class="consolidate-title">Say it with the voice, out loud.</h3>
-      <p class="story-title-gloss">Play a sentence, speak along with it — match the rhythm, not just the words. Rate yourself honestly; rough ones return tomorrow.</p>
+      <h3 class="consolidate-title">${isRecite ? 'Recite the verses, out loud.' : 'Say it with the voice, out loud.'}</h3>
+      <p class="story-title-gloss">${isRecite
+        ? 'Play a verse, recite along with the voice — match the rhythm of the recitation. Rate yourself honestly; rough ones return tomorrow.'
+        : 'Play a sentence, speak along with it — match the rhythm, not just the words. Rate yourself honestly; rough ones return tomorrow.'}</p>
       <div class="shadow-list">${rows}</div>
       <div class="consolidate-actions">
         <button class="btn btn-primary" id="btn-shadow-continue">Continue →</button>
@@ -1799,9 +2084,295 @@ const LangSession = {
       // Rough sentences re-queue into tomorrow's shadow round
       const rough = sentences.filter((_, i) => this.shadowRatings[i] === 'rough');
       this.lang.roughShadow = rough.slice(0, 4);
+      // Self-rated fluency is level evidence too
+      Object.values(this.shadowRatings).forEach(r => {
+        if (r === 'smooth') updateLevelEstimate(lang.id, 0.5);
+        else if (r === 'rough') updateLevelEstimate(lang.id, -0.5);
+      });
       dbPutLanguage(this.lang).catch(() => {});
       this.next();
     });
+  },
+
+  // ── ROOT LESSON (quranic input strand): one root family per session ──
+  renderRootLesson() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+
+    if (lesson.complete) {
+      body.innerHTML = `
+        <div class="prime-kicker">Quranic Arabic</div>
+        ${this.dotsHtml()}
+        <h3 class="consolidate-title">Every root in the curriculum is yours.</h3>
+        <p class="story-title-gloss">Keep the review deck warm — your cards still come due on schedule.</p>
+        <div class="consolidate-actions"><button class="btn btn-primary" id="btn-roots-done">Close →</button></div>
+      `;
+      document.getElementById('btn-roots-done').addEventListener('click', () => this.close());
+      return;
+    }
+
+    const isParticles = lesson.rootKind === 'particles';
+    const familyHtml = lesson.derivedWords.map((w, i) => `
+      <div class="root-word-row">
+        <button class="story-play root-word-play" data-idx="${i}" title="Hear it">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+        </button>
+        <span class="root-word-ar">${w.word}</span>
+        <span class="root-word-body">
+          <span class="root-word-rom">${w.romanization || ''}</span>
+          <span class="root-word-meaning">${w.meaning}</span>
+        </span>
+        ${w.pattern && !isParticles ? `<span class="root-word-pattern">${w.pattern}</span>` : ''}
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">${isParticles ? 'Function words' : 'Root family'} · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <div class="root-hero">
+        <span class="root-hero-ar">${lesson.root}</span>
+        <span class="root-hero-translit">${lesson.translit}</span>
+        <span class="root-hero-gloss">${lesson.rootGloss}</span>
+      </div>
+      <p class="story-title-gloss">~${lesson.rootCount.toLocaleString()} appearances in the Quran — ${isParticles ? 'these words are the connective tissue of every verse.' : 'every word below grows from this one root.'}</p>
+      <div class="root-wazn">${lesson.waznExplanation}</div>
+      <div class="root-family">${familyHtml}</div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-root-continue">See it in the verses →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.root-word-play').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const w = lesson.derivedWords[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(w.word, lang.ttsLangCode || 'ar', 0.8)) {
+          showToast('No Arabic voice on this device.', 'info', 3000);
+        }
+      });
+    });
+    document.getElementById('btn-root-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── VERSES (quranic comprehension strand): the family in its real context ──
+  renderVerses() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+
+    if (!lesson.verses?.length) { this.next(); return; }
+
+    const versesHtml = lesson.verses.map((v, i) => `
+      <div class="story-sentence verse-block" data-idx="${i}">
+        <button class="story-play" data-idx="${i}" title="Hear it">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+        </button>
+        <div class="story-sentence-text">
+          <span class="story-target verse-ar">${v.arabic}</span>
+          <span class="verse-ref">${v.reference}</span>
+          ${v.romanization ? `<span class="story-rom">${v.romanization}</span>` : ''}
+          <span class="story-gloss" style="display:none;">
+            ${v.gloss}
+            ${v.wordGlosses?.length ? `<span class="verse-word-glosses">${v.wordGlosses.map(g => `<span class="verse-wg"><b>${g.word}</b> ${g.gloss}</span>`).join('')}</span>` : ''}
+          </span>
+        </div>
+      </div>
+    `).join('');
+
+    const checkpointsHtml = (lesson.checkpoints || []).map((c, i) => `
+      <div class="lang-checkpoint" data-idx="${i}">
+        <div class="cp-question">${c.question}</div>
+        <textarea class="cp-answer" rows="2" placeholder="Answer in English — show you followed the verses…"></textarea>
+        <div class="cp-actions">
+          <button class="btn btn-primary lang-cp-check" data-idx="${i}">Check</button>
+        </div>
+        <div class="lang-cp-verdict"></div>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">In the Quran · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title">The family, in its own verses.</h3>
+      <p class="story-title-gloss">Tap a verse for its meaning — today's words are working inside real revelation, not example sentences.</p>
+      <div class="story-body">${versesHtml}</div>
+      <div class="story-checkpoints">
+        <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>Did you follow them?</div>
+        ${checkpointsHtml}
+      </div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-verses-continue">Continue →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.story-sentence-text').forEach(el => {
+      el.addEventListener('click', () => {
+        const gloss = el.querySelector('.story-gloss');
+        gloss.style.display = gloss.style.display === 'none' ? 'block' : 'none';
+      });
+    });
+
+    body.querySelectorAll('.story-play').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = lesson.verses[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(v.arabic, lang.ttsLangCode || 'ar', 0.75)) {
+          showToast('No Arabic voice on this device — audio unavailable.', 'info', 3500);
+        }
+      });
+    });
+
+    // Comprehension checks graded against the verses + glosses
+    const groundTruth = lesson.verses
+      .map(v => `${v.arabic} (${v.reference}: ${v.gloss})`).join('\n');
+    body.querySelectorAll('.lang-cp-check').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const wrap = btn.closest('.lang-checkpoint');
+        const answerEl = wrap.querySelector('.cp-answer');
+        const verdictEl = wrap.querySelector('.lang-cp-verdict');
+        const answer = answerEl.value.trim();
+        if (!answer) { answerEl.focus(); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Checking…';
+        try {
+          const q = lesson.checkpoints[parseInt(wrap.dataset.idx)].question;
+          const result = AppState.mode === 'demo'
+            ? (answer.length >= 10
+                ? { verdict: 'pass', feedback: 'Right — you followed the verses.', sourceQuote: '' }
+                : { verdict: 'gap', feedback: 'Look at the glosses again — which words share the root?', sourceQuote: '' })
+            : await callCheckpointGrader(groundTruth, q, answer, 0);
+
+          verdictEl.innerHTML = result.verdict === 'pass'
+            ? `<div class="cp-verdict cp-pass">✓ ${result.feedback}</div>`
+            : `<div class="cp-verdict cp-gap">${result.feedback}</div>`;
+          if (result.verdict === 'pass') {
+            this.checkpointsPassed += 1;
+            updateLevelEstimate(lang.id, 1.5);
+            btn.style.display = 'none';
+            answerEl.disabled = true;
+          } else {
+            updateLevelEstimate(lang.id, -1.5);
+            btn.disabled = false;
+            btn.textContent = 'Check again';
+          }
+        } catch (err) {
+          verdictEl.innerHTML = `<div class="cp-fallback">Check unavailable — keep going.</div>`;
+          btn.style.display = 'none';
+        }
+      });
+    });
+
+    document.getElementById('btn-verses-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── RECITE (quranic fluency strand): shadowing, but with the verses ──
+  renderRecite() {
+    this.renderShadow(); // copy adapts via the active strand kind
+  },
+
+  // ── DECODE (literacy strand): sound out a word you already know orally ──
+  renderDecode() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+    const drills = lesson.drills || [];
+
+    if (!drills.length) { this.next(); return; }
+
+    const drillsHtml = drills.map((d, i) => {
+      // Shuffle the correct meaning in among the distractors (Fisher-Yates) so
+      // the answer's position is genuinely random, not guessable by position.
+      const options = [d.meaning, ...d.distractors];
+      const order = options.map((_, oi) => oi);
+      for (let k = order.length - 1; k > 0; k--) {
+        const j = Math.floor(Math.random() * (k + 1));
+        [order[k], order[j]] = [order[j], order[k]];
+      }
+      return `
+        <div class="decode-drill" data-idx="${i}">
+          <div class="decode-word">${d.written}</div>
+          <div class="decode-options">
+            ${order.map(oi => `<button class="cp-chip decode-opt" data-drill="${i}" data-correct="${oi === 0}">${options[oi]}</button>`).join('')}
+          </div>
+          <div class="decode-reveal" style="display:none;">
+            <span class="decode-rom">${d.romanization || ''}</span>
+            <span class="decode-meaning">— ${d.meaning}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Decode · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title">Sound it out — you already know these words.</h3>
+      <p class="story-title-gloss">Read each word letter by letter, out loud if you can. When it clicks, tap what it means.</p>
+      <div class="decode-list">${drillsHtml}</div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-decode-continue">Continue →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.decode-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const drillEl = btn.closest('.decode-drill');
+        const idx = parseInt(drillEl.dataset.idx);
+        const correct = btn.dataset.correct === 'true';
+
+        drillEl.querySelectorAll('.decode-opt').forEach(b => {
+          b.disabled = true;
+          if (b.dataset.correct === 'true') b.classList.add('assess-right');
+          else if (b === btn) b.classList.add('assess-wrong');
+        });
+        drillEl.querySelector('.decode-reveal').style.display = 'flex';
+
+        updateLevelEstimate(lang.id, correct ? 0.3 : -0.3);
+        // Hearing it right after decoding closes the sound-symbol loop
+        NarrationEngine.speakLang(drills[idx].written, lang.ttsLangCode || lang.code, 0.85);
+      });
+    });
+
+    document.getElementById('btn-decode-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── PRECISION (vocab-expansion strand): frontier words, precisely ──
+  renderPrecision() {
+    const { lang, lesson } = this;
+    const body = document.getElementById('lang-session-body');
+    const words = lesson.precisionWords || [];
+
+    if (!words.length) { this.next(); return; }
+
+    const wordsHtml = words.map((w, i) => `
+      <div class="precision-block" data-idx="${i}">
+        <div class="precision-cloze">${w.cloze}</div>
+        <button class="cp-skip precision-reveal-btn" data-idx="${i}">Reveal the word →</button>
+        <div class="precision-answer" style="display:none;">
+          <span class="precision-word">${w.word}</span>
+          <span class="precision-meaning">${w.meaning}</span>
+          ${w.contrast ? `<span class="precision-contrast">${w.contrast}</span>` : ''}
+        </div>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Frontier words · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title">Five words from just past your edge.</h3>
+      <p class="story-title-gloss">Read the sentence, guess the missing word — then see how close you were. The distinction lines are the real lesson.</p>
+      <div class="precision-list">${wordsHtml}</div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-precision-continue">Continue →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.precision-reveal-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const block = btn.closest('.precision-block');
+        block.querySelector('.precision-answer').style.display = 'flex';
+        btn.style.display = 'none';
+      });
+    });
+
+    document.getElementById('btn-precision-continue').addEventListener('click', () => this.next());
   },
 
   // ── WRAP: new words → cards, streak, done ──
@@ -1823,6 +2394,15 @@ const LangSession = {
       <h3 class="consolidate-title">${words.length ? `${words.length} new word${words.length === 1 ? '' : 's'} joined your deck` : 'Nice work today'}</h3>
       <div class="new-words-list">${wordsHtml}</div>
       <div class="consolidate-calibration">${this.checkpointsPassed}/${(lesson.checkpoints || []).length} comprehension checks passed · they'll come due for review tomorrow</div>
+      ${this.recipe?.ui?.coverageMeter ? (() => {
+        const learned = [...(lang.rootsLearned || [])];
+        if (lesson.rootId && !learned.includes(lesson.rootId)) learned.push(lesson.rootId);
+        const pct = (quranCoverage(learned) * 100).toFixed(1);
+        return `<div class="lang-coverage wrap-coverage">
+          <div class="lang-coverage-track"><div class="lang-coverage-fill" style="width:${pct}%"></div></div>
+          <span class="lang-coverage-label">You can now read ~${pct}% of the Quran's words</span>
+        </div>`;
+      })() : ''}
       <div class="consolidate-actions">
         <button class="btn btn-primary" id="btn-session-done">Done for today →</button>
       </div>
@@ -1855,6 +2435,10 @@ const LangSession = {
         }
         lang.knownWords = [...(lang.knownWords || []), ...words.map(w => w.word)].slice(-500);
         lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+        // Quranic recipe: today's root joins the learned list → coverage grows
+        if (this.recipe?.id === 'quranic' && lesson.rootId && !(lang.rootsLearned || []).includes(lesson.rootId)) {
+          lang.rootsLearned = [...(lang.rootsLearned || []), lesson.rootId];
+        }
         await dbPutLanguage(lang);
       } catch (err) {
         console.warn('Session wrap persistence failed:', err.message);
@@ -1908,15 +2492,244 @@ async function startScriptUnit(lang, triggerBtn) {
 // ── LANGUAGE ONBOARDING ───────────────────────────────────────────────────────
 // Steps: name → profile confirmation (script auto-detection) → level → seed
 // deck generation. Reuses the Prime overlay pattern and styles.
+// ── ADAPTIVE PLACEMENT (LangAssess) ──────────────────────────────────────────
+// A short item ladder instead of one big exam: 4 multiple-choice items per
+// round, band moves up on ≥3 correct, down on ≤1, stops on a middling round,
+// two direction reversals, or 6 rounds (~5-8 minutes). True beginners never
+// see it — the fresh persona keeps the quick self-report picker, and every
+// ladder is skippable. The result is only the STARTING point; continuous
+// recalibration (updateLevelEstimate) owns the level from then on.
+
+function demoAssessItems(type, band) {
+  const verseSnippets = [
+    'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
+    'قُلْ هُوَ اللَّهُ أَحَدٌ', 'إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ',
+    'وَالْعَصْرِ إِنَّ الْإِنسَانَ لَفِي خُسْرٍ', 'لَقَدْ خَلَقْنَا الْإِنسَانَ فِي أَحْسَنِ تَقْوِيمٍ'
+  ];
+  return [1, 2, 3, 4].map(i => ({
+    prompt: type === 'verse-ladder'
+      ? `"${verseSnippets[band - 1] || verseSnippets[0]}" — what is this saying? (demo ${i})`
+      : type === 'listening-check'
+        ? `What did the sentence mean? (demo ${i})`
+        : `[demo · band ${band}] Which is the closest meaning of "specimen-${band}${i}"?`,
+    ttsText: type === 'listening-check' ? 'پانی گرم ہے' : null,
+    options: ['The correct answer', 'A wrong answer', 'Another wrong one', 'Not this either'],
+    answerIdx: 0
+  }));
+}
+
+const LangAssess = {
+  onboard: null,
+  type: 'placement',
+  band: 4,
+  round: 0,
+  reversals: 0,
+  lastDir: null,
+  history: [],
+  answers: {},
+
+  maxBand() { return this.type === 'verse-ladder' ? 6 : 8; },
+
+  start(onboard) {
+    this.onboard = onboard;
+    this.type = onboard.preset === 'quranic'
+      ? 'verse-ladder'
+      : (RECIPES[onboard.recipeId]?.assessment || 'placement');
+
+    if (!['placement', 'frontier', 'verse-ladder', 'listening-check'].includes(this.type)) return this.skip();
+
+    this.band = this.type === 'verse-ladder' ? 2 : 4;
+    this.round = 0;
+    this.reversals = 0;
+    this.lastDir = null;
+    this.history = [];
+    this.renderIntro();
+  },
+
+  renderIntro() {
+    const copy = {
+      frontier: ['Find your frontier', 'A few quick rounds of word recognition — they get rarer until we find the edge of your vocabulary. That edge is where your new words will come from.'],
+      'verse-ladder': ['Where do we start?', 'A few short verse snippets with comprehension questions — they get harder until we find your level. Total beginners: just skip.'],
+      'listening-check': ['Quick listening check', 'A few spoken sentences — tap what each one meant. This just confirms your ear; your reading starts from the script itself.'],
+      placement: ['Quick placement', 'A few rounds of questions that adapt to your answers — about five minutes, and your level keeps adjusting as you learn anyway.']
+    }[this.type];
+    document.getElementById('lang-onboard-content').innerHTML = `
+      <div class="prime-subhead"><strong>${copy[0]}</strong></div>
+      <p class="lang-assess-intro">${copy[1]}</p>
+      <div class="lang-level-options">
+        <button class="lang-level-btn" id="btn-assess-start"><strong>Start (~5 min)</strong><span>Adapts to your answers as you go</span></button>
+        <button class="lang-level-btn" id="btn-assess-skip"><strong>Skip — start from zero</strong><span>You can always let the app recalibrate later</span></button>
+      </div>
+    `;
+    document.getElementById('btn-assess-start').addEventListener('click', () => this.runRound());
+    document.getElementById('btn-assess-skip').addEventListener('click', () => this.skip());
+  },
+
+  async fetchItems() {
+    if (AppState.mode === 'demo') return demoAssessItems(this.type, this.band);
+    if (this.type === 'frontier') return callFrontierItems(this.onboard.profile, this.band);
+    if (this.type === 'verse-ladder') return callVerseLadderItems(this.band);
+    if (this.type === 'listening-check') return callListeningCheckItems(this.onboard.profile, this.band);
+    return callPlacementItems(this.onboard.profile, this.band);
+  },
+
+  async runRound() {
+    this.round += 1;
+    this.answers = {};
+    const content = document.getElementById('lang-onboard-content');
+    content.innerHTML = `
+      <div class="cp-loading" style="justify-content:center; padding:2rem 0;">
+        <span class="cp-spinner"></span> Round ${this.round} — building your questions…
+      </div>
+    `;
+
+    let items;
+    try {
+      items = await this.fetchItems();
+    } catch (err) {
+      console.warn('Assessment items failed:', err.message);
+      showToast('Placement unavailable right now — starting from a default level.', 'info', 5000);
+      return this.skip();
+    }
+
+    content.innerHTML = `
+      <div class="prime-subhead">Round ${this.round}</div>
+      <div class="lang-assess-items">
+        ${items.map((item, i) => `
+          <div class="lang-assess-item" data-idx="${i}">
+            <div class="cp-question">${item.prompt}</div>
+            ${item.ttsText ? `<button class="btn btn-ghost assess-play" data-idx="${i}">▶ Play the sentence</button>` : ''}
+            <div class="lang-assess-options">
+              ${item.options.map((opt, oi) => `<button class="cp-chip assess-opt" data-item="${i}" data-opt="${oi}">${opt}</button>`).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-assess-check" disabled>Check answers</button>
+        <button class="cp-skip" id="btn-assess-skip2">Stop here — use my answers so far</button>
+      </div>
+    `;
+
+    const checkBtn = document.getElementById('btn-assess-check');
+    content.querySelectorAll('.assess-play').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = items[parseInt(btn.dataset.idx)];
+        const p = this.onboard.profile;
+        if (!NarrationEngine.speakLang(item.ttsText, p.ttsLangCode || p.code, 0.85)) {
+          showToast(`No ${p.name} voice on this device — listening check unavailable.`, 'info', 4000);
+        }
+      });
+    });
+    content.querySelectorAll('.assess-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.dataset.item;
+        this.answers[item] = parseInt(btn.dataset.opt);
+        content.querySelectorAll(`.assess-opt[data-item="${item}"]`).forEach(b => b.classList.remove('sel'));
+        btn.classList.add('sel');
+        checkBtn.disabled = Object.keys(this.answers).length < items.length;
+      });
+    });
+
+    checkBtn.addEventListener('click', () => {
+      let correct = 0;
+      items.forEach((item, i) => {
+        const right = this.answers[i] === item.answerIdx;
+        if (right) correct += 1;
+        content.querySelectorAll(`.assess-opt[data-item="${i}"]`).forEach(b => {
+          const oi = parseInt(b.dataset.opt);
+          if (oi === item.answerIdx) b.classList.add('assess-right');
+          else if (oi === this.answers[i]) b.classList.add('assess-wrong');
+          b.disabled = true;
+        });
+      });
+      checkBtn.disabled = true;
+      setTimeout(() => this.scoreRound(correct), 1100);
+    });
+
+    document.getElementById('btn-assess-skip2').addEventListener('click', () => this.finish());
+  },
+
+  scoreRound(correct) {
+    this.history.push({ band: this.band, correct });
+    const dir = correct >= 3 ? 'up' : correct <= 1 ? 'down' : 'stay';
+
+    if (dir === 'stay' || this.round >= 6) return this.finish();
+    if (this.lastDir && dir !== this.lastDir) this.reversals += 1;
+    if (this.reversals >= 2) return this.finish();
+    this.lastDir = dir;
+    this.band = Math.max(1, Math.min(this.maxBand(), this.band + (dir === 'up' ? 1 : -1)));
+    this.runRound();
+  },
+
+  finish() {
+    const o = this.onboard;
+    o.assessResult = { type: this.type, band: this.band, history: this.history };
+
+    if (this.type === 'frontier') {
+      // Fluent speaker — the CEFR level is high by definition; the band IS
+      // the finding: where their vocabulary gets spotty.
+      o.levelScore = 80;
+      o.level = 'B2';
+      o.frontierBand = this.band;
+    } else if (this.type === 'listening-check') {
+      // Heritage speaker: the ear is confirmed, but levelScore tracks
+      // READING — it starts near zero so the romanization bridge stays on.
+      o.levelScore = 8;
+      o.level = 'A0';
+      o.listeningBand = this.band;
+    } else if (this.type === 'verse-ladder') {
+      o.levelScore = [8, 18, 30, 45, 60, 75][this.band - 1] ?? 8;
+      o.level = levelFromScore(o.levelScore);
+    } else {
+      o.levelScore = [8, 18, 28, 40, 52, 64, 76, 85][this.band - 1] ?? 8;
+      o.level = levelFromScore(o.levelScore);
+    }
+    o.advanceFrom('assess');
+  },
+
+  skip() {
+    this.onboard.applyDefaultPlacement();
+    this.onboard.advanceFrom('assess');
+  }
+};
+
+// Quranic Arabic ships pre-configured — one tap on the featured card, no
+// typing, no profiler call. Its own langId so standard Arabic can coexist.
+const QURANIC_PRESET_PROFILE = {
+  name: 'Quranic Arabic',
+  nativeName: 'العربية الفصحى',
+  code: 'ar-quran',
+  ttsLangCode: 'ar-SA',
+  script: 'arabic',
+  scriptName: 'Arabic script',
+  romanizationName: 'transliteration',
+  notes: 'The classical Arabic of the Quran — a closed text of ~77,000 words built from ~1,700 root families. You learn roots, not isolated words, so every root unlocks a whole word family.',
+  altScripts: []
+};
+
 const LangOnboard = {
-  step: 'name',
+  step: 'start',
   profile: null,
   level: 'A0',
+  recipeId: 'fresh',
+  preset: null,
+  chosenScript: null,
+  levelScore: null,
+  frontierBand: null,
+  assessResult: null,
 
   open() {
-    this.step = 'name';
+    this.step = 'start';
     this.profile = null;
     this.level = 'A0';
+    this.recipeId = 'fresh';
+    this.preset = null;
+    this.chosenScript = null;
+    this.levelScore = null;
+    this.frontierBand = null;
+    this.listeningBand = null;
+    this.assessResult = null;
     document.getElementById('lang-onboard-overlay').style.display = 'flex';
     this.render();
   },
@@ -1925,8 +2738,31 @@ const LangOnboard = {
     document.getElementById('lang-onboard-overlay').style.display = 'none';
   },
 
+  // The step sequence depends on choices along the way: the preset skips the
+  // persona question; multi-script languages insert a script choice; non-fresh
+  // personas get a placement step instead of the self-report level picker.
+  stepOrder() {
+    if (this.preset === 'quranic') return ['start', 'profile', 'assess', 'seed'];
+    const order = ['start', 'profile', 'persona'];
+    if (this.profile?.altScripts?.length) order.push('script');
+    order.push(this.recipeId === 'fresh' ? 'level' : 'assess');
+    order.push('seed');
+    return order;
+  },
+
+  // Advance to whatever follows `current` in the computed order.
+  // Decide on generateSeed from the step WE set, not this.step — render()
+  // can advance further (assess fallback) and would double-fire the seed.
+  advanceFrom(current) {
+    const order = this.stepOrder();
+    const nextStep = order[order.indexOf(current) + 1] || 'seed';
+    this.step = nextStep;
+    this.render();
+    if (nextStep === 'seed') this.generateSeed();
+  },
+
   dots() {
-    const order = ['name', 'profile', 'level', 'seed'];
+    const order = this.stepOrder();
     const idx = order.indexOf(this.step);
     document.getElementById('lang-onboard-dots').innerHTML = order
       .map((_, i) => `<i class="${i === idx ? 'on' : ''}"></i>`).join('');
@@ -1939,13 +2775,25 @@ const LangOnboard = {
     nextBtn.style.display = '';
     this.dots();
 
-    if (this.step === 'name') {
+    if (this.step === 'start') {
       content.innerHTML = `
-        <div class="prime-subhead">Which language do you want to learn? Any language works — the method adapts to its writing system automatically.</div>
+        <button class="lang-preset-card" id="lang-preset-quranic" type="button">
+          <span class="lang-preset-native">${QURANIC_PRESET_PROFILE.nativeName}</span>
+          <span class="lang-preset-name">Quranic Arabic</span>
+          <span class="lang-preset-desc">Ready-made track: root families in frequency order, anchored in real verses — with a live "% of the Quran you can read" meter.</span>
+        </button>
+        <div class="lang-preset-divider"><span>or add any other language</span></div>
         <input type="text" id="lang-name-input" class="form-input lang-name-input"
-               placeholder="e.g. Spanish, Japanese, Arabic, Yoruba…" autocomplete="off">
+               placeholder="e.g. Spanish, Japanese, Urdu, Punjabi…" autocomplete="off">
       `;
       nextBtn.textContent = 'Continue →';
+      document.getElementById('lang-preset-quranic').addEventListener('click', () => {
+        this.preset = 'quranic';
+        this.recipeId = 'quranic';
+        this.profile = { ...QURANIC_PRESET_PROFILE };
+        this.step = 'profile';
+        this.render();
+      });
       const input = document.getElementById('lang-name-input');
       input.focus();
       input.addEventListener('keydown', e => { if (e.key === 'Enter') this.next(); });
@@ -1962,6 +2810,49 @@ const LangOnboard = {
       `;
       nextBtn.textContent = 'Looks right →';
 
+    } else if (this.step === 'persona') {
+      const p = this.profile;
+      // "Can't read it" only exists for scripts the learner can't already read
+      const literacyBtn = p.script !== 'latin' ? `
+          <button class="lang-level-btn" data-persona="literacy"><strong>I speak it, but can't read it</strong><span>Learn the ${p.scriptName} script — the words are already yours</span></button>` : '';
+      content.innerHTML = `
+        <div class="prime-subhead">What's your relationship with ${p.name}? This decides how your course is built.</div>
+        <div class="lang-level-options">
+          <button class="lang-level-btn" data-persona="fresh"><strong>Starting fresh</strong><span>Learn it from the ground up</span></button>
+          ${literacyBtn}
+          <button class="lang-level-btn" data-persona="vocabExpand"><strong>I'm fluent — grow my vocabulary</strong><span>Precise, rarer words from just past what you know</span></button>
+        </div>
+      `;
+      nextBtn.style.display = 'none';
+      content.querySelectorAll('[data-persona]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.recipeId = btn.dataset.persona;
+          this.advanceFrom('persona');
+        });
+      });
+
+    } else if (this.step === 'script') {
+      const p = this.profile;
+      content.innerHTML = `
+        <div class="prime-subhead">${p.name} is written in more than one script. Which one do you want to learn?</div>
+        <div class="lang-level-options">
+          ${p.altScripts.map((s, i) => `
+            <button class="lang-level-btn" data-script-idx="${i}"><strong>${s.scriptName}</strong><span>${s.note || ''}</span></button>
+          `).join('')}
+        </div>
+      `;
+      nextBtn.style.display = 'none';
+      content.querySelectorAll('[data-script-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const s = p.altScripts[parseInt(btn.dataset.scriptIdx)];
+          this.chosenScript = s.scriptName;
+          if (s.script) p.script = s.script;
+          p.scriptName = s.scriptName;
+          if (s.romanizationName) p.romanizationName = s.romanizationName;
+          this.advanceFrom('script');
+        });
+      });
+
     } else if (this.step === 'level') {
       content.innerHTML = `
         <div class="prime-subhead">How much ${this.profile.name} do you already have? This sets your starting point — the app recalibrates as you go.</div>
@@ -1975,24 +2866,47 @@ const LangOnboard = {
       content.querySelectorAll('.lang-level-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           this.level = btn.dataset.level;
-          this.step = 'seed';
-          this.render();
-          this.generateSeed();
+          this.advanceFrom('level');
         });
       });
 
+    } else if (this.step === 'assess') {
+      nextBtn.style.display = 'none';
+      if (typeof LangAssess !== 'undefined') {
+        LangAssess.start(this); // renders its ladder into the onboarding card
+      } else {
+        // Placement not available — fall back to a sensible starting point
+        this.applyDefaultPlacement();
+        this.advanceFrom('assess');
+      }
+
     } else if (this.step === 'seed') {
+      const copy = {
+        fresh: 'Building your starter deck — the most frequent words first…',
+        literacy: `Building your first ${this.profile.scriptName} unit…`,
+        vocabExpand: 'Setting up — your cards will come from your reading and your frontier…',
+        quranic: 'Setting up your root curriculum…'
+      }[this.recipeId] || 'Setting up…';
       content.innerHTML = `
         <div class="cp-loading" style="justify-content:center;">
-          <span class="cp-spinner"></span> Building your starter deck — the most frequent words first…
+          <span class="cp-spinner"></span> ${copy}
         </div>
       `;
       nextBtn.style.display = 'none';
     }
   },
 
+  // Starting point when placement is skipped or unavailable
+  applyDefaultPlacement() {
+    if (this.recipeId === 'vocabExpand') {
+      this.level = 'B2'; this.levelScore = 80; this.frontierBand = 4;
+    } else {
+      this.level = 'A0'; this.levelScore = 8;
+    }
+  },
+
   async next() {
-    if (this.step === 'name') {
+    if (this.step === 'start') {
       const name = document.getElementById('lang-name-input')?.value.trim();
       if (!name) return;
       const content = document.getElementById('lang-onboard-content');
@@ -2010,29 +2924,46 @@ const LangOnboard = {
         this.render();
       } catch (err) {
         showToast(err.message, 'error', 6000);
-        this.step = 'name';
+        this.step = 'start';
         this.render();
       }
     } else if (this.step === 'profile') {
-      this.step = 'level';
-      this.render();
+      this.advanceFrom('profile');
     }
   },
 
   async generateSeed() {
     const p = this.profile;
+    const recipeId = this.recipeId;
     try {
-      const cards = AppState.mode === 'demo'
-        ? demoSeedCards(p)
-        : await callSeedDeckGenerator(p, this.level);
+      let cards = [];
+      if (recipeId === 'fresh') {
+        cards = AppState.mode === 'demo'
+          ? demoSeedCards(p)
+          : await callSeedDeckGenerator(p, this.level);
+      } else if (recipeId === 'literacy') {
+        // The script IS the course — seed unit 1 of the writing system only
+        cards = AppState.mode === 'demo'
+          ? demoSeedCards({ ...p, script: 'kana-kanji' }).filter(c => c.type === 'script')
+          : await callScriptUnitGenerator(p, 1, []);
+      }
+      // vocabExpand: cards come from the frontier test and book harvesting.
+      // quranic: cards come from root lessons in the daily sessions.
 
       const lang = {
         id: p.code,
         ...p,
+        recipeId,
         level: this.level,
+        levelScore: this.levelScore ?? (this.level === 'A2' ? 40 : this.level === 'A1' ? 22 : 8),
         knownWords: cards.filter(c => c.type === 'vocab').map(c => c.word).filter(Boolean),
         learnedChars: cards.filter(c => c.type === 'script').map(c => c.front),
-        scriptUnit: 0,
+        scriptUnit: recipeId === 'literacy' && cards.length ? 1 : 0,
+        rootsLearned: [],
+        chosenScript: this.chosenScript || null,
+        frontierBand: this.frontierBand ?? null,
+        listeningBand: this.listeningBand ?? null,
+        assessedAt: this.assessResult ? Date.now() : null,
         wordsLearned: 0,
         streak: 0,
         sessionNumber: 0,
@@ -2040,15 +2971,21 @@ const LangOnboard = {
         createdAt: Date.now()
       };
       await dbPutLanguage(lang);
-      await dbAppendLangCards(lang.id, cards);
+      if (cards.length) await dbAppendLangCards(lang.id, cards);
 
       this.close();
-      showToast(`${p.name} added — ${cards.length} starter cards are in your deck.`, 'success');
+      const doneMsg = {
+        fresh: `${p.name} added — ${cards.length} starter cards are in your deck.`,
+        literacy: `${p.name} added — your first ${p.scriptName} unit is in your deck.`,
+        vocabExpand: `${p.name} added — highlight words while you read and they'll become cards.`,
+        quranic: `Quranic Arabic added — your first root family arrives in your first session.`
+      }[recipeId];
+      showToast(doneMsg, 'success');
       await renderLanguages();
     } catch (err) {
       console.warn('Seed deck failed:', err.message);
       showToast('Could not build the starter deck: ' + err.message, 'error', 7000);
-      this.step = 'level';
+      this.step = recipeId === 'fresh' ? 'level' : 'persona';
       this.render();
     }
   }
@@ -3558,14 +4495,17 @@ function initNoteCapture() {
   const saveBtn     = document.getElementById('btn-save-note');
   const explainBtn  = document.getElementById('btn-explain-selection');
   const bookmarkBtn = document.getElementById('btn-bookmark-selection');
+  const vocabBtn    = document.getElementById('btn-add-vocab');
   let pendingText = '';
-  let pendingPidx = null; // reader paragraph index the selection starts in
+  let pendingPidx = null;     // reader paragraph index the selection starts in
+  let pendingSentence = '';   // surrounding paragraph, for vocab-harvest cloze
 
   function hidePopover() {
     popover.style.display = 'none';
     document.body.classList.remove('sel-active');
     pendingText = '';
     pendingPidx = null;
+    pendingSentence = '';
   }
 
   // selectionchange (not mouseup) so this works consistently for both mouse
@@ -3591,6 +4531,17 @@ function initNoteCapture() {
       pendingPidx = inReader ? parseInt(anchorEl.closest('p[data-pidx]')?.dataset.pidx ?? 'NaN') : null;
       if (Number.isNaN(pendingPidx)) pendingPidx = null;
       pendingText = text;
+      pendingSentence = inReader ? (anchorEl.closest('p')?.textContent || '').slice(0, 400) : '';
+
+      // Book-harvest: short reader selections can become vocab cards when a
+      // vocab-expansion language exists. Lazily cache which one that is.
+      if (AppState._harvestLang === undefined && AppState.currentUser) {
+        AppState._harvestLang = null;
+        dbGetAllLanguages()
+          .then(ls => { AppState._harvestLang = ls.find(l => getRecipe(l).id === 'vocabExpand') || null; })
+          .catch(() => {});
+      }
+      vocabBtn.style.display = (inReader && AppState._harvestLang && text.length <= 60) ? 'flex' : 'none';
 
       // Touch devices: dock the bar at the bottom of the screen. iOS draws
       // its own Copy/Look Up menu right next to the selection and web pages
@@ -3641,6 +4592,34 @@ function initNoteCapture() {
     }
     // Refresh the book's resume point so the library Continue card points here
     await updateBookReadingProgress(0, 0, chapter.number);
+  });
+
+  // Add to vocab: a highlighted word from the user's own reading becomes
+  // precision cards in their vocab-expansion language deck.
+  vocabBtn.addEventListener('click', async () => {
+    const hl = AppState._harvestLang;
+    if (!pendingText || !hl) return;
+    const selection = pendingText.slice(0, 60);
+    const sentence = pendingSentence || selection;
+    const bookTitle = AppState.selectedBook?.title || '';
+
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    showToast(`Building cards for “${selection}”…`, 'info', 2500);
+
+    try {
+      const cards = AppState.mode === 'demo'
+        ? [{
+            front: `${sentence.replace(selection, '_____')} (from ${bookTitle || 'your reading'})`,
+            back: `${selection} — (demo) the precise meaning goes here`,
+            word: selection, romanization: null, type: 'precision', sourceBook: bookTitle || null
+          }]
+        : await callPrecisionCards(hl, selection, sentence, bookTitle);
+      await dbAppendLangCards(hl.id, cards);
+      showToast(`“${selection}” added to your ${hl.name} deck (${cards.length} card${cards.length === 1 ? '' : 's'}).`, 'success');
+    } catch (err) {
+      showToast('Could not build vocab cards: ' + err.message, 'error', 6000);
+    }
   });
 
   // Explain: jump into the tutor with the selected passage as a grounded question
@@ -4611,6 +5590,7 @@ function rateCard(score) {
   // spaced-repetition schedule, or casual practice would break the spacing.
   if (!AppState.practiceMode) {
     const scheduled = sm2Schedule(card, score);
+    signalCardGrade(card, score);
     persistCardSchedule(scheduled)
       .catch(err => console.warn('Could not save card schedule:', err.message));
   }
