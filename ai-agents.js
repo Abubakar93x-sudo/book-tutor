@@ -905,8 +905,18 @@ async function callLanguageProfiler(languageName) {
       "script": "one of the values above",
       "scriptName": "human name of the writing system, e.g. Kana + Kanji",
       "romanizationName": "name of its standard romanization, e.g. Rōmaji, or null for Latin-script languages",
-      "notes": "one sentence on what makes this language's writing/pronunciation distinctive for a beginner"
+      "notes": "one sentence on what makes this language's writing/pronunciation distinctive for a beginner",
+      "altScripts": []
     }
+
+    "altScripts": ONLY when the language is actively written in more than one
+    script by different communities (e.g. Punjabi: Gurmukhi in India,
+    Shahmukhi in Pakistan; Serbian: Cyrillic and Latin). Then list each as
+    { "script": "one of the classification values above", "scriptName": "human name",
+      "romanizationName": "its romanization or null",
+      "note": "one line on who uses it / why choose it — e.g. for Shahmukhi,
+       mention that readers of Urdu script already nearly know it" }.
+    For single-script languages, return an empty array.
 
     If the input is not a recognizable human language, return: { "error": "not a language" }
   `;
@@ -920,7 +930,10 @@ async function callLanguageProfiler(languageName) {
     script: result.script || 'latin',
     scriptName: result.scriptName || 'Latin alphabet',
     romanizationName: result.script === 'latin' ? null : (result.romanizationName || 'romanization'),
-    notes: result.notes || ''
+    notes: result.notes || '',
+    altScripts: Array.isArray(result.altScripts)
+      ? result.altScripts.filter(s => s && s.scriptName).slice(0, 3)
+      : []
   };
 }
 
@@ -1108,6 +1121,163 @@ async function callLangPartner(langProfile, level, topic, history, userMessage, 
     : await queryGemini(prompt, false);
 }
 
+// ── ASSESSMENT ITEM GENERATORS ───────────────────────────────────────────────
+// Three flavors of placement items for the adaptive ladder (LangAssess).
+// Each returns an array of exactly 4 multiple-choice items for one difficulty
+// band; the ladder moves between bands based on how many the learner gets.
+
+function _validateAssessItems(result) {
+  const items = (Array.isArray(result?.items) ? result.items : [])
+    .filter(it => it && it.prompt && Array.isArray(it.options) && it.options.length === 4
+      && Number.isInteger(it.answerIdx) && it.answerIdx >= 0 && it.answerIdx <= 3);
+  if (items.length < 4) throw new Error('Assessment item generation came back malformed.');
+  return items.slice(0, 4);
+}
+
+// Generic placement: mixed recognition/comprehension at CEFR-ish bands 1-8
+async function callPlacementItems(langProfile, band) {
+  const bandDesc = [
+    'absolute beginner (most common greetings and words)',
+    'high beginner (everyday nouns, simple present-tense sentences)',
+    'low elementary (common verbs, simple questions)',
+    'elementary (short everyday sentences, past tense)',
+    'low intermediate (compound sentences, common idioms)',
+    'intermediate (opinion and narration)',
+    'upper intermediate (abstract topics, less common vocabulary)',
+    'advanced (nuanced vocabulary, complex structures)'
+  ][band - 1];
+  const prompt = `
+    Create exactly 4 multiple-choice placement questions for a learner of
+    ${langProfile.name}, at difficulty band ${band}/8: ${bandDesc}.
+
+    Mix vocabulary recognition and short-sentence comprehension. Each question
+    has exactly 4 options with ONE correct answer. Questions and options in
+    English; the ${langProfile.name} material inside the prompt text.
+    ${langProfile.script !== 'latin' ? `Include ${langProfile.romanizationName} for any ${langProfile.name} text.` : ''}
+
+    Return ONLY valid JSON, no markdown fences:
+    { "items": [{ "prompt": "question text", "options": ["a","b","c","d"], "answerIdx": 0 }] }
+  `;
+  return _validateAssessItems(await queryGemini(prompt, true));
+}
+
+// Frontier finding for fluent speakers: which frequency band gets spotty
+async function callFrontierItems(langProfile, band) {
+  const freqZone = [
+    'the 1,000 most common words', 'the 1,000-2,000 frequency range',
+    'the 2,000-5,000 frequency range', 'the 5,000-10,000 frequency range',
+    'the 10,000-15,000 frequency range', 'the 15,000-20,000 frequency range',
+    'the 20,000-30,000 frequency range', 'beyond the 30,000 most common words'
+  ][band - 1];
+  const prompt = `
+    A fluent ${langProfile.name} speaker is mapping the edge of their
+    vocabulary. Create exactly 4 word-recognition questions using words from
+    ${freqZone} of ${langProfile.name}.
+
+    Each question: "Which is the closest meaning of «word»?" with 4 short
+    meaning options, ONE correct. Distractors must be plausible (same part of
+    speech, related domain) but clearly wrong to someone who knows the word.
+    Do NOT use words with transparent cognates that give the answer away.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "items": [{ "prompt": "Which is the closest meaning of «word»?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
+  `;
+  return _validateAssessItems(await queryGemini(prompt, true));
+}
+
+// ── AGENT: QURANIC ROOT LESSON GENERATOR ─────────────────────────────────────
+// One lesson per root family: the derived words worth knowing, the pattern
+// (wazn) that generates them, and REAL verses using them. The root, its
+// gloss, and its frequency come from the static corpus file
+// (quran-roots-data.js) — this agent writes the teaching around them and is
+// never trusted to invent frequencies.
+async function callRootLessonGenerator(entry, learnedTranslits = []) {
+  const isParticles = entry.kind === 'particles';
+  const prompt = `
+    You are writing one lesson of a Quranic Arabic curriculum built on
+    ${isParticles ? 'function words' : 'root families'}.
+
+    ${isParticles
+      ? `TODAY'S LESSON: the function words ${entry.words.join(' · ')}
+    (${entry.translit} — ${entry.gloss}). Teach each word's meaning and use.`
+      : `TODAY'S ROOT: ${entry.root} (${entry.translit}) — core meaning: "${entry.gloss}".
+    Teach its 4-5 highest-frequency derived words IN THE QURAN, and name the
+    pattern (wazn) of each derived word (e.g. faʿala, faʿīl, mafʿūl, tafʿīl),
+    with one short plain-English line on how the pattern shapes the meaning.`}
+
+    ALREADY COVERED in earlier lessons: ${learnedTranslits.join(', ') || '(this is the first lesson)'}
+
+    Also select 2-3 REAL Quranic verses (or verse fragments under ~15 words)
+    that prominently use today's ${isParticles ? 'words' : 'root family'} —
+    prefer very famous, frequently recited verses. Quote them EXACTLY, with
+    the surah:verse reference, a transliteration, a one-line English gloss,
+    and a per-word gloss list.
+
+    Then write 2 comprehension questions in English about what those verses
+    say, answerable from the glosses.
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "waznExplanation": "${isParticles ? 'one line: these are function words — the connective tissue of every verse' : 'two sentences explaining the wazn pattern(s) seen today in plain English'}",
+      "derivedWords": [
+        { "word": "الكلمة", "romanization": "transliteration", "meaning": "English meaning", "pattern": "${isParticles ? 'particle' : 'wazn name, e.g. faʿīl'}" }
+      ],
+      "verses": [
+        { "arabic": "exact verse text", "reference": "Surah name X:Y", "romanization": "transliteration",
+          "gloss": "one-line English translation",
+          "wordGlosses": [{ "word": "word", "gloss": "meaning" }] }
+      ],
+      "checkpoints": [{ "question": "English comprehension question" }]
+    }
+  `;
+  const result = await queryGemini(prompt, true);
+  const derivedWords = (Array.isArray(result.derivedWords) ? result.derivedWords : [])
+    .filter(w => w.word && w.meaning).slice(0, 6);
+  const verses = (Array.isArray(result.verses) ? result.verses : [])
+    .filter(v => v.arabic && v.gloss).slice(0, 3);
+  if (!derivedWords.length || !verses.length) {
+    throw new Error('Root lesson generation came back incomplete.');
+  }
+  return {
+    waznExplanation: result.waznExplanation || '',
+    derivedWords,
+    verses: verses.map(v => ({
+      arabic: v.arabic,
+      reference: v.reference || '',
+      romanization: v.romanization || null,
+      gloss: v.gloss,
+      wordGlosses: Array.isArray(v.wordGlosses) ? v.wordGlosses.filter(g => g.word && g.gloss) : []
+    })),
+    checkpoints: Array.isArray(result.checkpoints)
+      ? result.checkpoints.filter(c => c.question).slice(0, 2) : []
+  };
+}
+
+// Verse ladder for Quranic Arabic: comprehension of real snippets, graded 1-6
+async function callVerseLadderItems(band) {
+  const bandDesc = [
+    'extremely well-known short phrases nearly every Muslim knows (basmala, alhamdulillah)',
+    'very short, very famous complete verses (from al-Ikhlas, al-Kawthar, al-Asr)',
+    'short verses from frequently-recited surahs with common vocabulary',
+    'medium verses with common roots but less familiar phrasing',
+    'longer verses requiring real vocabulary knowledge across several roots',
+    'complex verses with rarer roots and layered grammar'
+  ][band - 1];
+  const prompt = `
+    Create exactly 4 comprehension questions for a Quranic Arabic placement
+    test at difficulty band ${band}/6: ${bandDesc}.
+
+    Each question shows a REAL, exactly-quoted Quranic snippet (with its
+    transliteration${band <= 2 ? '' : ' only if band ≤ 2'}) and asks in English what it means or refers to,
+    with 4 options, ONE correct. Keep snippets short (under 12 words). Include
+    the surah:verse reference inside the prompt.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "items": [{ "prompt": "«arabic snippet» (transliteration) — Surah X:Y. What is this saying?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
+  `;
+  return _validateAssessItems(await queryGemini(prompt, true));
+}
+
 // ── AGENT 5: FEYNMAN SANDBOX ASSESSOR ────────────────────────────────────────
 // Grades the student's Feynman explanation for accuracy, simplicity, and completeness.
 async function callLiveSandboxAssessor(concept, explanation) {
@@ -1149,4 +1319,143 @@ async function callLiveSandboxAssessor(concept, explanation) {
       refined: 'Please check your Gemini API key in Settings and try again.'
     };
   }
+}
+
+// ── AGENT: DECODE DRILL GENERATOR (literacy recipe) ──────────────────────────
+// For heritage speakers who understand the language but can't read its
+// script. Drills use words the learner almost certainly knows ORALLY, built
+// as much as possible from characters they've already been taught — success
+// is the "sound it out… oh, I know that word!" moment.
+async function callDecodeDrillGenerator(langProfile, learnedChars = [], knownWords = []) {
+  const prompt = `
+    A heritage speaker of ${langProfile.name} understands the spoken language
+    fluently but is LEARNING TO READ the ${langProfile.scriptName} script.
+
+    CHARACTERS THEY HAVE STUDIED SO FAR: ${learnedChars.join(' ') || '(none yet — use only the most basic, most common characters)'}
+    WORDS ALREADY USED IN DRILLS (avoid repeats): ${knownWords.slice(-60).join(', ') || '(none)'}
+
+    Create 6 decoding drills. Each drill is ONE common everyday word that a
+    native SPEAKER definitely knows orally (household words, food, family,
+    greetings, numbers) written in ${langProfile.scriptName}:
+    - Strongly prefer words spellable with the studied characters; when you
+      must use an unstudied character, keep it to one per word.
+    - "meaning": the English meaning.
+    - "distractors": 2 wrong English meanings, plausible but clearly different.
+    - "romanization": the word in ${langProfile.romanizationName || 'romanization'} —
+      the learner reads this fluently already (heritage speakers text this way).
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "drills": [
+        { "written": "word in script", "romanization": "romanized", "meaning": "English meaning", "distractors": ["wrong 1", "wrong 2"] }
+      ]
+    }
+  `;
+  const result = await queryGemini(prompt, true);
+  const drills = (Array.isArray(result.drills) ? result.drills : [])
+    .filter(d => d.written && d.meaning && Array.isArray(d.distractors) && d.distractors.length >= 2)
+    .slice(0, 6);
+  if (!drills.length) throw new Error('Decode drill generation returned nothing usable.');
+  return drills.map(d => ({
+    written: d.written,
+    romanization: d.romanization || null,
+    meaning: d.meaning,
+    distractors: d.distractors.slice(0, 2)
+  }));
+}
+
+// ── AGENT: LISTENING CHECK ITEMS (literacy onboarding) ───────────────────────
+// Confirms the heritage speaker really does understand the spoken language —
+// sentences are PLAYED (TTS), the learner picks the meaning. Not a gate;
+// it sets a realistic starting level.
+async function callListeningCheckItems(langProfile, band) {
+  const bandDesc = [
+    'single common words', 'short everyday phrases', 'simple full sentences',
+    'normal conversational sentences', 'longer sentences with two clauses',
+    'complex sentences with less common vocabulary',
+    'idiomatic, fast conversational speech patterns', 'formal or literary register'
+  ][band - 1];
+  const prompt = `
+    Create exactly 4 listening-comprehension questions for someone who claims
+    to SPEAK ${langProfile.name} but cannot read it. Difficulty band ${band}/8:
+    ${bandDesc}.
+
+    Each item: a short ${langProfile.name} sentence (in its native script, it
+    will be read aloud by TTS — the learner never sees it written), plus 4
+    English meaning options, ONE correct.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "items": [{ "prompt": "What did the sentence mean?", "ttsText": "sentence in ${langProfile.name}", "options": ["a","b","c","d"], "answerIdx": 0 }] }
+  `;
+  const result = await queryGemini(prompt, true);
+  const items = _validateAssessItems(result);
+  if (!items.every(it => result.items.find(r => r.prompt === it.prompt)?.ttsText)) {
+    // keep whatever ttsText came through; items without it still render as text
+  }
+  return items.map((it, i) => ({ ...it, ttsText: result.items[i]?.ttsText || null }));
+}
+
+// ── AGENT: PRECISION WORDS / CARDS (vocab-expansion recipe) ──────────────────
+// For fluent speakers growing the long tail. Precision over translation:
+// cloze from real sentences, near-synonym contrast, usage nuance.
+async function callPrecisionWords(langProfile, frontierBand, knownWords = []) {
+  const freqZone = [
+    'the 1,000 most common words', 'the 1,000-2,000 frequency range',
+    'the 2,000-5,000 frequency range', 'the 5,000-10,000 frequency range',
+    'the 10,000-15,000 frequency range', 'the 15,000-20,000 frequency range',
+    'the 20,000-30,000 frequency range', 'beyond the 30,000 most common words'
+  ][(frontierBand || 4) - 1];
+  const prompt = `
+    A fluent ${langProfile.name} speaker is expanding their vocabulary at its
+    frontier: ${freqZone}. Pick 5 genuinely useful words from JUST PAST that
+    zone — words an educated reader meets in quality writing, not dictionary
+    trivia.
+
+    ALREADY LEARNED (do not repeat): ${knownWords.slice(-80).join(', ') || '(none yet)'}
+
+    For each word:
+    - "meaning": a precise, compact definition
+    - "example": one natural sentence using it (quality-writing register)
+    - "cloze": the same sentence with the word replaced by "_____"
+    - "contrast": one line distinguishing it from its nearest common synonym
+      ("unlike X, it implies …")
+
+    Return ONLY valid JSON, no markdown fences:
+    { "words": [{ "word": "word", "meaning": "…", "example": "…", "cloze": "…", "contrast": "…" }] }
+  `;
+  const result = await queryGemini(prompt, true);
+  const words = (Array.isArray(result.words) ? result.words : [])
+    .filter(w => w.word && w.meaning && w.example).slice(0, 5);
+  if (!words.length) throw new Error('Precision word generation returned nothing usable.');
+  return words.map(w => ({
+    word: w.word, meaning: w.meaning, example: w.example,
+    cloze: w.cloze || w.example, contrast: w.contrast || ''
+  }));
+}
+
+// Harvested from the user's own reading: one highlighted word → precision cards
+async function callPrecisionCards(langProfile, selection, sentence, sourceBook) {
+  const prompt = `
+    While reading "${sourceBook || 'a book'}", a fluent ${langProfile.name}
+    speaker highlighted a word they want to own: "${selection}"
+    It appeared in this sentence:
+    "${sentence}"
+
+    Create 2 spaced-repetition cards for it — precision over translation:
+    1. A CLOZE card: front = the original sentence with the word blanked to
+       "_____" (plus "(from ${sourceBook || 'your reading'})"), back = the word + its precise meaning.
+    2. A USAGE card: front = "When would you use «${selection}» rather than its
+       nearest synonym?", back = the distinction + one fresh example sentence.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "cards": [{ "front": "…", "back": "…" }] }
+  `;
+  const result = await queryGemini(prompt, true);
+  const cards = (Array.isArray(result.cards) ? result.cards : [])
+    .filter(c => c.front && c.back).slice(0, 2);
+  if (!cards.length) throw new Error('Card generation returned nothing usable.');
+  return cards.map(c => ({
+    front: c.front, back: c.back, word: selection,
+    romanization: null, type: 'precision', sourceBook: sourceBook || null
+  }));
 }
