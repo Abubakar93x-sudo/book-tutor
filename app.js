@@ -400,6 +400,50 @@ async function dbUpdateBookProgress(bookId, type, chapterNumber) {
   return updated;
 }
 
+// ── PAGE MARKERS ──────────────────────────────────────────────────────────────
+// To show accurate page numbers in the reader we must remember which PDF page
+// each piece of text came from. PDF.js gives us page-by-page text, but chapter
+// splitting and paragraph grouping would otherwise erase page boundaries. So at
+// extraction we insert a sentinel line at each page break, which travels with
+// the text through every transform. The reader parses it back out; every other
+// consumer (AI prompts, quoting, word counts) strips it first.
+// The sentinel contains a lowercase run so it can never be mistaken for an
+// ALL-CAPS chapter heading, and the literal "@@@pgbrk:" never occurs in prose.
+const PAGE_MARK_LINE_RE = /^@@@pgbrk:(\d+)@@@$/;
+const PAGE_MARK_STRIP_RE = /@@@pgbrk:\d+@@@/g;
+
+function pageMarkerLine(pageNum) {
+  return `@@@pgbrk:${pageNum}@@@`;
+}
+
+// Remove all page sentinels — used everywhere text is shown to the AI or counted
+function stripPageMarkers(text) {
+  return (text || '').replace(PAGE_MARK_STRIP_RE, '');
+}
+
+// Detect the offset between the PDF's page index and the number actually
+// printed in the book (front matter, roman-numeral prefaces etc. push these
+// apart). Every real page prints `pdfIndex + offset`, so that offset gets a
+// vote from nearly every page while stray numbers in body text scatter — the
+// true offset wins by a landslide. Only trusted when the win is decisive.
+function detectPageOffset(perPageNumbers, totalPages) {
+  const votes = new Map();
+  perPageNumbers.forEach((nums, i) => {
+    const pdfPage = i + 1;
+    const seen = new Set();
+    nums.forEach(n => {
+      const off = n - pdfPage;
+      if (off <= -totalPages || off >= totalPages || seen.has(off)) return;
+      seen.add(off);
+      votes.set(off, (votes.get(off) || 0) + 1);
+    });
+  });
+  let best = 0, bestCount = 0;
+  votes.forEach((count, off) => { if (count > bestCount) { bestCount = count; best = off; } });
+  const confident = bestCount >= Math.max(12, Math.round(totalPages * 0.35));
+  return { offset: confident ? best : 0, confident };
+}
+
 // ── PDF CHAPTER SPLITTER ──────────────────────────────────────────────────────
 // Detects chapter headings in extracted PDF text and splits the full text into
 // an array of { number, title, text } chapter objects.
@@ -424,14 +468,23 @@ function splitPdfIntoChapters(rawText) {
   const chapters = [];
   let currentTitle = null;
   let currentLines = [];
+  let lastPageLine = null; // most recent page sentinel, to seed the next chapter
 
   for (const line of lines) {
+    const t = line.trim();
+    if (PAGE_MARK_LINE_RE.test(t)) {
+      lastPageLine = t;
+      currentLines.push(line);
+      continue;
+    }
     if (isHeading(line)) {
       if (currentTitle !== null) {
         chapters.push({ title: currentTitle, text: currentLines.join('\n').trim() });
       }
       currentTitle = line.trim();
-      currentLines = [];
+      // A heading sits mid-page, so seed the new chapter with the page it
+      // starts on — otherwise its opening paragraphs would have no page number.
+      currentLines = lastPageLine ? [lastPageLine] : [];
     } else {
       currentLines.push(line);
     }
@@ -487,53 +540,76 @@ function splitLongParagraphBySentences(text, maxWords) {
 
 // PDF.js gives us a stream of lines, not paragraphs. Group lines into readable
 // paragraph blocks: break on blank lines, or once a block has real length and
-// the line ends a sentence.
+// the line ends a sentence. Returns paragraphs plus a parallel `pages` array —
+// pages[i] is the PDF page paragraph i started on (null if unknown), read from
+// the page sentinels planted at extraction.
 function groupLinesIntoParagraphs(text) {
   const lines = text.split('\n');
   const paras = [];
+  const pages = [];
   let cur = [];
+  let curPage = null;   // page the in-progress paragraph started on
+  let pageNow = null;   // most recent page sentinel seen
+
+  const flush = () => {
+    if (cur.length) { paras.push(cur.join(' ')); pages.push(curPage); cur = []; curPage = null; }
+  };
+
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line) {
-      if (cur.length) { paras.push(cur.join(' ')); cur = []; }
-      continue;
-    }
+    const pm = line.match(PAGE_MARK_LINE_RE);
+    if (pm) { pageNow = parseInt(pm[1], 10); continue; } // sentinel: record, don't render
+    if (!line) { flush(); continue; }
+    if (!cur.length) curPage = pageNow; // paragraph begins on the current page
     cur.push(line);
     const joined = cur.join(' ');
-    if (joined.length > 350 && /[.!?"'”’]$/.test(line)) {
-      paras.push(joined);
-      cur = [];
-    }
+    if (joined.length > 350 && /[.!?"'”’]$/.test(line)) { paras.push(joined); pages.push(curPage); cur = []; curPage = null; }
   }
-  if (cur.length) paras.push(cur.join(' '));
+  flush();
 
+  // Forward/back-fill any stray null pages so every paragraph carries one:
+  // interior gaps inherit the previous page, leading gaps the first known page.
+  let lastKnown = null;
+  for (let i = 0; i < pages.length; i++) {
+    if (pages[i] == null) pages[i] = lastKnown;
+    else lastKnown = pages[i];
+  }
+  const firstKnown = pages.find(p => p != null) ?? null;
+  for (let i = 0; i < pages.length && pages[i] == null; i++) pages[i] = firstKnown;
+
+  // Oversized paragraphs get re-split by sentence; each chunk keeps its page
   const MAX_PARA_WORDS = 250;
-  const expanded = [];
-  for (const p of paras) {
+  const outParas = [];
+  const outPages = [];
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i];
     if (p.split(/\s+/).length > MAX_PARA_WORDS) {
-      expanded.push(...splitLongParagraphBySentences(p, MAX_PARA_WORDS));
+      splitLongParagraphBySentences(p, MAX_PARA_WORDS).forEach(c => { outParas.push(c); outPages.push(pages[i]); });
     } else {
-      expanded.push(p);
+      outParas.push(p); outPages.push(pages[i]);
     }
   }
-  return expanded;
+  return { paragraphs: outParas, pages: outPages };
 }
 
 function splitChapterIntoSegments(rawText) {
   const TARGET_WORDS = 1200;
-  const paras = groupLinesIntoParagraphs(rawText);
+  const { paragraphs: paras, pages } = groupLinesIntoParagraphs(rawText);
 
   const segments = [];
   let curParas = [];
+  let curPages = [];
   let curWords = 0;
 
-  for (const p of paras) {
-    const w = p.split(/\s+/).length;
+  for (let i = 0; i < paras.length; i++) {
+    const p = paras[i];
     curParas.push(p);
-    curWords += w;
+    curPages.push(pages[i]);
+    curWords += p.split(/\s+/).length;
     if (curWords >= TARGET_WORDS) {
-      segments.push({ paragraphs: curParas, wordCount: curWords });
+      segments.push({ paragraphs: curParas, pages: curPages, wordCount: curWords });
       curParas = [];
+      curPages = [];
       curWords = 0;
     }
   }
@@ -542,9 +618,10 @@ function splitChapterIntoSegments(rawText) {
     if (segments.length && curWords < TARGET_WORDS * 0.3) {
       const last = segments[segments.length - 1];
       last.paragraphs.push(...curParas);
+      last.pages.push(...curPages);
       last.wordCount += curWords;
     } else {
-      segments.push({ paragraphs: curParas, wordCount: curWords });
+      segments.push({ paragraphs: curParas, pages: curPages, wordCount: curWords });
     }
   }
   return segments.map((s, i) => ({ index: i, ...s }));
@@ -2116,10 +2193,13 @@ const Reader = {
   wordsDone()  { return this.segments.slice(0, this.segmentsDone).reduce((n, s) => n + s.wordCount, 0); },
 
   open(chapter) {
-    const text = chapter._chapterText || '';
+    // Reader uses the raw text (with page sentinels); old chapters ingested
+    // before page tracking fall back to the clean text and simply show no page.
+    const text = chapter._chapterTextRaw || chapter._chapterText || '';
     if (!text) return false;
 
     this.chapter = chapter;
+    this.hasPageData = /@@@pgbrk:\d+@@@/.test(text);
     this.segments = splitChapterIntoSegments(text);
     this.segmentsDone = Math.min(chapter.segmentsDone || 0, this.segments.length);
     this.active = true;
@@ -2151,6 +2231,7 @@ const Reader = {
       const current = document.getElementById(`segment-${this.segmentsDone}`);
       if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
     }
+    this.renderPage(); // reflect the resumed position
     return true;
   },
 
@@ -2268,6 +2349,8 @@ const Reader = {
       const el = document.createElement('p');
       el.textContent = p;
       el.dataset.pidx = offset + i;
+      const page = segment.pages?.[i];
+      if (page != null) el.dataset.page = page;
       wrap.appendChild(el);
     });
 
@@ -2390,6 +2473,36 @@ const Reader = {
     const minutesLeft = (total - done) / wpm;
     document.getElementById('reader-time-left').textContent =
       done >= total ? 'Done' : `${formatReadingTime(minutesLeft)} left`;
+
+    this.renderPage();
+  },
+
+  // The PDF page currently under the top of the reading area: the last
+  // page-tagged paragraph whose top has scrolled to or above the reading line.
+  currentPdfPage() {
+    const ps = document.querySelectorAll('#reader-column p[data-page]');
+    if (!ps.length) return null;
+    const topbarH = document.getElementById('reader-topbar').offsetHeight || 52;
+    const line = topbarH + 24; // a little below the bar = "what you're reading"
+    let page = parseInt(ps[0].dataset.page, 10);
+    for (const p of ps) {
+      if (p.getBoundingClientRect().top <= line) page = parseInt(p.dataset.page, 10);
+      else break;
+    }
+    return page;
+  },
+
+  renderPage() {
+    const el = document.getElementById('reader-page');
+    if (!el) return;
+    const book = AppState.selectedBook;
+    const pdfPage = this.hasPageData ? this.currentPdfPage() : null;
+    if (pdfPage == null) { el.style.display = 'none'; el.textContent = ''; return; }
+    const offset = book?.pageOffset || 0;
+    const printed = Math.max(1, pdfPage + offset);
+    const lastPrinted = Math.max(printed, (book?.totalPages || pdfPage) + offset);
+    el.style.display = '';
+    el.textContent = `p. ${printed} / ${lastPrinted}`;
   },
 
   // Top bar hides while scrolling down, returns on scroll-up
@@ -2398,6 +2511,12 @@ const Reader = {
     const topbar = document.getElementById('reader-topbar');
     topbar.classList.toggle('topbar-hidden', y > this._lastScrollY && y > 64);
     this._lastScrollY = y;
+
+    // Update the page readout at most once per frame while scrolling
+    if (!this._pageRafPending) {
+      this._pageRafPending = true;
+      requestAnimationFrame(() => { this._pageRafPending = false; this.renderPage(); });
+    }
   }
 };
 
@@ -2871,7 +2990,8 @@ async function loadChapter(chapterNumber) {
       }
 
       try {
-        const chapterText = chapterData?.text || '';
+        // Clean of page sentinels before it ever reaches the AI
+        const chapterText = stripPageMarkers(chapterData?.text || '');
         if (!chapterText) {
           throw new Error('Chapter text not found. The book may need to be re-uploaded.');
         }
@@ -2904,11 +3024,15 @@ async function loadChapter(chapterNumber) {
       if (overlay) overlay.style.display = 'none';
     }
 
-    // Build the chapter object the rest of the function expects
+    // Build the chapter object the rest of the function expects.
+    // _chapterText is cleaned of page sentinels (everything AI-facing uses it);
+    // _chapterTextRaw keeps them so the reader can map text to page numbers.
+    const rawText = chapterData?.text || '';
     const chapter = {
       ...chapterSkeleton,
       ...chapterData,
-      _chapterText: chapterData?.text || '', // for tutor quoting
+      _chapterTextRaw: rawText,
+      _chapterText: stripPageMarkers(rawText), // for tutor quoting / AI
       _checkpoints: chapterData?.checkpoints || []
     };
     AppState.selectedChapter = chapter;
@@ -3964,16 +4088,31 @@ async function generateCurriculum() {
       logStep(`📖 Reading ${totalPages.toLocaleString()} pages from your PDF…`);
 
       let fullText = '';
+      const perPageNumbers = []; // standalone integers per page, for offset detection
       for (let p = 1; p <= totalPages; p++) {
         const page    = await pdfDoc.getPage(p);
         const content = await page.getTextContent();
-        fullText += content.items.map(i => i.str).join(' ') + '\n';
+        const strs    = content.items.map(i => i.str);
+        // A sentinel line marks where page p begins, so the reader can map any
+        // paragraph back to its real page after all the downstream splitting.
+        fullText += '\n' + pageMarkerLine(p) + '\n' + strs.join(' ') + '\n';
+
+        // Candidate printed page numbers: standalone integers (headers/footers)
+        const nums = [...new Set(
+          strs.map(s => s.trim())
+            .filter(s => /^\d{1,4}$/.test(s))
+            .map(Number)
+            .filter(n => n >= 1 && n <= totalPages + 40)
+        )];
+        perPageNumbers.push(nums);
+
         if (p % 40 === 0 || p === totalPages) {
           const pct = Math.round((p / totalPages) * 70); // 70% for extraction
           progressFill.style.width = pct + '%';
           progressPct.textContent  = `Reading… ${pct}%`;
         }
       }
+      const pageInfo = detectPageOffset(perPageNumbers, totalPages);
 
       // ── STEP 2: Split into chapters ──
       logStep('📚 Identifying chapter structure…');
@@ -3983,7 +4122,7 @@ async function generateCurriculum() {
       // ── STEP 3: Auto-detect title & author from first pages ──
       progressFill.style.width = '75%';
       progressPct.textContent  = 'Detecting title & author…';
-      const bookInfo = await callBookIdentifier(fullText.substring(0, 5000));
+      const bookInfo = await callBookIdentifier(stripPageMarkers(fullText.substring(0, 5200)).substring(0, 5000));
       const finalTitle  = bookInfo.title  || _pdfMeta?.title  || pdfFile.name.replace(/\.pdf$/i, '');
       const finalAuthor = bookInfo.author || _pdfMeta?.author || 'Unknown Author';
 
@@ -4002,9 +4141,15 @@ async function generateCurriculum() {
         level:         'ref',
         isPdfBook:     true,
         totalPages,
+        // Printed page = PDF page + pageOffset (front matter etc.); when
+        // detection wasn't confident, offset is 0 → we show the PDF page index,
+        // which is still exactly accurate to the file.
+        pageOffset:        pageInfo.offset,
+        pageLabelConfident: pageInfo.confident,
         totalChapters: chapters.length,
         // Total word count feeds the library's personalized time-left estimate
-        wordsTotal:    chapters.reduce((n, ch) => n + (ch.text ? ch.text.split(/\s+/).length : 0), 0),
+        // (strip page sentinels so they don't inflate the count)
+        wordsTotal:    chapters.reduce((n, ch) => n + (ch.text ? stripPageMarkers(ch.text).split(/\s+/).filter(Boolean).length : 0), 0),
         wordsRead:     0,
         chapters:      chapters.map(ch => ({ number: ch.number, title: ch.title })),
         readyChapters:   [],

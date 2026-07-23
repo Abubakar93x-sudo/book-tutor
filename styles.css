@@ -2935,6 +2935,19 @@ body.immersive .immersive-only { display: flex !important; }
   white-space: nowrap;
 }
 
+/* Live page readout — sits just before the time-left estimate */
+.reader-page {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: auto;
+}
+/* When the page readout is present it owns the auto-margin; time hugs it */
+.reader-page + .reader-time { margin-left: 12px; }
+
 .reader-scroll {
   flex: 1;
   overflow-y: auto;
