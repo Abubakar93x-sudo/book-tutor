@@ -3181,7 +3181,7 @@ body.immersive .immersive-only { display: flex !important; }
 .prime-overlay {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: 1000; /* full-screen modal: above the mobile bottom nav (300) so it cannot intercept the footer buttons */
   background: var(--bg-surface);
   display: flex;
   flex-direction: column;
@@ -3337,7 +3337,7 @@ body.immersive .immersive-only { display: flex !important; }
 .consolidate-overlay {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: 1000; /* full-screen modal: above the mobile bottom nav (300) so it cannot intercept the footer buttons */
   background: var(--bg-surface);
   display: flex;
   align-items: flex-start;
