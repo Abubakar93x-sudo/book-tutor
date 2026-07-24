@@ -16,10 +16,24 @@
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const GEMINI_DEEP_MODEL    = 'gemini-2.5-pro';
 
+// Tiers:
+//   'quick' — ALWAYS Flash, regardless of the user's default model. Used by the
+//             language section: high-frequency, latency-critical, grounded
+//             generation where Flash is more than sufficient and Pro's slower
+//             "thinking" phase buys nothing but delay.
+//   'fast'  — the user's chosen default model (Flash unless changed).
+//   'deep'  — Pro when "Higher quality grading" is on; else the default.
 function modelFor(tier = 'fast') {
+  if (tier === 'quick') return GEMINI_DEFAULT_MODEL;
   const base = AppState.settings.model || GEMINI_DEFAULT_MODEL;
   if (tier === 'deep' && AppState.settings.highQualityGrading) return GEMINI_DEEP_MODEL;
   return base;
+}
+
+// Flash's "thinking" step adds latency with no benefit on the grounded language
+// tasks, so we turn it off for the quick tier (Flash supports thinkingBudget 0).
+function thinkingConfigFor(tier) {
+  return tier === 'quick' ? { thinkingBudget: 0 } : null;
 }
 
 function geminiUrl(model, stream = false) {
@@ -62,14 +76,16 @@ async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 
     contents: [{ parts }]
   };
 
+  const gen = {};
   if (responseJson) {
-    payload.generationConfig = {
-      responseMimeType: 'application/json',
-      // Raise the output limit: 1000-page books produce very large curricula.
-      // Gemini 2.5 Flash supports up to 65536 output tokens.
-      maxOutputTokens: fileUri ? 65536 : 32768
-    };
+    gen.responseMimeType = 'application/json';
+    // Raise the output limit: 1000-page books produce very large curricula.
+    // Gemini 2.5 Flash supports up to 65536 output tokens.
+    gen.maxOutputTokens = fileUri ? 65536 : 32768;
   }
+  const thinking = thinkingConfigFor(tier);
+  if (thinking) gen.thinkingConfig = thinking;
+  if (Object.keys(gen).length) payload.generationConfig = gen;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -137,10 +153,14 @@ async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
   const apiKey = getApiKey();
   const url = `${geminiUrl(modelFor(tier), true)}?key=${apiKey}&alt=sse`;
 
+  const body = { contents: [{ parts: [{ text: prompt }] }] };
+  const thinking = thinkingConfigFor(tier);
+  if (thinking) body.generationConfig = { thinkingConfig: thinking };
+
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -920,7 +940,7 @@ async function callLanguageProfiler(languageName) {
 
     If the input is not a recognizable human language, return: { "error": "not a language" }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   if (result.error || !result.code) throw new Error(`Couldn't recognize "${languageName}" as a language.`);
   return {
     name: result.name,
@@ -969,7 +989,7 @@ async function callSeedDeckGenerator(langProfile, level) {
       ]
     }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
   if (!cards.length) throw new Error('Seed deck generation returned no cards.');
   return cards.map(c => ({
@@ -1005,7 +1025,7 @@ async function callScriptUnitGenerator(langProfile, unitNumber, learnedChars = [
     Return ONLY valid JSON, no markdown fences:
     { "cards": [{ "front": "char", "back": "sound/meaning — mnemonic", "romanization": "pronunciation" }] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
   if (!cards.length) throw new Error('Script unit generation returned no cards.');
   return cards.slice(0, 12).map(c => ({
@@ -1057,7 +1077,7 @@ async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
       "chatTopic": "one-line topic"
     }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   if (!Array.isArray(result.sentences) || !result.sentences.length) {
     throw new Error('Story generation returned no sentences.');
   }
@@ -1117,8 +1137,8 @@ async function callLangPartner(langProfile, level, topic, history, userMessage, 
   `;
 
   return onChunk
-    ? await queryGeminiStream(prompt, onChunk)
-    : await queryGemini(prompt, false);
+    ? await queryGeminiStream(prompt, onChunk, 'quick')
+    : await queryGemini(prompt, false, null, 'quick');
 }
 
 // ── ASSESSMENT ITEM GENERATORS ───────────────────────────────────────────────

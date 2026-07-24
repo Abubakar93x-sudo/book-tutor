@@ -1338,14 +1338,19 @@ async function renderLanguages() {
   // Keep the reader's "Add to vocab" harvest target fresh
   AppState._harvestLang = languages.find(l => getRecipe(l).id === 'vocabExpand') || null;
 
-  for (const lang of languages) {
-    // Due count across this language's card batches
-    let due = 0;
+  // Due counts need each language's card batches — fetch them all in parallel
+  // rather than one-language-at-a-time, so the grid isn't gated on serial reads.
+  const dueCounts = await Promise.all(languages.map(async (lang) => {
     try {
       const batches = await dbGetLangCardBatches(lang.id);
+      let due = 0;
       batches.forEach(b => (b.flashcards || []).forEach(c => { if (isCardDue(c)) due++; }));
-    } catch (_) { /* card count is decorative — never block the view */ }
+      return due;
+    } catch (_) { return 0; /* card count is decorative — never block the view */ }
+  }));
 
+  languages.forEach((lang, li) => {
+    const due = dueCounts[li];
     const recipe = getRecipe(lang);
     const coverageHtml = recipe.ui?.coverageMeter ? (() => {
       const pct = (quranCoverage(lang.rootsLearned || []) * 100).toFixed(1);
@@ -1387,7 +1392,7 @@ async function renderLanguages() {
       card.appendChild(scriptBtn);
     }
     grid.insertBefore(card, document.getElementById('btn-add-language'));
-  }
+  });
 }
 
 // ── DAILY SESSION PLAYER ──────────────────────────────────────────────────────
