@@ -4365,3 +4365,323 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .continue-hero-body, .lang-card-head, .turn-body, .prose { min-width: 0; }
   .prose { overflow-wrap: break-word; }
 }
+
+/* ============================================================
+   THE INSTRUCTOR — grammar + drill strands
+   The main tutor's surfaces. Quiet Library rules: Lora for the
+   language itself, Inter for explanation and chrome, one brass
+   action per screen.
+   ============================================================ */
+
+.grammar-title { margin-bottom: 0.3rem; }
+
+.grammar-structure {
+  font-family: var(--font-reading);
+  font-size: 1.02rem;
+  color: var(--purple);
+  text-align: center;
+  margin: 0 0 0.5rem;
+  font-style: italic;
+}
+
+.grammar-explanation {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  margin: 1.2rem 0;
+}
+.grammar-explanation p { margin: 0 0 0.7rem; }
+.grammar-explanation strong { color: var(--purple); }
+.grammar-explanation em { color: var(--text-secondary); }
+
+/* Pattern table — the rule laid out concretely. Scrolls on its own
+   so a wide conjugation set never widens the page. */
+.grammar-table-wrap {
+  margin: 1.2rem 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.grammar-table-caption {
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+.grammar-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.grammar-table th,
+.grammar-table td {
+  padding: 0.55rem 0.8rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.grammar-table tr:last-child th,
+.grammar-table tr:last-child td { border-bottom: none; }
+.grammar-table th {
+  font-family: var(--font-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  width: 1%;
+}
+.grammar-table-ex {
+  font-family: var(--font-reading);
+  color: var(--text-primary);
+}
+.grammar-table-gloss {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.grammar-ex-gloss {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--indigo);
+  border-left: 2px solid var(--indigo);
+  padding-left: 0.6rem;
+  margin-top: 0.35rem;
+}
+
+.grammar-play {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s ease;
+}
+.grammar-play svg { width: 13px; height: 13px; }
+.grammar-play:hover { border-color: var(--purple); color: var(--purple); }
+
+/* The one mistake English speakers make here — ochre, because it is a
+   warning rather than an error the learner has already made. */
+.grammar-pitfall {
+  background: var(--gold-dim);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin: 1.3rem 0;
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+.grammar-pitfall-label {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.3rem;
+}
+
+/* ── Drills ── */
+.drill-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--purple);
+  border-radius: var(--radius-md);
+  padding: 1.2rem 1.3rem;
+  margin: 1rem 0;
+}
+.drill-prompt {
+  font-family: var(--font-reading);
+  font-size: 1.08rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+.drill-input { width: 100%; }
+
+.drill-chips {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+.drill-built {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.5rem;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+.drill-chip {
+  font-family: var(--font-reading);
+  font-size: 0.98rem;
+  padding: 0.4rem 0.75rem;
+  min-height: 38px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.drill-chip:hover { border-color: var(--purple); }
+.drill-chip.placed {
+  background: var(--purple-dim);
+  border-color: var(--purple);
+}
+
+.drill-actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 0.6rem; margin-top: 1rem;
+}
+.drill-verdict { margin-top: 0.8rem; }
+.drill-hint {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--gold);
+  background: var(--gold-dim);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem;
+}
+.drill-correct {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+  margin-top: 0.4rem;
+  color: var(--text-primary);
+}
+
+/* ── Wrap: unit mastery + the uncapped next step ── */
+.wrap-unit-line {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  text-align: center;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  margin: 0.8rem 0;
+}
+.wrap-unit-line.mastered { background: var(--teal-dim); color: var(--teal); }
+.wrap-unit-line.partial  { background: var(--gold-dim); color: var(--gold); }
+
+.wrap-actions { flex-wrap: wrap; gap: 0.7rem; }
+.wrap-pace-note {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 0.6rem;
+}
+
+/* ── Language card: unit position + the complexity dial ── */
+.lang-unit-line {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; margin: 0.7rem 0 0.9rem;
+  min-width: 0;
+}
+.lang-unit-label {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lang-intensity {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border-light);
+  border-radius: 100px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   TAP ANY WORD — the gloss popover
+   Floats by the word on desktop; bottom-docks on touch for the
+   same reason the selection bar does (iOS owns the space beside
+   the text and will not give it up).
+   ============================================================ */
+.w { cursor: pointer; border-radius: 3px; transition: background 0.12s ease; }
+.w:hover { background: var(--purple-dim); }
+.w:active { background: var(--gold-dim); }
+
+.word-pop {
+  position: fixed;
+  z-index: 1200;
+  width: 244px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 28px rgba(36,26,16,0.18);
+  padding: 0.8rem 0.9rem;
+  animation: fadeInScale 0.14s ease;
+}
+.word-pop-dock {
+  left: 12px; right: 12px;
+  top: auto;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  width: auto;
+  max-width: none;
+}
+.word-pop-head {
+  font-family: var(--font-reading);
+  font-size: 1.08rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+.word-pop-head em {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-left: 0.4rem;
+}
+.word-pop-body {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.word-pop-note {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+}
+.word-pop-actions {
+  display: flex; gap: 0.5rem; margin-top: 0.7rem;
+}
+.word-pop-btn {
+  flex: 1;
+  min-height: 36px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.word-pop-btn:hover { border-color: var(--purple); color: var(--purple); }
+.word-pop-btn:disabled { opacity: 0.7; cursor: default; }
+
+@media (max-width: 768px) {
+  .grammar-table th, .grammar-table td { padding: 0.45rem 0.6rem; font-size: 0.85rem; }
+  .drill-card { padding: 1rem; }
+  .drill-actions { flex-wrap: wrap; }
+  .wrap-actions .btn { width: 100%; }
+  .word-pop-btn { min-height: 44px; }
+}

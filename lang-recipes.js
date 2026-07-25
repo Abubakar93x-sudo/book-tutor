@@ -12,15 +12,22 @@
 // ============================================================================
 
 const RECIPES = {
-  // The original frequency-word course — unchanged behavior, now explicit.
+  // The main course, taught by TWO tutors. The Instructor owns `grammar` and
+  // `drill` — it states the rule and drills it, which is the progression spine.
+  // The Companion owns `story`, `converse` and `shadow`, and takes its marching
+  // orders from whichever unit the Instructor is on, so input and conversation
+  // exercise the rule that was just taught instead of drifting.
+  //
+  // Progression is per UNIT, not per day: finish one and the next is available
+  // immediately. There is no daily cap anywhere in this recipe.
   fresh: {
     id: 'fresh',
     label: 'Full course',
-    unitType: 'word',                 // frequency-ordered single words
-    strands: ['review', 'story', 'converse', 'shadow', 'wrap'],
+    unitType: 'structure',            // grammar units, with vocabulary riding along
+    strands: ['review', 'grammar', 'drill', 'story', 'converse', 'shadow', 'wrap'],
     assessment: 'none',               // self-report level picker
-    loadingCopy: (lang) => `Writing today's ${lang.name} story at your level…`,
-    ui: {}
+    loadingCopy: (lang) => `Preparing your next ${lang.name} lesson…`,
+    ui: { syllabus: true }
   },
 
   // Heritage speakers: they understand the language, the script is the only
@@ -74,11 +81,21 @@ function getRecipe(lang) {
 // wrap-compatible (renderWrap consumes lesson.newWords / lesson.checkpoints).
 // Demo-mode handling lives inside each generator so LangSession stays clean.
 
+// Generators receive (lang, unit) — `unit` is the syllabus entry the Instructor
+// is currently on, or null for recipes that carry their own spine.
 const RECIPE_LESSON_GENERATORS = {
-  fresh: async (lang) => {
-    return AppState.mode === 'demo'
-      ? demoLangLesson(lang)
-      : await callGradedStoryGenerator(lang, lang.level, lang.knownWords || []);
+  // The two-tutor lesson: the Instructor's unit content and the Companion's
+  // story are built in PARALLEL, and the story is told which structure to
+  // exercise so both halves of the lesson teach the same thing.
+  fresh: async (lang, unit) => {
+    if (AppState.mode === 'demo') {
+      return { ...demoLangLesson(lang), grammar: demoGrammarUnit(unit), unit };
+    }
+    const [grammar, story] = await Promise.all([
+      unit ? callGrammarUnitGenerator(lang, unit, lang.knownWords || []) : Promise.resolve(null),
+      callGradedStoryGenerator(lang, lang.level, lang.knownWords || [], unit)
+    ]);
+    return { ...story, grammar, unit };
   }
   // literacy / vocabExpand / quranic generators are registered by app.js as
   // their stages land (registerRecipeLessonGenerator below).
@@ -96,6 +113,8 @@ function getLessonGenerator(recipeId) {
 // Strand kind → LangSession method name, for kinds beyond the original five.
 // renderActivity checks this map before its renderWrap catch-all.
 const RECIPE_ACTIVITY_RENDERERS = {
+  grammar: 'renderGrammar',
+  drill: 'renderDrill',
   decode: 'renderDecode',
   rootLesson: 'renderRootLesson',
   verses: 'renderVerses',

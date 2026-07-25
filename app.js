@@ -322,6 +322,16 @@ async function dbPutLanguage(lang) {
   await col.doc(lang.id).set({ ...lang, updatedAt: Date.now() }, { merge: true });
 }
 
+// Merge a few fields onto a language without shipping the whole in-memory
+// object. dbPutLanguage writes every field it holds, which can clobber a
+// levelScore that flushLevelEstimate wrote while the session was open — so any
+// targeted update should come through here instead.
+async function dbPatchLanguage(langId, fields) {
+  const col = userCol('languages');
+  if (!col) return;
+  await col.doc(langId).set({ ...fields, updatedAt: Date.now() }, { merge: true });
+}
+
 async function dbGetAllLanguages() {
   const col = userCol('languages');
   if (!col) return [];
@@ -364,24 +374,132 @@ async function dbAppendLangCards(langId, newCards) {
   }
 }
 
-// langLessons/{langId}_{YYYY-MM-DD} — one generated lesson per language per
-// day, cached so reopening the session replays the same content (cost control).
+// ── FOUNDATION DECK ──────────────────────────────────────────────────────────
+// Eight frequency bands built in parallel at onboarding. Only band 1 is due
+// straight away — the rest are held with a far-future due date so the learner
+// isn't buried under 400 cards on day one. "Learn more now" releases the next
+// band on demand, so the staging is a default, never a limit.
+const FOUNDATION_BANDS = 8;
+const FOUNDATION_BAND_SIZE = 50;
+const HELD_UNTIL = 4102444800000; // 2100 — effectively "not yet introduced"
+
+async function buildFoundationDeck(profile) {
+  const nonLatin = profile.script !== 'latin';
+
+  // Non-Latin languages get the first script unit alongside the vocabulary —
+  // the writing system has to enter the deck at the same time, or the
+  // foundation words are unreadable.
+  const jobs = Array.from({ length: FOUNDATION_BANDS }, (_, i) =>
+    callFoundationDeck(profile, i + 1, FOUNDATION_BAND_SIZE).catch(err => {
+      console.warn(`Foundation band ${i + 1} failed:`, err.message);
+      return [];
+    })
+  );
+  if (nonLatin) {
+    jobs.push(callScriptUnitGenerator(profile, 1, []).catch(err => {
+      console.warn('Script unit failed:', err.message);
+      return [];
+    }));
+  }
+
+  const cards = (await Promise.all(jobs)).flat();
+
+  // Every band failed — fall back to the old seed deck rather than leave the
+  // learner with nothing.
+  if (!cards.length) return await callSeedDeckGenerator(profile, 'A0');
+
+  // Script cards and band 1 are due now; later bands wait their turn.
+  return cards.map(c => (!c.band || c.band === 1) ? c : { ...c, nextDueDate: HELD_UNTIL });
+}
+
+// Pull the next held band forward. No cap on how often this can be pressed.
+async function releaseNextBand(lang) {
+  const next = (lang.bandsReleased || 1) + 1;
+  if (next > FOUNDATION_BANDS) return 0;
+
+  const batches = await dbGetLangCardBatches(lang.id);
+  let released = 0;
+  for (const b of batches) {
+    let touched = false;
+    const cards = (b.flashcards || []).map(c => {
+      if (c.band === next && c.nextDueDate === HELD_UNTIL) {
+        touched = true; released += 1;
+        const { nextDueDate, ...rest } = c;
+        return rest;
+      }
+      return c;
+    });
+    if (touched) await dbPutLangCardBatch(lang.id, b.batch, cards);
+  }
+  lang.bandsReleased = next;
+  await dbPatchLanguage(lang.id, { bandsReleased: next });
+  return released;
+}
+
+// langLessons/{langId}_{key} — one generated lesson per key, cached so
+// reopening replays the same content (cost control). The key used to be the
+// calendar date, which capped the learner at one lesson per day no matter how
+// much time they had. It is now `unit_{n}` — progression is by curriculum
+// position, so a learner can run as many units in a sitting as they like.
 function todayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function dbGetLangLesson(langId, dateKey) {
+function unitKey(unitIndex) {
+  return `unit_${unitIndex}`;
+}
+
+async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
   if (!col) return null;
-  const snap = await col.doc(`${langId}_${dateKey}`).get();
+  const snap = await col.doc(`${langId}_${key}`).get();
   return snap.exists ? snap.data() : null;
 }
 
-async function dbPutLangLesson(langId, dateKey, lesson) {
+async function dbPutLangLesson(langId, key, lesson) {
   const col = userCol('langLessons');
   if (!col) return;
-  await col.doc(`${langId}_${dateKey}`).set({ ...lesson, langId, dateKey, updatedAt: Date.now() }, { merge: true });
+  await col.doc(`${langId}_${key}`).set({ ...lesson, langId, lessonKey: key, updatedAt: Date.now() }, { merge: true });
+}
+
+// langSyllabus/{langId} — the grammar ladder for a language, generated ONCE by
+// the Instructor at first use and cached forever. This is the spine of the
+// course: the ordered list of structures the learner works through.
+async function dbGetSyllabus(langId) {
+  const col = userCol('langSyllabus');
+  if (!col) return null;
+  const snap = await col.doc(langId).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function dbPutSyllabus(langId, units) {
+  const col = userCol('langSyllabus');
+  if (!col) return;
+  await col.doc(langId).set({ langId, units, updatedAt: Date.now() }, { merge: true });
+}
+
+// langGloss/{langId} — a word→meaning cache shared by every tap-a-word lookup,
+// so the same word is never paid for twice. Capped so the doc stays small.
+const GLOSS_CACHE_MAX = 500;
+
+async function dbGetGlossCache(langId) {
+  const col = userCol('langGloss');
+  if (!col) return {};
+  try {
+    const snap = await col.doc(langId).get();
+    return snap.exists ? (snap.data().words || {}) : {};
+  } catch (err) {
+    console.warn('Gloss cache read failed:', err.message);
+    return {};
+  }
+}
+
+async function dbPutGlossCache(langId, words) {
+  const col = userCol('langGloss');
+  if (!col) return;
+  const entries = Object.entries(words).slice(-GLOSS_CACHE_MAX);
+  await col.doc(langId).set({ langId, words: Object.fromEntries(entries), updatedAt: Date.now() }, { merge: true });
 }
 
 // Update readyChapters / studiedChapters arrays stored on the book doc.
@@ -1375,9 +1493,53 @@ async function renderLanguages() {
         ${lang.streak ? `<span>·</span><span>${lang.streak}-day streak</span>` : ''}
       </div>
       ${coverageHtml}
-      <button class="btn btn-primary lang-card-cta">Start today's session →</button>
+      ${recipe.ui?.syllabus ? `
+        <div class="lang-unit-line">
+          <span class="lang-unit-label">Unit ${(lang.unitIndex || 0) + 1}${(lang.unitsMastered || []).length ? ` · ${(lang.unitsMastered || []).length} mastered` : ''}</span>
+          <select class="lang-intensity" title="How hard the conversation pushes you">
+            <option value="gentle"${lang.intensity === 'gentle' ? ' selected' : ''}>Gentle</option>
+            <option value="normal"${(lang.intensity || 'normal') === 'normal' ? ' selected' : ''}>Normal</option>
+            <option value="push"${lang.intensity === 'push' ? ' selected' : ''}>Push me</option>
+          </select>
+        </div>` : ''}
+      <button class="btn btn-primary lang-card-cta">${recipe.ui?.syllabus ? 'Continue the course →' : "Start today's session →"}</button>
     `;
     card.querySelector('.lang-card-cta').addEventListener('click', () => LangSession.start(lang));
+
+    // The complexity dial — the learner's own call on how hard the Companion
+    // pushes, applied to the very next reply rather than drifting with level.
+    const intensityEl = card.querySelector('.lang-intensity');
+    if (intensityEl) {
+      intensityEl.addEventListener('click', e => e.stopPropagation());
+      intensityEl.addEventListener('change', async () => {
+        lang.intensity = intensityEl.value;
+        try {
+          await dbPatchLanguage(lang.id, { intensity: lang.intensity });
+          showToast(`Conversation set to "${intensityEl.selectedOptions[0].textContent}".`, 'success', 2500);
+        } catch (err) { console.warn('Intensity save failed:', err.message); }
+      });
+    }
+
+    // Foundation deck: pull the next held frequency band forward on demand.
+    if (recipe.id === 'fresh' && (lang.bandsReleased || 0) > 0 && lang.bandsReleased < FOUNDATION_BANDS) {
+      const moreBtn = document.createElement('button');
+      moreBtn.className = 'btn btn-ghost lang-script-btn';
+      moreBtn.textContent = 'Learn more words now →';
+      moreBtn.addEventListener('click', async () => {
+        moreBtn.disabled = true;
+        moreBtn.textContent = 'Releasing…';
+        try {
+          const n = await releaseNextBand(lang);
+          showToast(n ? `${n} more words are now in your deck.` : 'No more words to release.', 'success');
+          await renderLanguages();
+        } catch (err) {
+          showToast('Could not release more words: ' + err.message, 'error');
+          moreBtn.disabled = false;
+          moreBtn.textContent = 'Learn more words now →';
+        }
+      });
+      card.appendChild(moreBtn);
+    }
 
     // Script bootcamp: non-Latin languages can pull the next unit of their
     // writing system into the deck (kana rows, letter groups, hanzi by
@@ -1395,10 +1557,80 @@ async function renderLanguages() {
   });
 }
 
-// ── DAILY SESSION PLAYER ──────────────────────────────────────────────────────
-// One overlay, one activity at a time. Currently: Story (input strand) → Wrap.
-// Review lives in the Flashcards deck; Converse and Shadow strands join the
-// player in the next build steps.
+// ── SESSION PLAYER ────────────────────────────────────────────────────────────
+// One overlay, one activity at a time, run by two tutors: the Instructor
+// (grammar → drill) states and tests the rule, the Companion (story → converse
+// → shadow) makes it usable. Progression is per unit and uncapped — finishing
+// one offers the next immediately.
+
+// Demo syllabus — a real Spanish ladder, enough units to exercise progression.
+function demoSyllabus(lang) {
+  const base = [
+    { title: 'Naming things', structure: 'ser + noun ("soy / eres / es")', whyItMatters: 'Say who and what things are.', level: 'A0' },
+    { title: 'This and that', structure: 'Articles and gender: el / la / un / una', whyItMatters: 'Every noun needs one; getting it right shapes everything else.', level: 'A0' },
+    { title: 'Doing things now', structure: 'Regular present tense: -ar / -er / -ir endings', whyItMatters: 'The workhorse tense — most of what you say lives here.', level: 'A1' },
+    { title: 'Saying no, and asking', structure: 'Negation with "no" + question word order', whyItMatters: 'Turns statements into a conversation.', level: 'A1' },
+    { title: 'Talking about yesterday', structure: 'Preterite: completed past actions', whyItMatters: 'Tell someone what happened.', level: 'A2' },
+    { title: 'What used to happen', structure: 'Imperfect: habitual and background past', whyItMatters: 'The other past tense — Spanish needs both.', level: 'A2' },
+    { title: 'What comes next', structure: 'ir a + infinitive for the near future', whyItMatters: 'Make plans out loud.', level: 'A2' }
+  ];
+  return base.map((u, i) => ({ id: `demo-u${i + 1}`, ...u }));
+}
+
+function demoGrammarUnit(unit) {
+  if (!unit) return null;
+  return {
+    explanation: `In Spanish, **${unit.structure}** works differently from English. The ending of the verb already tells you who is doing it, which is why Spanish can drop the word for "I" or "you" entirely — *hablo* on its own means "I speak".`,
+    patternTable: {
+      caption: 'The endings',
+      rows: [
+        { form: 'yo', example: 'hablo', gloss: 'I speak' },
+        { form: 'tú', example: 'hablas', gloss: 'you speak' },
+        { form: 'él / ella', example: 'habla', gloss: 'he / she speaks' },
+        { form: 'nosotros', example: 'hablamos', gloss: 'we speak' }
+      ]
+    },
+    examples: [
+      { text: 'Hablo español todos los días.', gloss: 'I speak Spanish every day.', wordGlosses: [{ word: 'Hablo', gloss: 'I speak' }, { word: 'español', gloss: 'Spanish' }, { word: 'días', gloss: 'days' }] },
+      { text: '¿Hablas inglés?', gloss: 'Do you speak English?', wordGlosses: [{ word: 'Hablas', gloss: 'you speak' }, { word: 'inglés', gloss: 'English' }] },
+      { text: 'María trabaja en casa.', gloss: 'María works at home.', wordGlosses: [{ word: 'trabaja', gloss: 'works' }, { word: 'casa', gloss: 'house, home' }] }
+    ],
+    pitfall: 'English speakers keep saying "yo hablo" every time. Spanish only adds "yo" for emphasis or contrast — the ending already carries it.',
+    drills: [
+      { kind: 'cloze', prompt: 'Yo ___ español. (hablar)', answer: 'hablo', options: [], hint: 'The "yo" ending is -o.' },
+      { kind: 'build', prompt: 'Put these in order:', answer: 'María trabaja en casa', options: ['en', 'María', 'casa', 'trabaja'], hint: 'Subject, then verb, then where.' },
+      { kind: 'translate', prompt: 'Say in Spanish: "We speak Spanish."', answer: 'Hablamos español', options: [], hint: 'The "nosotros" ending is -amos.' },
+      { kind: 'transform', prompt: 'Make this a question: "Tú hablas inglés."', answer: '¿Hablas inglés?', options: [], hint: 'Drop the pronoun and add question marks.' }
+    ]
+  };
+}
+
+function demoFoundationDeck(profile, band) {
+  if (profile.script && profile.script !== 'latin') {
+    const rows = [
+      ['わたしは がくせいです。', 'I am a student.', 'わたし', 'watashi wa gakusei desu'],
+      ['ほんは どこですか。', 'Where is the book?', 'ほん', 'hon wa doko desu ka'],
+      ['ねこが すきです。', 'I like cats.', 'ねこ', 'neko ga suki desu'],
+      ['みずを ください。', 'Water, please.', 'みず', 'mizu o kudasai'],
+      ['きょうは いそがしい。', "Today I'm busy.", 'きょう', 'kyō wa isogashii'],
+      ['また あした。', 'See you tomorrow.', 'あした', 'mata ashita']
+    ];
+    return rows.map(([front, back, word, romanization]) => ({
+      front, back, word, romanization, type: 'vocab', band
+    }));
+  }
+  const rows = [
+    ['Yo soy estudiante.', 'I am a student.', 'ser'],
+    ['¿Dónde está el libro?', 'Where is the book?', 'estar'],
+    ['Tengo dos hermanos.', 'I have two brothers.', 'tener'],
+    ['Ella va a casa.', 'She goes home.', 'ir'],
+    ['Quiero un café.', 'I want a coffee.', 'querer'],
+    ['No puedo hoy.', "I can't today.", 'poder']
+  ];
+  return rows.map(([front, back, word]) => ({
+    front, back, word, romanization: null, type: 'vocab', band
+  }));
+}
 
 function demoLangLesson(lang) {
   if (lang.script && lang.script !== 'latin') {
@@ -1602,6 +1834,73 @@ async function generateVocabExpandLesson(lang) {
 
 registerRecipeLessonGenerator('vocabExpand', generateVocabExpandLesson);
 
+// ── TAP ANY WORD ─────────────────────────────────────────────────────────────
+// Every piece of target-language text in the language section is tokenized so
+// any word can be tapped for its meaning. Three sources, cheapest first:
+//   1. wordGlosses shipped with the lesson  — free, instant
+//   2. the per-language cache (memory → Firestore) — free after the first tap
+//   3. callWordGloss — the only one that costs a request
+// The popover also offers "+ Add to deck", so a word met mid-conversation
+// becomes tomorrow's review card. That's the loop: gaps found while using the
+// language feed the deck that closes them.
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Splits on whitespace and punctuation while KEEPING the separators, so the
+// rendered sentence looks untouched — only the word runs become tappable.
+// Scripts without inter-word spaces (CJK) fall back to per-character spans.
+function glossify(text, lang) {
+  if (!text) return '';
+  const noSpaces = lang?.script === 'cjk';
+  const tokens = noSpaces
+    ? String(text).split(/([　-〿＀-･\s]+)/)
+    : String(text).split(/([\s.,!?;:¿¡"'()«»—–،؛؟۔]+)/);
+
+  return tokens.map(tok => {
+    if (!tok || /^[\s.,!?;:¿¡"'()«»—–،؛؟۔]+$/.test(tok) || /^[　-〿＀-･\s]+$/.test(tok)) {
+      return escapeAttr(tok);
+    }
+    return `<span class="w" data-word="${escapeAttr(tok)}">${escapeAttr(tok)}</span>`;
+  }).join('');
+}
+
+// In-memory gloss cache, hydrated from Firestore once per language per session.
+const _glossCache = {};
+
+async function lookupWord(lang, word, sentence = '', shipped = null) {
+  const key = word.toLowerCase();
+
+  // 1. shipped with the lesson
+  if (shipped) {
+    const hit = shipped.find(w => (w.word || '').toLowerCase() === key);
+    if (hit) return { meaning: hit.gloss, romanization: hit.romanization || null, note: '', free: true };
+  }
+
+  // 2. cache (memory, then Firestore)
+  if (!_glossCache[lang.id]) _glossCache[lang.id] = await dbGetGlossCache(lang.id);
+  const cached = _glossCache[lang.id][key];
+  if (cached) return { ...cached, free: true };
+
+  // 3. the model
+  const result = AppState.mode === 'demo'
+    ? { meaning: `(demo) meaning of "${word}"`, romanization: null, note: '' }
+    : await callWordGloss(lang, word, sentence);
+
+  _glossCache[lang.id][key] = result;
+  dbPutGlossCache(lang.id, _glossCache[lang.id]).catch(() => {});
+  return result;
+}
+
 // ── CONTINUOUS LEVEL RECALIBRATION ───────────────────────────────────────────
 // levelScore (0-100) is the running estimate of the learner's level; the CEFR
 // string is DERIVED from it (never set independently — the romanization fade
@@ -1610,12 +1909,28 @@ registerRecipeLessonGenerator('vocabExpand', generateVocabExpandLesson);
 // Deltas accumulate per language and flush to Firestore debounced, with a
 // ±3-points-per-day movement cap so no single session swings the level.
 
+const LEVEL_ORDER = ['A0', 'A1', 'A2', 'B1', 'B2'];
+
 function levelFromScore(score) {
   if (score < 15) return 'A0';
   if (score < 35) return 'A1';
   if (score < 55) return 'A2';
   if (score < 75) return 'B1';
   return 'B2';
+}
+
+// Grammar units worked through are hard evidence of level — a learner who has
+// mastered 20 structures is not A0 whatever the running score says.
+function levelFromUnits(count) {
+  if (count < 4) return 'A0';
+  if (count < 10) return 'A1';
+  if (count < 18) return 'A2';
+  if (count < 28) return 'B1';
+  return 'B2';
+}
+
+function higherLevel(a, b) {
+  return LEVEL_ORDER.indexOf(a) >= LEVEL_ORDER.indexOf(b) ? a : b;
 }
 
 const _levelFlushTimers = {};
@@ -1640,20 +1955,21 @@ async function flushLevelEstimate(langId) {
     if (!snap.exists) return;
     const lang = snap.data();
 
-    // Daily movement budget: |total movement today| ≤ 3 points
-    const today = todayKey();
-    const movedToday = lang.levelMoveDay === today ? (lang.levelMovedToday || 0) : 0;
-    const applied = Math.max(-3 - movedToday, Math.min(3 - movedToday, delta));
+    // Per-FLUSH clamp, not a daily one. The old ±3/day budget meant a learner
+    // needed five flawless days just to leave A0 and 25 to reach B1 — a hard
+    // ceiling on how fast anyone could progress, no matter how much work they
+    // put in. Clamping each flush instead keeps one bad answer from swinging
+    // the level while leaving a productive day free to move as far as it earns.
+    const applied = Math.max(-2, Math.min(2, delta));
     if (!applied) return;
 
     const levelScore = Math.max(0, Math.min(100, (lang.levelScore ?? 8) + applied));
-    const level = levelFromScore(levelScore);
+    // Units mastered are the strongest evidence there is, so the level never
+    // sits below what the learner has demonstrably worked through.
+    const level = higherLevel(levelFromScore(levelScore), levelFromUnits((lang.unitsMastered || []).length));
     const levelEvidence = [...(lang.levelEvidence || []), { at: Date.now(), delta: Math.round(applied * 10) / 10 }].slice(-20);
 
-    await col.doc(langId).set({
-      levelScore, level, levelEvidence,
-      levelMoveDay: today, levelMovedToday: movedToday + applied
-    }, { merge: true });
+    await col.doc(langId).set({ levelScore, level, levelEvidence }, { merge: true });
 
     // Keep any live in-memory copy coherent with what was just written
     if (LangSession.lang?.id === langId) {
@@ -1682,8 +1998,16 @@ const LangSession = {
   chatHistory: [],
   reviewQueue: [],
   shadowRatings: {},
+  syllabus: null,      // the Instructor's ordered grammar ladder
+  unit: null,          // the unit being taught right now
+  unitIndex: 0,
+  lessonKey: null,     // langLessons doc key for this session
+  drillResults: [],    // per-drill pass/fail, feeds the mastery gate
 
-  async start(lang) {
+  // start(lang, unitIndex) — unitIndex defaults to wherever the learner is on
+  // the syllabus. Lessons are cached per UNIT, not per day, so finishing one
+  // and starting the next in the same sitting is the normal path.
+  async start(lang, unitIndex = null) {
     this.lang = lang;
     this.recipe = getRecipe(lang);
     this.activities = [...this.recipe.strands];
@@ -1692,10 +2016,15 @@ const LangSession = {
     this.chatHistory = [];
     this.reviewQueue = [];
     this.shadowRatings = {};
+    this.drillResults = [];
+    this.unitIndex = unitIndex ?? (lang.unitIndex || 0);
+    this.unit = null;
+    this.syllabus = null;
 
     const overlay = document.getElementById('lang-session-overlay');
     const body = document.getElementById('lang-session-body');
     overlay.style.display = 'flex';
+    overlay.scrollTop = 0;
     body.innerHTML = `
       <div class="cp-loading" style="justify-content:center; padding:3rem 0;">
         <span class="cp-spinner"></span> ${this.recipe.loadingCopy(lang)}
@@ -1703,11 +2032,18 @@ const LangSession = {
     `;
 
     try {
-      const dateKey = todayKey();
-      let lesson = await dbGetLangLesson(lang.id, dateKey);
+      // The Instructor's syllabus: generated once per language, cached forever.
+      if (this.recipe.ui?.syllabus) {
+        this.syllabus = await this.loadSyllabus(lang);
+        this.unit = this.syllabus?.[this.unitIndex] || null;
+      }
+
+      const key = this.recipe.ui?.syllabus ? unitKey(this.unitIndex) : todayKey();
+      this.lessonKey = key;
+      let lesson = await dbGetLangLesson(lang.id, key);
       if (!lesson) {
-        lesson = await getLessonGenerator(this.recipe.id)(lang);
-        await dbPutLangLesson(lang.id, dateKey, lesson);
+        lesson = await getLessonGenerator(this.recipe.id)(lang, this.unit);
+        await dbPutLangLesson(lang.id, key, lesson);
       }
       // Rough shadow sentences from the previous session come back for redo
       if (Array.isArray(lang.roughShadow) && lang.roughShadow.length) {
@@ -1731,11 +2067,109 @@ const LangSession = {
     document.getElementById('lang-session-overlay').style.display = 'none';
     this.lang = null;
     this.lesson = null;
+    this.unit = null;
+    this.syllabus = null;
+  },
+
+  // The grammar ladder for this language. One generation, cached forever —
+  // every later session reads it back rather than paying for it again.
+  async loadSyllabus(lang) {
+    const cached = await dbGetSyllabus(lang.id);
+    if (cached?.units?.length) return cached.units;
+
+    const units = AppState.mode === 'demo'
+      ? demoSyllabus(lang)
+      : await callSyllabusArchitect(lang, lang.level || 'A0');
+    await dbPutSyllabus(lang.id, units);
+    return units;
   },
 
   dotsHtml() {
     return `<div class="prime-dots lang-session-dots">${this.activities
       .map((_, i) => `<i class="${i === this.activityIdx ? 'on' : ''}"></i>`).join('')}</div>`;
+  },
+
+  // One delegated handler per rendered strand. `shipped` is the lesson's own
+  // per-word glosses when the strand has them, so most taps never hit the API.
+  bindWordTaps(scopeEl, shipped = null) {
+    scopeEl.querySelectorAll('.w').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sentence = el.closest('.story-target, .drill-correct, .lang-bubble')?.textContent || '';
+        this.showWordPopover(el, el.dataset.word, sentence, shipped);
+      });
+    });
+  },
+
+  async showWordPopover(anchorEl, word, sentence, shipped) {
+    const { lang } = this;
+    document.querySelectorAll('.word-pop').forEach(p => p.remove());
+
+    const pop = document.createElement('div');
+    pop.className = 'word-pop';
+    pop.innerHTML = `<div class="word-pop-head">${escapeAttr(word)}</div><div class="word-pop-body">…</div>`;
+    document.body.appendChild(pop);
+
+    // Touch devices bottom-dock (same reason the selection bar does: iOS's own
+    // menu owns the space next to the text); desktop floats by the word.
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    if (coarse) {
+      pop.classList.add('word-pop-dock');
+    } else {
+      const r = anchorEl.getBoundingClientRect();
+      pop.style.left = `${Math.min(Math.max(8, r.left), window.innerWidth - 260)}px`;
+      pop.style.top = `${r.bottom + 8}px`;
+    }
+
+    const dismiss = (e) => {
+      if (pop.contains(e.target)) return;
+      pop.remove();
+      document.removeEventListener('mousedown', dismiss);
+      document.removeEventListener('touchstart', dismiss);
+    };
+    setTimeout(() => {
+      document.addEventListener('mousedown', dismiss);
+      document.addEventListener('touchstart', dismiss);
+    }, 0);
+
+    try {
+      const g = await lookupWord(lang, word, sentence, shipped);
+      pop.innerHTML = `
+        <div class="word-pop-head">
+          ${escapeAttr(word)}
+          ${g.romanization ? `<em>${escapeAttr(g.romanization)}</em>` : ''}
+        </div>
+        <div class="word-pop-body">${escapeAttr(g.meaning || '—')}</div>
+        ${g.note ? `<div class="word-pop-note">${escapeAttr(g.note)}</div>` : ''}
+        <div class="word-pop-actions">
+          <button class="word-pop-btn" data-act="speak">🔊</button>
+          <button class="word-pop-btn" data-act="add">+ Add to deck</button>
+        </div>
+      `;
+      pop.querySelector('[data-act="speak"]').addEventListener('click', () => {
+        if (!NarrationEngine.speakLang(word, lang.ttsLangCode || lang.code, 0.8)) {
+          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+        }
+      });
+      pop.querySelector('[data-act="add"]').addEventListener('click', async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        try {
+          await dbAppendLangCards(lang.id, [{
+            front: sentence.trim() || word,
+            back: `${g.meaning}${sentence.trim() ? ` — "${word}"` : ''}`,
+            word,
+            romanization: g.romanization || null,
+            type: 'vocab'
+          }]);
+          btn.textContent = '✓ In deck';
+        } catch (err) {
+          btn.textContent = 'Save failed';
+        }
+      });
+    } catch (err) {
+      pop.querySelector('.word-pop-body').textContent = 'Lookup unavailable.';
+    }
   },
 
   next() {
@@ -1847,6 +2281,256 @@ const LangSession = {
     document.getElementById('btn-review-skip').addEventListener('click', () => this.next());
   },
 
+  // ── GRAMMAR (the Instructor teaches the rule) ──
+  // The language-focused learning strand: state the rule outright, show the
+  // pattern, work through examples, name the trap. This is the part an adult
+  // can use that a child can't, and it is what the rest of the session then
+  // practises.
+  renderGrammar() {
+    const { lang, lesson, unit } = this;
+    const g = lesson.grammar;
+    const body = document.getElementById('lang-session-body');
+
+    if (!g || !unit) { this.next(); return; }   // recipe without a syllabus
+
+    const tableHtml = g.patternTable?.rows?.length ? `
+      <div class="grammar-table-wrap">
+        ${g.patternTable.caption ? `<div class="grammar-table-caption">${g.patternTable.caption}</div>` : ''}
+        <table class="grammar-table">
+          ${g.patternTable.rows.map(r => `
+            <tr>
+              <th>${r.form || ''}</th>
+              <td class="grammar-table-ex">${glossify(r.example || '', lang)}</td>
+              <td class="grammar-table-gloss">${r.gloss || ''}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>` : '';
+
+    const examplesHtml = (g.examples || []).map((ex, i) => `
+      <div class="story-sentence" data-idx="${i}">
+        <button class="grammar-play" data-idx="${i}" title="Hear it">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+        </button>
+        <div class="story-sentence-text">
+          <span class="story-target">${glossify(ex.text, lang)}</span>
+          ${ex.romanization && ['A0', 'A1'].includes(lang.level) ? `<span class="story-rom">${ex.romanization}</span>` : ''}
+          <span class="grammar-ex-gloss">${ex.gloss || ''}</span>
+        </div>
+      </div>
+    `).join('');
+
+    body.innerHTML = `
+      <div class="prime-kicker">Rule ${this.unitIndex + 1} · ${lang.name}</div>
+      ${this.dotsHtml()}
+      <h3 class="consolidate-title grammar-title">${unit.title}</h3>
+      <p class="grammar-structure">${unit.structure}</p>
+      ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
+      <div class="grammar-explanation">${renderMarkdown(g.explanation || '')}</div>
+      ${tableHtml}
+      ${examplesHtml ? `
+        <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>See it working</div>
+        <div class="story-body">${examplesHtml}</div>` : ''}
+      ${g.pitfall ? `
+        <div class="grammar-pitfall">
+          <span class="grammar-pitfall-label">Watch out</span>
+          ${g.pitfall}
+        </div>` : ''}
+      <div class="consolidate-actions">
+        <button class="btn btn-primary" id="btn-grammar-continue">Practise it →</button>
+      </div>
+    `;
+
+    body.querySelectorAll('.grammar-play').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ex = g.examples[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(ex.text, lang.ttsLangCode || lang.code, 0.85)) {
+          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3500);
+        }
+      });
+    });
+
+    this.bindWordTaps(body);
+    document.getElementById('btn-grammar-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── DRILL (the Instructor checks the rule stuck) ──
+  // Generative practice, which the course had none of. cloze and build grade
+  // locally and instantly; transform and translate go to the grader. A missed
+  // drill comes back once at the end of the set before the unit is judged.
+  renderDrill() {
+    const { lang, lesson, unit } = this;
+    const g = lesson.grammar;
+    if (!g?.drills?.length || !unit) { this.next(); return; }
+
+    if (!this.drillQueue) {
+      this.drillQueue = g.drills.map((d, i) => ({ ...d, _id: i, _retry: false }));
+      this.drillIdx = 0;
+      this.drillResults = [];
+    }
+    this.renderDrillItem();
+  },
+
+  renderDrillItem() {
+    const { lang, unit } = this;
+    const body = document.getElementById('lang-session-body');
+    const drill = this.drillQueue[this.drillIdx];
+
+    if (!drill) { this.finishDrills(); return; }
+
+    const total = this.drillQueue.length;
+    const kindLabel = {
+      cloze: 'Fill the gap', build: 'Put it in order',
+      transform: 'Change it', translate: 'Say it in ' + lang.name
+    }[drill.kind] || 'Practise';
+
+    // "build" hands them the words as chips; the rest take free text.
+    const inputHtml = drill.kind === 'build'
+      ? `<div class="drill-chips" id="drill-chips">
+           ${shuffleArray([...(drill.options || [])]).map(w => `<button class="drill-chip" data-word="${escapeAttr(w)}">${w}</button>`).join('')}
+         </div>
+         <div class="drill-built" id="drill-built"></div>`
+      : `<textarea class="cp-answer drill-input" id="drill-input" rows="2"
+           placeholder="${drill.kind === 'cloze' ? 'The missing word…' : `Your answer in ${lang.name}…`}"></textarea>`;
+
+    body.innerHTML = `
+      <div class="prime-kicker">Practice · ${unit.title}</div>
+      ${this.dotsHtml()}
+      <p class="story-title-gloss">${this.drillIdx + 1} of ${total} · ${kindLabel}</p>
+      <div class="drill-card">
+        <div class="drill-prompt">${drill.prompt}</div>
+        ${inputHtml}
+        <div class="drill-verdict" id="drill-verdict"></div>
+        <div class="drill-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-drill-hint">Hint</button>
+          <button class="btn btn-primary" id="btn-drill-check">Check</button>
+        </div>
+      </div>
+      <div class="consolidate-actions">
+        <button class="btn btn-ghost btn-sm" id="btn-drill-skip">Skip this one</button>
+      </div>
+    `;
+
+    // build: tapping chips assembles the sentence, tapping a placed word removes it
+    let built = [];
+    if (drill.kind === 'build') {
+      const builtEl = document.getElementById('drill-built');
+      const redraw = () => {
+        builtEl.innerHTML = built.map((w, i) => `<button class="drill-chip placed" data-i="${i}">${w}</button>`).join('');
+        builtEl.querySelectorAll('.drill-chip').forEach(c => c.addEventListener('click', () => {
+          built.splice(parseInt(c.dataset.i), 1); redraw();
+        }));
+      };
+      body.querySelectorAll('#drill-chips .drill-chip').forEach(c => {
+        c.addEventListener('click', () => { built.push(c.dataset.word); redraw(); });
+      });
+    }
+
+    document.getElementById('btn-drill-hint').addEventListener('click', (e) => {
+      document.getElementById('drill-verdict').innerHTML =
+        `<div class="drill-hint">${drill.hint || 'Look back at the pattern you just read.'}</div>`;
+      e.target.style.display = 'none';
+    });
+
+    document.getElementById('btn-drill-skip').addEventListener('click', () => {
+      this.drillResults.push({ id: drill._id, passed: false });
+      this.drillIdx += 1;
+      this.renderDrillItem();
+    });
+
+    document.getElementById('btn-drill-check').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-drill-check');
+      const verdictEl = document.getElementById('drill-verdict');
+      const answer = drill.kind === 'build'
+        ? built.join(' ')
+        : (document.getElementById('drill-input')?.value || '').trim();
+      if (!answer) return;
+
+      btn.disabled = true;
+      let result;
+      try {
+        result = await this.gradeDrill(drill, answer);
+      } catch (err) {
+        console.warn('Drill grading failed:', err.message);
+        result = { verdict: 'pass', feedback: 'Check unavailable — counting it.', correctedAnswer: drill.answer };
+      }
+
+      const passed = result.verdict === 'pass';
+      updateLevelEstimate(lang.id, passed ? 0.8 : -0.4);
+      verdictEl.innerHTML = passed
+        ? `<div class="cp-verdict cp-pass">✓ ${result.feedback || 'Correct.'}</div>`
+        : `<div class="cp-verdict cp-gap">${result.feedback || 'Not quite.'}
+             <div class="drill-correct">${glossify(result.correctedAnswer || drill.answer, lang)}</div>
+           </div>`;
+
+      // First miss earns one more go at the end of the set — the same
+      // second-chance logic the shadow strand already uses for rough lines.
+      if (!passed && !drill._retry) {
+        this.drillQueue.push({ ...drill, _retry: true });
+      } else {
+        this.drillResults.push({ id: drill._id, passed });
+      }
+
+      btn.textContent = 'Next →';
+      btn.disabled = false;
+      btn.onclick = () => { this.drillIdx += 1; this.renderDrillItem(); };
+    });
+
+    const input = document.getElementById('drill-input');
+    if (input) {
+      input.focus();
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('btn-drill-check').click(); }
+      });
+    }
+  },
+
+  // cloze and build are decidable locally — no network, instant feedback.
+  async gradeDrill(drill, answer) {
+    const norm = s => String(s).toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')   // ignore missing accents
+      .replace(/[.,!?¿¡;:"']/g, '').replace(/\s+/g, ' ').trim();
+
+    if (drill.kind === 'cloze' || drill.kind === 'build') {
+      const passed = norm(answer) === norm(drill.answer);
+      return {
+        verdict: passed ? 'pass' : 'gap',
+        feedback: passed ? 'Correct.' : 'Not quite — here it is:',
+        correctedAnswer: drill.answer
+      };
+    }
+    if (AppState.mode === 'demo') {
+      const passed = norm(answer) === norm(drill.answer) || answer.length > 4;
+      return { verdict: passed ? 'pass' : 'gap', feedback: passed ? 'Correct.' : 'Check the pattern again.', correctedAnswer: drill.answer };
+    }
+    return await callDrillGrader(this.lang, this.unit, drill, answer);
+  },
+
+  // Mastery gate: 75% of the unit's drills. Passing unlocks the next unit
+  // immediately — the learner sets the pace, not the calendar.
+  async finishDrills() {
+    const { lang, unit } = this;
+    const results = this.drillResults;
+    const passedCount = results.filter(r => r.passed).length;
+    const mastered = results.length > 0 && (passedCount / results.length) >= 0.75;
+
+    this.drillQueue = null;
+    this.unitMastered = mastered;
+    this.drillScore = { passed: passedCount, total: results.length };
+
+    if (mastered && unit) {
+      const list = lang.unitsMastered || [];
+      if (!list.includes(unit.id)) {
+        lang.unitsMastered = [...list, unit.id];
+        try {
+          await dbPatchLanguage(lang.id, { unitsMastered: lang.unitsMastered });
+        } catch (err) { console.warn('Mastery save failed:', err.message); }
+      }
+    }
+    this.next();
+  },
+
   // ── STORY (input strand) ──
   renderStory() {
     const { lang, lesson } = this;
@@ -1859,7 +2543,7 @@ const LangSession = {
           <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
         </button>
         <div class="story-sentence-text">
-          <span class="story-target">${s.text}</span>
+          <span class="story-target">${glossify(s.text, lang)}</span>
           ${s.romanization && earlyLevel ? `<span class="story-rom">${s.romanization}</span>` : ''}
           <span class="story-gloss" style="display:none;">${s.gloss}${s.romanization && !earlyLevel ? ` · ${s.romanization}` : ''}</span>
         </div>
@@ -1881,7 +2565,7 @@ const LangSession = {
       <div class="prime-kicker">Today's story · ${lang.name}</div>
       ${this.dotsHtml()}
       <h3 class="consolidate-title story-title">${lesson.title}</h3>
-      <p class="story-title-gloss">${lesson.titleGloss} · tap a sentence for its meaning</p>
+      <p class="story-title-gloss">${lesson.titleGloss} · tap a word for its meaning, or the line for the whole sentence</p>
       <div class="story-body">${sentencesHtml}</div>
       <div class="story-checkpoints">
         <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>Did you follow it?</div>
@@ -1892,12 +2576,18 @@ const LangSession = {
       </div>
     `;
 
-    // Tap a sentence → toggle its gloss
+    // Tap a sentence → toggle its gloss. Word taps stopPropagation, so tapping
+    // a single word looks it up without also flipping the whole translation.
     body.querySelectorAll('.story-sentence-text').forEach(el => {
       el.addEventListener('click', () => {
         const gloss = el.querySelector('.story-gloss');
         gloss.style.display = gloss.style.display === 'none' ? 'block' : 'none';
       });
+    });
+
+    // Per-sentence shipped glosses mean most word taps cost nothing
+    body.querySelectorAll('.story-sentence').forEach((row, i) => {
+      this.bindWordTaps(row, lesson.sentences[i]?.wordGlosses || null);
     });
 
     // ▶ speaks the sentence
@@ -1983,7 +2673,14 @@ const LangSession = {
     const addBubble = (role, content) => {
       const div = document.createElement('div');
       div.className = `lang-bubble ${role}`;
-      div.textContent = content;
+      // Partner replies are the richest source of unknown words in the whole
+      // session, so they get the same tap-for-meaning treatment as the story.
+      if (role === 'partner') {
+        div.innerHTML = glossify(content, lang);
+        this.bindWordTaps(div);
+      } else {
+        div.textContent = content;
+      }
       chatEl.appendChild(div);
       this.renderCorrections(div, content);
       chatEl.scrollTop = chatEl.scrollHeight;
@@ -2038,14 +2735,20 @@ const LangSession = {
             ];
         reply = demoTurns[Math.min(turn, demoTurns.length - 1)];
       } else {
-        reply = await callLangPartner(lang, lang.level, lesson.chatTopic || '', this.chatHistory, userMessage);
+        // The Companion takes its orders from the Instructor: the unit under
+        // study steers what it asks and what it corrects, and intensity sets
+        // how hard it pushes.
+        reply = await callLangPartner(lang, lang.level, lesson.chatTopic || '', this.chatHistory, userMessage, {
+          unit: this.unit,
+          intensity: lang.intensity || 'normal'
+        });
       }
 
       addBubble('partner', reply);
       this.chatHistory.push({ role: 'partner', content: reply });
 
-      // Cache the conversation so a same-day reopen restores it
-      dbPutLangLesson(lang.id, todayKey(), { chat: this.chatHistory }).catch(() => {});
+      // Cache the conversation so reopening this unit restores it
+      dbPutLangLesson(lang.id, this.lessonKey || todayKey(), { chat: this.chatHistory }).catch(() => {});
     } catch (err) {
       console.warn('Partner reply failed:', err.message);
       addBubble('partner', `(Connection hiccup — try again.)`);
@@ -2459,9 +3162,11 @@ const LangSession = {
 
   // ── WRAP: new words → cards, streak, done ──
   async renderWrap() {
-    const { lang, lesson } = this;
+    const { lang, lesson, unit } = this;
     const body = document.getElementById('lang-session-body');
     const words = lesson.newWords || [];
+    const hasNextUnit = this.syllabus && this.unitIndex + 1 < this.syllabus.length;
+    const nextUnit = hasNextUnit ? this.syllabus[this.unitIndex + 1] : null;
 
     const wordsHtml = words.map(w => `
       <div class="new-word-row">
@@ -2470,10 +3175,18 @@ const LangSession = {
       </div>
     `).join('');
 
+    const masteryHtml = unit ? `
+      <div class="wrap-unit-line ${this.unitMastered ? 'mastered' : 'partial'}">
+        ${this.unitMastered
+          ? `✓ <strong>${unit.title}</strong> — mastered${this.drillScore ? ` (${this.drillScore.passed}/${this.drillScore.total} drills)` : ''}`
+          : `<strong>${unit.title}</strong> — ${this.drillScore ? `${this.drillScore.passed}/${this.drillScore.total} drills` : 'more practice needed'}. This unit will come round again.`}
+      </div>` : '';
+
     body.innerHTML = `
       <div class="prime-kicker">Session wrap · ${lang.name}</div>
       ${this.dotsHtml()}
-      <h3 class="consolidate-title">${words.length ? `${words.length} new word${words.length === 1 ? '' : 's'} joined your deck` : 'Nice work today'}</h3>
+      <h3 class="consolidate-title">${words.length ? `${words.length} new word${words.length === 1 ? '' : 's'} joined your deck` : 'Nice work'}</h3>
+      ${masteryHtml}
       <div class="new-words-list">${wordsHtml}</div>
       <div class="consolidate-calibration">${this.checkpointsPassed}/${(lesson.checkpoints || []).length} comprehension checks passed · they'll come due for review tomorrow</div>
       ${this.recipe?.ui?.coverageMeter ? (() => {
@@ -2485,13 +3198,17 @@ const LangSession = {
           <span class="lang-coverage-label">You can now read ~${pct}% of the Quran's words</span>
         </div>`;
       })() : ''}
-      <div class="consolidate-actions">
-        <button class="btn btn-primary" id="btn-session-done">Done for today →</button>
+      <div class="consolidate-actions wrap-actions">
+        ${hasNextUnit ? `<button class="btn btn-primary" id="btn-next-unit">Next: ${nextUnit.title} →</button>` : ''}
+        <button class="btn ${hasNextUnit ? 'btn-ghost' : 'btn-primary'}" id="btn-session-done">${hasNextUnit ? 'Stop here' : 'Done →'}</button>
       </div>
+      ${hasNextUnit ? `<p class="wrap-pace-note">Keep going as long as you like — there's no daily limit.</p>` : ''}
     `;
 
-    // Add new words as sentence cards + update the language profile — once per lesson
-    if (words.length && !lesson.cardsAdded) {
+    // Persist once per lesson: new vocabulary, the unit's pattern cards, and
+    // the profile counters. Written through dbPatchLanguage so a level flush
+    // that lands mid-session isn't overwritten by a stale in-memory copy.
+    if (!lesson.cardsAdded) {
       lesson.cardsAdded = true;
       const cards = words.map(w => ({
         front: w.exampleSentence || w.word,
@@ -2500,11 +3217,30 @@ const LangSession = {
         romanization: w.romanization || null,
         type: 'vocab'
       }));
-      try {
-        await dbAppendLangCards(lang.id, cards);
-        await dbPutLangLesson(lang.id, todayKey(), { cardsAdded: true });
 
-        // Streak: bump once per calendar day
+      // The rules get spaced-repeated too, not just the vocabulary — each
+      // mastered unit leaves its worked examples behind as grammar cards.
+      if (this.unitMastered && unit && lesson.grammar?.examples?.length) {
+        lesson.grammar.examples.slice(0, 3).forEach(ex => {
+          if (!ex.gloss || !ex.text) return;
+          cards.push({
+            front: `${ex.gloss}\n(${unit.structure})`,
+            back: ex.text,
+            word: unit.title,
+            romanization: ex.romanization || null,
+            type: 'grammar'
+          });
+        });
+      }
+
+      try {
+        if (cards.length) await dbAppendLangCards(lang.id, cards);
+        await dbPutLangLesson(lang.id, this.lessonKey || todayKey(), { cardsAdded: true });
+
+        const patch = {};
+
+        // Streak: bumps once per calendar day. It is a habit indicator only —
+        // nothing about progression is gated on it.
         const today = todayKey();
         const last = lang.lastSessionAt ? new Date(lang.lastSessionAt) : null;
         const lastKey = last ? `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}` : null;
@@ -2512,21 +3248,43 @@ const LangSession = {
           const yesterday = new Date(Date.now() - 86400000);
           const yKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
           lang.streak = lastKey === yKey ? (lang.streak || 0) + 1 : 1;
-          lang.sessionNumber = (lang.sessionNumber || 0) + 1;
           lang.lastSessionAt = Date.now();
+          patch.streak = lang.streak;
+          patch.lastSessionAt = lang.lastSessionAt;
         }
-        lang.knownWords = [...(lang.knownWords || []), ...words.map(w => w.word)].slice(-500);
-        lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+        lang.sessionNumber = (lang.sessionNumber || 0) + 1;
+        patch.sessionNumber = lang.sessionNumber;
+
+        if (words.length) {
+          lang.knownWords = [...(lang.knownWords || []), ...words.map(w => w.word)].slice(-500);
+          lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+          patch.knownWords = lang.knownWords;
+          patch.wordsLearned = lang.wordsLearned;
+        }
+
+        // Mastering the unit moves the pointer on. A unit not yet mastered
+        // leaves it where it is, so the next session repeats it.
+        if (this.unitMastered && hasNextUnit) {
+          lang.unitIndex = this.unitIndex + 1;
+          patch.unitIndex = lang.unitIndex;
+        }
+
         // Quranic recipe: today's root joins the learned list → coverage grows
         if (this.recipe?.id === 'quranic' && lesson.rootId && !(lang.rootsLearned || []).includes(lesson.rootId)) {
           lang.rootsLearned = [...(lang.rootsLearned || []), lesson.rootId];
+          patch.rootsLearned = lang.rootsLearned;
         }
-        await dbPutLanguage(lang);
+        await dbPatchLanguage(lang.id, patch);
       } catch (err) {
         console.warn('Session wrap persistence failed:', err.message);
       }
     }
 
+    // The uncapped path: straight into the next unit, same sitting.
+    const nextBtn = document.getElementById('btn-next-unit');
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => this.start(lang, this.unitIndex + 1));
+    }
     document.getElementById('btn-session-done').addEventListener('click', async () => {
       this.close();
       await renderLanguages();
@@ -3020,9 +3778,16 @@ const LangOnboard = {
     try {
       let cards = [];
       if (recipeId === 'fresh') {
+        // The foundation deck: eight frequency bands built in PARALLEL, so the
+        // learner starts with a real vocabulary base (~400 words, roughly 80%
+        // of everyday text) instead of the ~30 cards the seed deck gave them.
+        // Conversation is worth far more when there's something under it.
         cards = AppState.mode === 'demo'
-          ? demoSeedCards(p)
-          : await callSeedDeckGenerator(p, this.level);
+          ? [
+              ...[1, 2].flatMap(b => demoFoundationDeck(p, b)),
+              ...(p.script !== 'latin' ? demoSeedCards(p).filter(c => c.type === 'script') : [])
+            ]
+          : await buildFoundationDeck(p);
       } else if (recipeId === 'literacy') {
         // The script IS the course — seed unit 1 of the writing system only
         cards = AppState.mode === 'demo'
@@ -3038,7 +3803,11 @@ const LangOnboard = {
         recipeId,
         level: this.level,
         levelScore: this.levelScore ?? (this.level === 'A2' ? 40 : this.level === 'A1' ? 22 : 8),
-        knownWords: cards.filter(c => c.type === 'vocab').map(c => c.word).filter(Boolean),
+        knownWords: cards.filter(c => c.type === 'vocab').map(c => c.word).filter(Boolean).slice(0, 500),
+        unitIndex: 0,
+        unitsMastered: [],
+        intensity: 'normal',
+        bandsReleased: recipeId === 'fresh' ? 1 : 0,
         learnedChars: cards.filter(c => c.type === 'script').map(c => c.front),
         scriptUnit: recipeId === 'literacy' && cards.length ? 1 : 0,
         rootsLearned: [],

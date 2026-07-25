@@ -1001,6 +1001,229 @@ async function callSeedDeckGenerator(langProfile, level) {
   }));
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// THE INSTRUCTOR — the main tutor, who teaches how the language WORKS.
+//
+// The Companion agents below (story, partner) manufacture comprehensible input
+// and forced output; on their own they rely on the learner INFERRING the rules
+// from exposure, which needs immersion-scale volume. The Instructor supplies
+// what an adult learner can use and a child cannot: the rules stated outright,
+// then drilled. It owns the syllabus, and its current unit steers every
+// Companion prompt — which is what makes conversation escalate quickly instead
+// of drifting.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── AGENT: SYLLABUS ARCHITECT ────────────────────────────────────────────────
+// Called ONCE per language, then cached in langSyllabus/{langId} forever. Lays
+// out the grammar ladder in teaching order — each rung a structure the learner
+// can build sentences with the moment they've got it.
+async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
+  const prompt = `
+    You are designing the complete grammar syllabus for an adult English
+    speaker learning ${langProfile.name}, starting at ${startLevel}.
+
+    Produce 40 units in STRICT TEACHING ORDER — each one usable immediately and
+    building only on units before it. Cover the real backbone of the language:
+    how a basic sentence is built, then negation and questions, then the tense
+    system (present, past, future), agreement, and whatever else ${langProfile.name}
+    genuinely requires (cases, particles, aspect, classifiers, honorifics — only
+    if that language actually has them). Do NOT impose English grammar.
+
+    For each unit:
+    - "title": short and concrete, e.g. "Talking about yesterday"
+    - "structure": the pattern itself in one line, the thing being taught
+    - "whyItMatters": one sentence on what it unlocks for the learner
+    - "level": one of A0, A1, A2, B1, B2
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "units": [
+        { "id": "u1", "title": "...", "structure": "...", "whyItMatters": "...", "level": "A0" }
+      ]
+    }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  const units = Array.isArray(result.units)
+    ? result.units.filter(u => u.title && u.structure)
+    : [];
+  if (!units.length) throw new Error('Syllabus generation returned no units.');
+  return units.map((u, i) => ({
+    id: u.id || `u${i + 1}`,
+    title: u.title,
+    structure: u.structure,
+    whyItMatters: u.whyItMatters || '',
+    level: ['A0', 'A1', 'A2', 'B1', 'B2'].includes(u.level) ? u.level : 'A1'
+  }));
+}
+
+// ── AGENT: GRAMMAR UNIT GENERATOR ────────────────────────────────────────────
+// One unit's teaching content, generated on demand and cached with the lesson.
+// Explanation → pattern table → worked examples → the pitfall → drills.
+async function callGrammarUnitGenerator(langProfile, unit, knownWords = []) {
+  const nonLatin = langProfile.script !== 'latin';
+  const knownList = knownWords.slice(-200).join(', ');
+  const prompt = `
+    You are a patient grammar teacher explaining ONE structure in
+    ${langProfile.name} to an adult English speaker.
+
+    THE UNIT: ${unit.title}
+    THE STRUCTURE: ${unit.structure}
+
+    WORDS THEY ALREADY KNOW (build examples from these where you can):
+    ${knownList || '(near-beginner — use only the most universal starter words)'}
+
+    Write:
+    1. "explanation" — how this works, in plain English, 3-5 sentences. Compare
+       to English when it helps. If you must use a grammatical term, define it
+       in the same breath. Never assume they know jargon.
+    2. "patternTable" — the pattern laid out concretely (the conjugation set,
+       the word-order slots, the case endings — whatever fits). 3-8 rows.
+    3. "examples" — 4 full sentences using the structure, each with an English
+       gloss and a per-word gloss so every word can be tapped.
+    4. "pitfall" — the ONE mistake English speakers reliably make here.
+    5. "drills" — 6 practice items, mixed across these kinds:
+       - "cloze": prompt has a ___ blank; "answer" is the missing word only
+       - "build": "options" are the sentence's words scrambled; "answer" is the
+         correctly ordered sentence
+       - "transform": prompt gives a sentence + an instruction (e.g. "put this
+         into the past"); "answer" is the transformed sentence
+       - "translate": prompt is an English sentence; "answer" is it in ${langProfile.name}
+       Every drill must exercise THIS unit's structure. Include a "hint" that
+       points at the rule without giving the answer away.
+    ${nonLatin ? `- Give "${langProfile.romanizationName}" romanization for every example sentence.` : ''}
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "explanation": "...",
+      "patternTable": { "caption": "...", "rows": [{ "form": "...", "example": "...", "gloss": "..." }] },
+      "examples": [{ "text": "...", ${nonLatin ? '"romanization": "...", ' : ''}"gloss": "...", "wordGlosses": [{ "word": "...", "gloss": "..." }] }],
+      "pitfall": "...",
+      "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]
+    }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  const drills = Array.isArray(result.drills)
+    ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
+    : [];
+  if (!result.explanation && !drills.length) {
+    throw new Error('Grammar unit generation returned nothing usable.');
+  }
+  return {
+    explanation: result.explanation || '',
+    patternTable: result.patternTable && Array.isArray(result.patternTable.rows)
+      ? { caption: result.patternTable.caption || '', rows: result.patternTable.rows.filter(r => r.form).slice(0, 8) }
+      : null,
+    examples: Array.isArray(result.examples) ? result.examples.filter(e => e.text).slice(0, 6) : [],
+    pitfall: result.pitfall || '',
+    drills: drills.map(d => ({
+      kind: ['cloze', 'build', 'transform', 'translate'].includes(d.kind) ? d.kind : 'translate',
+      prompt: d.prompt,
+      answer: String(d.answer),
+      options: Array.isArray(d.options) ? d.options : [],
+      hint: d.hint || ''
+    }))
+  };
+}
+
+// ── AGENT: DRILL GRADER ──────────────────────────────────────────────────────
+// Only for free-text drills (transform / translate) — cloze and build grade
+// locally with no network call. The Instructor's voice: says what the rule is,
+// unlike the Companion, which corrects by recasting and never lectures.
+async function callDrillGrader(langProfile, unit, drill, answer) {
+  const prompt = `
+    A learner of ${langProfile.name} is practising this structure:
+    "${unit.structure}" (unit: ${unit.title})
+
+    TASK GIVEN: ${drill.prompt}
+    EXPECTED ANSWER: ${drill.answer}
+    LEARNER WROTE: ${answer}
+
+    Mark it. Accept any answer that is genuinely correct ${langProfile.name},
+    even if it differs from the expected one (synonyms, valid word order,
+    missing accents or diacritics on an otherwise correct answer). Reject it
+    only if the STRUCTURE being practised is wrong.
+
+    If wrong, say in one sentence what the rule requires — name it plainly, do
+    not just restate the correct answer.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "verdict": "pass" | "gap", "feedback": "one sentence", "correctedAnswer": "the correct sentence" }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  return {
+    verdict: result.verdict === 'pass' ? 'pass' : 'gap',
+    feedback: result.feedback || '',
+    correctedAnswer: result.correctedAnswer || drill.answer
+  };
+}
+
+// ── AGENT: WORD GLOSS ────────────────────────────────────────────────────────
+// The tap-a-word lookup. The most latency-sensitive call in the app, and the
+// last resort — most taps are served by glosses shipped with the lesson or by
+// the per-language cache, so this only fires for genuinely unseen words.
+async function callWordGloss(langProfile, word, sentence = '') {
+  const nonLatin = langProfile.script !== 'latin';
+  const prompt = `
+    Give the meaning of ONE word in ${langProfile.name} for an English-speaking
+    learner who just tapped it.
+
+    WORD: ${word}
+    ${sentence ? `IN THIS SENTENCE: ${sentence}` : ''}
+
+    Give the meaning it carries HERE, not a dictionary dump. Keep it under 8
+    words. If it is an inflected form, add its base form in the note.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "meaning": "short English meaning", ${nonLatin ? `"romanization": "in ${langProfile.romanizationName}", ` : ''}"note": "base form or grammar note, or empty" }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  return {
+    meaning: result.meaning || '',
+    romanization: result.romanization || null,
+    note: result.note || ''
+  };
+}
+
+// ── AGENT: FOUNDATION DECK ───────────────────────────────────────────────────
+// The pre-built deck. One frequency band per call so onboarding can fire all
+// bands in parallel and hand the learner a real vocabulary base — enough to
+// hold a conversation up — instead of the ~30 cards the seed deck gave them.
+async function callFoundationDeck(langProfile, band, count = 50) {
+  const nonLatin = langProfile.script !== 'latin';
+  const from = (band - 1) * count + 1;
+  const to = band * count;
+  const prompt = `
+    You are building band ${band} of a frequency-ordered foundation deck for a
+    learner of ${langProfile.name}.
+
+    Cover roughly the ${from}-${to} most frequent words of ${langProfile.name},
+    in descending frequency. These are the workhorse words — function words,
+    core verbs, everyday nouns — not topic vocabulary.
+
+    For each word, write a SHORT natural sentence (2-7 words) that uses it, and
+    the English translation of that sentence. Sentences should reuse words from
+    earlier in the band so the deck compounds.
+
+    Return exactly ${count} cards. Return ONLY valid JSON, no markdown fences:
+    {
+      "cards": [
+        { "front": "sentence in ${langProfile.name}", "back": "English translation", "word": "the target word", ${nonLatin ? '"romanization": "romanized sentence", ' : ''}"type": "vocab" }
+      ]
+    }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
+  if (!cards.length) throw new Error(`Foundation deck band ${band} returned no cards.`);
+  return cards.map(c => ({
+    front: c.front,
+    back: c.back,
+    word: c.word || '',
+    romanization: c.romanization || null,
+    type: 'vocab',
+    band
+  }));
+}
+
 // ── AGENT: SCRIPT UNIT GENERATOR ─────────────────────────────────────────────
 // Script bootcamp for non-Latin languages: each unit teaches the NEXT ~10
 // characters of the writing system in pedagogical order (kana rows, alphabet
@@ -1042,7 +1265,7 @@ async function callScriptUnitGenerator(langProfile, unitNumber, learnedChars = [
 // plus a handful of new frequency words. Comprehensible input, manufactured.
 // Returns a full day's lesson: story + glosses + checkpoints + shadow
 // sentences + a conversation topic (consumed by the other strands).
-async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
+async function callGradedStoryGenerator(langProfile, level, knownWords = [], unit = null) {
   const nonLatin = langProfile.script !== 'latin';
   const knownList = knownWords.slice(-400).join(', ');
   const prompt = `
@@ -1051,7 +1274,14 @@ async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
 
     WORDS THE LEARNER KNOWS (use these for ~95% of the story):
     ${knownList || '(complete beginner — use only the most universal starter words)'}
+${unit ? `
+    THE STRUCTURE THEY HAVE JUST BEEN TAUGHT: ${unit.structure}
+    (from the unit "${unit.title}")
 
+    Use that structure in at least HALF the sentences — this story is where the
+    rule they just studied becomes something they have actually seen working.
+    Do NOT use structures from later in the course that they have not met yet.
+` : ''}
     Write a SHORT, warm, slightly funny story or dialogue in ${langProfile.name}:
     - ${level === 'A0' ? '5-6' : level === 'A1' ? '7-9' : '9-12'} sentences, each short enough to hold in the head
     - Introduce exactly ${level === 'A0' ? '3' : '4'} NEW high-frequency words not on the known list
@@ -1061,16 +1291,17 @@ async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
 
     Also produce:
     - a one-line English gloss (translation) for each sentence
+    - a per-word gloss for every sentence, so the learner can tap any word
     - the new words with meanings and the story sentence each appears in
     - 2 comprehension questions in English about the story's content
     - the 4 best sentences for out-loud shadowing practice
-    - a one-line conversation topic related to the story
+    - a one-line conversation topic related to the story${unit ? ' that cannot be answered without using the structure above' : ''}
 
     Return ONLY valid JSON, no markdown fences:
     {
       "title": "story title in ${langProfile.name}",
       "titleGloss": "English title",
-      "sentences": [{ "text": "sentence", ${nonLatin ? '"romanization": "romanized", ' : ''}"gloss": "English translation" }],
+      "sentences": [{ "text": "sentence", ${nonLatin ? '"romanization": "romanized", ' : ''}"gloss": "English translation", "wordGlosses": [{ "word": "word", "gloss": "English meaning" }] }],
       "newWords": [{ "word": "word", ${nonLatin ? '"romanization": "romanized", ' : ''}"meaning": "English meaning", "exampleSentence": "the story sentence containing it" }],
       "checkpoints": [{ "question": "English comprehension question" }],
       "shadowSentences": ["sentence text", "sentence text", "sentence text", "sentence text"],
@@ -1084,7 +1315,10 @@ async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
   return {
     title: result.title || '',
     titleGloss: result.titleGloss || '',
-    sentences: result.sentences.filter(s => s.text),
+    sentences: result.sentences.filter(s => s.text).map(s => ({
+      ...s,
+      wordGlosses: Array.isArray(s.wordGlosses) ? s.wordGlosses.filter(w => w.word && w.gloss) : []
+    })),
     newWords: Array.isArray(result.newWords) ? result.newWords.filter(w => w.word && w.meaning) : [],
     checkpoints: Array.isArray(result.checkpoints) ? result.checkpoints.filter(c => c.question).slice(0, 2) : [],
     shadowSentences: Array.isArray(result.shadowSentences) ? result.shadowSentences.slice(0, 4) : [],
@@ -1097,16 +1331,26 @@ async function callGradedStoryGenerator(langProfile, level, knownWords = []) {
 // learner's level, keeps them producing, and corrects errors by RECASTING —
 // repeating the idea correctly in flow, then one marked "✏️" line the UI
 // turns into an optional review card. Never lectures.
-async function callLangPartner(langProfile, level, topic, history, userMessage, onChunk = null) {
+async function callLangPartner(langProfile, level, topic, history, userMessage, opts = {}) {
+  const { unit = null, intensity = 'normal', onChunk = null } = opts;
   const nonLatin = langProfile.script !== 'latin';
   const historyText = history
     .map(m => `${m.role === 'user' ? 'Learner' : 'Partner'}: ${m.content}`)
     .join('\n');
 
-  const levelRules = {
-    A0: `Use 3-6 word sentences only. After EVERY ${langProfile.name} sentence, give the English meaning in parentheses.`,
-    A1: `Use short, simple sentences. Give English in parentheses only for words likely to be new.`,
-    A2: `Use simple full sentences, no English unless the learner seems lost.`
+  // The complexity dial. The old version keyed only off the CEFR level, which
+  // drifts slowly — so the conversation never got harder at a pace the learner
+  // could feel. Intensity is theirs to set, and it moves immediately.
+  const intensityRules = {
+    gentle: `Sentences no longer than 6 words. After EVERY ${langProfile.name} sentence,
+      give the English in parentheses. Reuse the learner's own words back to them.`,
+    normal: `Short, natural sentences. English in parentheses only for words likely
+      to be new. Introduce one or two unfamiliar words per reply, in contexts that
+      make them guessable.`,
+    push: `Speak close to how you would to a native, just a notch slower: full
+      sentences, natural connectors, idiom where it fits. Give English ONLY if the
+      learner stalls. Introduce several new words per reply and expect them to keep
+      up. Ask follow-up questions that need more than one sentence to answer.`
   };
 
   const prompt = `
@@ -1116,19 +1360,26 @@ async function callLangPartner(langProfile, level, topic, history, userMessage, 
 
     Topic to anchor on: "${topic}"
 
-    LEVEL RULES: ${levelRules[level] || levelRules.A1}
+    HOW HARD TO MAKE THIS: ${intensityRules[intensity] || intensityRules.normal}
     ${nonLatin ? `SCRIPT: after each ${langProfile.name} phrase, add its ${langProfile.romanizationName} in parentheses.` : ''}
-
+${unit ? `
+    WHAT THEY ARE CURRENTLY LEARNING: ${unit.structure} (unit: "${unit.title}")
+    Use this structure yourself, and ask questions that can only be answered by
+    using it. This conversation is where that rule gets used for real. When they
+    do use it correctly, just carry on naturally — do not praise the grammar.
+` : ''}
     CONVERSATION RULES:
-    1. Reply mostly in ${langProfile.name}, within the level rules. Keep the
-       whole reply under 70 words.
+    1. Reply mostly in ${langProfile.name}, within the rules above. Keep the
+       whole reply under ${intensity === 'push' ? '110' : '70'} words.
     2. If the learner made an error, do NOT point it out directly. First
        respond naturally, recasting their idea correctly inside your reply.
        Then, at the END, add one line starting with exactly "✏️ " in this
        format: ✏️ corrected sentence — brief English reason (max 10 words)
-    3. If there was no error, no ✏️ line.
+    3. If there was no error, no ✏️ line.${unit ? `
+       Prioritise correcting mistakes in "${unit.structure}" over everything else.` : ''}
     4. ALWAYS end with a simple question to keep them talking.
-    5. Understand them even when their grammar is broken — meaning first.
+    5. Understand them even when their grammar is broken — meaning first. This
+       is about comprehension, not about letting errors pass uncorrected.
 
     CONVERSATION SO FAR:
     ${historyText || '(you speak first — greet them and open the topic)'}
@@ -1178,7 +1429,7 @@ async function callPlacementItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "question text", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true));
+  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
 }
 
 // Frontier finding for fluent speakers: which frequency band gets spotty
@@ -1202,7 +1453,7 @@ async function callFrontierItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "Which is the closest meaning of «word»?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true));
+  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
 }
 
 // ── AGENT: QURANIC ROOT LESSON GENERATOR ─────────────────────────────────────
@@ -1250,7 +1501,7 @@ async function callRootLessonGenerator(entry, learnedTranslits = []) {
       "checkpoints": [{ "question": "English comprehension question" }]
     }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const derivedWords = (Array.isArray(result.derivedWords) ? result.derivedWords : [])
     .filter(w => w.word && w.meaning).slice(0, 6);
   const verses = (Array.isArray(result.verses) ? result.verses : [])
@@ -1295,7 +1546,7 @@ async function callVerseLadderItems(band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "«arabic snippet» (transliteration) — Surah X:Y. What is this saying?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true));
+  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
 }
 
 // ── AGENT 5: FEYNMAN SANDBOX ASSESSOR ────────────────────────────────────────
@@ -1371,7 +1622,7 @@ async function callDecodeDrillGenerator(langProfile, learnedChars = [], knownWor
       ]
     }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const drills = (Array.isArray(result.drills) ? result.drills : [])
     .filter(d => d.written && d.meaning && Array.isArray(d.distractors) && d.distractors.length >= 2)
     .slice(0, 6);
@@ -1407,7 +1658,7 @@ async function callListeningCheckItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "What did the sentence mean?", "ttsText": "sentence in ${langProfile.name}", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const items = _validateAssessItems(result);
   if (!items.every(it => result.items.find(r => r.prompt === it.prompt)?.ttsText)) {
     // keep whatever ttsText came through; items without it still render as text
@@ -1443,7 +1694,7 @@ async function callPrecisionWords(langProfile, frontierBand, knownWords = []) {
     Return ONLY valid JSON, no markdown fences:
     { "words": [{ "word": "word", "meaning": "…", "example": "…", "cloze": "…", "contrast": "…" }] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const words = (Array.isArray(result.words) ? result.words : [])
     .filter(w => w.word && w.meaning && w.example).slice(0, 5);
   if (!words.length) throw new Error('Precision word generation returned nothing usable.');
@@ -1470,7 +1721,7 @@ async function callPrecisionCards(langProfile, selection, sentence, sourceBook) 
     Return ONLY valid JSON, no markdown fences:
     { "cards": [{ "front": "…", "back": "…" }] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryGemini(prompt, true, null, 'quick');
   const cards = (Array.isArray(result.cards) ? result.cards : [])
     .filter(c => c.front && c.back).slice(0, 2);
   if (!cards.length) throw new Error('Card generation returned nothing usable.');
