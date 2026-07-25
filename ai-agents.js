@@ -1704,6 +1704,108 @@ async function callPrecisionWords(langProfile, frontierBand, knownWords = []) {
   }));
 }
 
+// ── AGENT: VOCAB BUILDER ─────────────────────────────────────────────────────
+// The vocabulary builder proper. Unlike callPrecisionWords, which walks a
+// frequency frontier, this picks for ARTICULACY: words that let you say a
+// thing you can already think but currently say clumsily. Works in any
+// language — including the learner's own, where the goal is expression
+// rather than comprehension.
+async function callVocabWords(langProfile, tier = 'articulate', knownWords = [], theme = '', count = 6) {
+  const tiers = {
+    everyday: `words an educated adult uses in ordinary speech and writing but that
+      a vague speaker reaches past — the precise word instead of the general one.
+      Nothing that would sound showy said out loud.`,
+    articulate: `words that mark a genuinely articulate speaker — the ones that make
+      writing exact and arguments sharp. An educated reader knows them on sight but
+      most people never actively use them.`,
+    literary: `richer, rarer words from serious writing — still real working words
+      an author would choose deliberately, never dictionary curiosities nobody uses.`
+  };
+
+  const prompt = `
+    You are building a vocabulary set to make a ${langProfile.name} speaker more
+    ARTICULATE — better able to say precisely what they mean.
+
+    PICK: ${tiers[tier] || tiers.articulate}
+    ${theme ? `THEME: focus on words useful for talking about "${theme}".` : ''}
+
+    ALREADY LEARNED (never repeat these): ${knownWords.slice(-120).join(', ') || '(none yet)'}
+
+    Choose ${count} words. Avoid words that are merely long or obscure — every
+    one must earn its place by expressing something its common synonym cannot.
+
+    For each word give:
+    - "word": the word itself
+    - "partOfSpeech": noun / verb / adjective / adverb
+    - "pronunciation": a simple respelling, e.g. "per-FUNK-tuh-ree"
+    - "meaning": a precise, compact definition — no circular wording
+    - "example": ONE natural sentence that uses it well and makes the meaning
+      felt from context. This is the sentence the learner will remember.
+    - "cloze": that same sentence with the word replaced by exactly "_____"
+    - "contrast": one line separating it from its nearest common synonym,
+      phrased "Unlike X, it implies …"
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "words": [
+        { "word": "…", "partOfSpeech": "…", "pronunciation": "…", "meaning": "…",
+          "example": "…", "cloze": "…", "contrast": "…" }
+      ]
+    }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  const words = (Array.isArray(result.words) ? result.words : [])
+    .filter(w => w.word && w.meaning && w.example)
+    .slice(0, count);
+  if (!words.length) throw new Error('Vocabulary generation returned nothing usable.');
+
+  return words.map(w => ({
+    word: w.word,
+    partOfSpeech: w.partOfSpeech || '',
+    pronunciation: w.pronunciation || '',
+    meaning: w.meaning,
+    example: w.example,
+    // A cloze is only useful if the blank is actually there
+    cloze: (w.cloze && w.cloze.includes('_____')) ? w.cloze : blankOut(w.example, w.word),
+    contrast: w.contrast || ''
+  }));
+}
+
+// Falls back to blanking the word out of its own example when the model
+// forgets the cloze — the quiz depends on this never being missing.
+function blankOut(sentence, word) {
+  const stem = word.length > 4 ? word.slice(0, Math.ceil(word.length * 0.6)) : word;
+  const re = new RegExp(`\\b${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\w*\\b`, 'i');
+  return re.test(sentence) ? sentence.replace(re, '_____') : `_____ — ${sentence}`;
+}
+
+// ── AGENT: VOCAB USAGE GRADER ────────────────────────────────────────────────
+// The quiz's one open question: use the word yourself. Multiple choice proves
+// recognition; only producing a sentence proves you own it.
+async function callVocabUsageGrader(langProfile, wordEntry, sentence) {
+  const prompt = `
+    A ${langProfile.name} learner is proving they can USE a word they just studied.
+
+    WORD: ${wordEntry.word}
+    MEANING: ${wordEntry.meaning}
+    THEIR SENTENCE: ${sentence}
+
+    Judge only whether the word is used correctly and meaningfully. Accept any
+    natural sentence that shows they grasp the meaning, even if simple or
+    imperfectly punctuated. Reject it if the word is used in the wrong sense,
+    forced in where it does not fit, or the sentence is too empty to show
+    understanding (e.g. "I like perfunctory").
+
+    Return ONLY valid JSON, no markdown fences:
+    { "verdict": "pass" | "gap", "feedback": "one encouraging sentence naming what worked or what went wrong" }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  return {
+    verdict: result.verdict === 'pass' ? 'pass' : 'gap',
+    feedback: result.feedback || ''
+  };
+}
+
 // Harvested from the user's own reading: one highlighted word → precision cards
 async function callPrecisionCards(langProfile, selection, sentence, sourceBook) {
   const prompt = `

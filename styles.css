@@ -4685,3 +4685,222 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .wrap-actions .btn { width: 100%; }
   .word-pop-btn { min-height: 44px; }
 }
+
+/* ============================================================
+   VOCABULARY BUILDER
+   Its own view, two tabs. Learn shows each word inside the
+   sentence that makes its meaning felt; Quiz is built locally
+   from what has been studied.
+   ============================================================ */
+
+.vocab-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  margin-bottom: 1.2rem;
+}
+.vocab-select, .vocab-theme {
+  font-family: var(--font-body);
+  font-size: 0.84rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  min-width: 0;
+}
+.vocab-theme { flex: 1; min-width: 160px; }
+.vocab-select { cursor: pointer; }
+
+.vocab-tabs {
+  display: flex; gap: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.4rem;
+}
+.vocab-tab {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.15s ease;
+}
+.vocab-tab:hover { color: var(--text-secondary); }
+.vocab-tab.active { color: var(--purple); border-bottom-color: var(--purple); }
+
+.vocab-empty { text-align: center; padding: 2.5rem 1rem; }
+.vocab-empty-title {
+  font-family: var(--font-display);
+  font-size: 1.35rem; font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 0.5rem;
+}
+.vocab-empty-sub {
+  font-family: var(--font-body);
+  font-size: 0.9rem; line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 460px; margin: 0 auto 1.4rem;
+}
+
+.vocab-set-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.8rem; margin-bottom: 1rem;
+}
+.vocab-set-count {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vocab-list { display: flex; flex-direction: column; gap: 1rem; }
+
+.vocab-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--purple);
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.3rem;
+}
+.vocab-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+}
+.vocab-word {
+  font-family: var(--font-display);
+  font-size: 1.3rem; font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.vocab-speak {
+  border: 1px solid var(--border-light);
+  background: var(--bg-elevated);
+  border-radius: 50%;
+  width: 34px; height: 34px;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  transition: all 0.15s ease;
+}
+.vocab-speak:hover { border-color: var(--purple); }
+
+.vocab-meta { display: flex; gap: 0.6rem; margin: 0.2rem 0 0.6rem; flex-wrap: wrap; }
+.vocab-pos {
+  font-family: var(--font-body);
+  font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--indigo);
+}
+.vocab-pron {
+  font-family: var(--font-body);
+  font-size: 0.78rem; font-style: italic;
+  color: var(--text-muted);
+}
+.vocab-meaning {
+  font-family: var(--font-body);
+  font-size: 0.95rem; line-height: 1.55;
+  color: var(--text-primary);
+  margin: 0 0 0.8rem;
+}
+.vocab-example {
+  font-family: var(--font-reading);
+  font-size: 1.02rem; line-height: 1.6;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--gold);
+  padding-left: 0.85rem;
+  margin: 0 0 0.7rem;
+}
+.vocab-example strong { color: var(--text-primary); font-weight: 600; }
+.vocab-contrast {
+  font-family: var(--font-body);
+  font-size: 0.83rem; line-height: 1.5;
+  color: var(--indigo);
+  margin: 0;
+}
+
+.vocab-actions {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 0.7rem; margin-top: 1.4rem;
+}
+
+/* ── Quiz ── */
+.vocab-quiz-progress {
+  display: flex; align-items: center; gap: 0.8rem;
+  font-family: var(--font-body);
+  font-size: 0.76rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 1rem;
+}
+.vocab-quiz-bar {
+  flex: 1; height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 100px;
+  overflow: hidden;
+  min-width: 0;
+}
+.vocab-quiz-bar i {
+  display: block; height: 100%;
+  background: var(--purple);
+  transition: width 0.3s ease;
+}
+.vocab-quiz-score { color: var(--teal); font-weight: 600; }
+
+.vocab-quiz-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--purple);
+  border-radius: var(--radius-md);
+  padding: 1.4rem 1.3rem;
+}
+.vocab-quiz-kind {
+  font-family: var(--font-body);
+  font-size: 0.66rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.7rem;
+}
+.vocab-quiz-prompt {
+  font-family: var(--font-reading);
+  font-size: 1.12rem; line-height: 1.6;
+  color: var(--text-primary);
+  margin-bottom: 1.2rem;
+}
+.vocab-blank {
+  color: var(--purple);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.vocab-options { display: flex; flex-direction: column; gap: 0.55rem; }
+.vocab-option {
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  text-align: left;
+  padding: 0.7rem 0.95rem;
+  min-height: 44px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.vocab-option:hover:not(:disabled) { border-color: var(--purple); background: var(--purple-dim); }
+.vocab-option:disabled { cursor: default; }
+.vocab-option.correct { border-color: var(--teal); background: var(--teal-dim); color: var(--teal); font-weight: 600; }
+.vocab-option.wrong { border-color: var(--rose); background: rgba(109,37,48,0.07); color: var(--rose); }
+
+.vocab-quiz-actions { display: flex; justify-content: flex-end; margin-top: 0.9rem; }
+.vocab-quiz-verdict { margin-top: 1rem; }
+.vocab-quiz-verdict .btn { margin-top: 0.8rem; }
+
+@media (max-width: 768px) {
+  .vocab-controls { gap: 0.5rem; }
+  .vocab-theme { width: 100%; flex-basis: 100%; }
+  .vocab-card { padding: 1rem; }
+  .vocab-word { font-size: 1.18rem; }
+  .vocab-actions .btn { width: 100%; }
+  .vocab-tab { padding: 0.6rem 0.8rem; font-size: 0.84rem; }
+}

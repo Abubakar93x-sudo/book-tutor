@@ -374,6 +374,23 @@ async function dbAppendLangCards(langId, newCards) {
   }
 }
 
+// vocabSets/{langId}_set_{n} — one generated batch of vocabulary-builder
+// words, cached so revisiting a set costs nothing.
+async function dbGetVocabSet(langId, setNumber) {
+  const col = userCol('vocabSets');
+  if (!col) return null;
+  const snap = await col.doc(`${langId}_set_${setNumber}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function dbPutVocabSet(langId, setNumber, words) {
+  const col = userCol('vocabSets');
+  if (!col) return;
+  await col.doc(`${langId}_set_${setNumber}`).set(
+    { langId, setNumber, words, updatedAt: Date.now() }, { merge: true }
+  );
+}
+
 // ── FOUNDATION DECK ──────────────────────────────────────────────────────────
 // Eight frequency bands built in parallel at onboarding. Only band 1 is due
 // straight away — the rest are held with a far-future due date so the learner
@@ -1451,7 +1468,11 @@ async function renderLanguages() {
   if (!grid) return;
 
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
-  const languages = await dbGetAllLanguages();
+  const all = await dbGetAllLanguages();
+
+  // Vocabulary-builder entries are not courses — they have no session to start
+  // and live in their own view, so they stay off this grid.
+  const languages = all.filter(l => getRecipe(l).id !== 'vocabBuilder');
 
   // Keep the reader's "Add to vocab" harvest target fresh
   AppState._harvestLang = languages.find(l => getRecipe(l).id === 'vocabExpand') || null;
@@ -1833,6 +1854,410 @@ async function generateVocabExpandLesson(lang) {
 }
 
 registerRecipeLessonGenerator('vocabExpand', generateVocabExpandLesson);
+
+// ── VOCABULARY BUILDER ───────────────────────────────────────────────────────
+// A standalone surface, not a course strand: pick a language, get words that
+// make you more articulate, meet each one inside the sentence that makes its
+// meaning felt, then prove you own them in the Quiz tab.
+//
+// English is offered first and needs no profiler call — for most users this is
+// their own language, where the goal is expression rather than comprehension.
+// Every other language goes through the same profiler the courses use.
+//
+// Words become `precision` cards in the shared SM-2 deck, so the Flashcards tab
+// keeps reviewing them long after the set is closed.
+
+const ENGLISH_PROFILE = {
+  id: 'en', name: 'English', nativeName: 'English', code: 'en', ttsLangCode: 'en-GB',
+  script: 'latin', scriptName: 'Latin alphabet', romanizationName: null,
+  notes: 'Vocabulary building for expression, not comprehension.'
+};
+
+const VocabBuilder = {
+  lang: null,
+  langs: [],
+  tab: 'learn',
+  words: [],           // the set currently on screen
+  setNumber: 0,
+  quiz: null,
+
+  async open() {
+    const all = await dbGetAllLanguages().catch(() => []);
+    this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder');
+
+    // First visit: English is ready to go with no setup at all.
+    if (!this.langs.length) {
+      this.lang = { ...ENGLISH_PROFILE, recipeId: 'vocabBuilder', tier: 'articulate',
+        level: 'B2', knownWords: [], vocabSet: 0, quizStats: { asked: 0, correct: 0 } };
+      this.langs = [this.lang];
+    } else {
+      this.lang = this.langs.find(l => l.id === this.lang?.id) || this.langs[0];
+    }
+
+    this.renderControls();
+    this.renderTab();
+  },
+
+  renderControls() {
+    const sel = document.getElementById('vocab-lang-select');
+    if (!sel) return;
+    sel.innerHTML = this.langs.map(l =>
+      `<option value="${l.id}"${l.id === this.lang.id ? ' selected' : ''}>${l.name}</option>`).join('');
+    const tier = document.getElementById('vocab-tier-select');
+    if (tier) tier.value = this.lang.tier || 'articulate';
+  },
+
+  switchTab(tab) {
+    this.tab = tab;
+    document.querySelectorAll('.vocab-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('vocab-panel-learn').style.display = tab === 'learn' ? 'block' : 'none';
+    document.getElementById('vocab-panel-quiz').style.display = tab === 'quiz' ? 'block' : 'none';
+    this.renderTab();
+  },
+
+  renderTab() {
+    if (this.tab === 'learn') this.renderLearn();
+    else this.renderQuiz();
+  },
+
+  // ── LEARN ──
+  renderLearn() {
+    const panel = document.getElementById('vocab-panel-learn');
+    if (!panel) return;
+
+    if (!this.words.length) {
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">Build your ${this.lang.name} vocabulary</h3>
+          <p class="vocab-empty-sub">
+            You'll get ${this.lang.name === 'English' ? 'words an articulate speaker reaches for' : 'precise, useful words'} —
+            each one inside a sentence that makes its meaning stick.
+            ${(this.lang.knownWords || []).length ? `<br>${(this.lang.knownWords || []).length} words learned so far.` : ''}
+          </p>
+          <button class="btn btn-primary" id="btn-vocab-generate">
+            ${(this.lang.knownWords || []).length ? 'Next set of words →' : 'Start with 6 words →'}
+          </button>
+        </div>
+      `;
+      document.getElementById('btn-vocab-generate').addEventListener('click', () => this.loadWords());
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="vocab-set-head">
+        <span class="vocab-set-count">${this.words.length} words · set ${this.setNumber + 1}</span>
+        <button class="btn btn-ghost btn-sm" id="btn-vocab-more">New set →</button>
+      </div>
+      <div class="vocab-list">
+        ${this.words.map((w, i) => `
+          <article class="vocab-card" data-idx="${i}">
+            <div class="vocab-card-head">
+              <h3 class="vocab-word">${escapeAttr(w.word)}</h3>
+              <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+            </div>
+            <div class="vocab-meta">
+              ${w.partOfSpeech ? `<span class="vocab-pos">${escapeAttr(w.partOfSpeech)}</span>` : ''}
+              ${w.pronunciation ? `<span class="vocab-pron">${escapeAttr(w.pronunciation)}</span>` : ''}
+            </div>
+            <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
+            <blockquote class="vocab-example">${highlightWordIn(w.example, w.word)}</blockquote>
+            ${w.contrast ? `<p class="vocab-contrast">${escapeAttr(w.contrast)}</p>` : ''}
+          </article>
+        `).join('')}
+      </div>
+      <div class="vocab-actions">
+        <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
+      </div>
+    `;
+
+    panel.querySelectorAll('.vocab-speak').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const w = this.words[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(w.word, this.lang.ttsLangCode || this.lang.code, 0.85)) {
+          showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+        }
+      });
+    });
+    document.getElementById('btn-vocab-more').addEventListener('click', () => this.loadWords());
+    document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
+  },
+
+  async loadWords() {
+    const panel = document.getElementById('vocab-panel-learn');
+    const tier = document.getElementById('vocab-tier-select')?.value || 'articulate';
+    const theme = document.getElementById('vocab-theme')?.value.trim() || '';
+    this.lang.tier = tier;
+
+    panel.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:3rem 0;">
+      <span class="cp-spinner"></span> Choosing ${this.lang.name} words…</div>`;
+
+    try {
+      const setNumber = this.lang.vocabSet || 0;
+      // A themed request is always fresh; an untouched set replays from cache.
+      let cached = theme ? null : await dbGetVocabSet(this.lang.id, setNumber);
+      let words = cached?.words;
+
+      if (!words?.length) {
+        words = AppState.mode === 'demo'
+          ? demoVocabBuilderWords(this.lang, tier)
+          : await callVocabWords(this.lang, tier, this.lang.knownWords || [], theme);
+        await dbPutVocabSet(this.lang.id, setNumber, words);
+      }
+
+      this.words = words;
+      this.setNumber = setNumber;
+      this.quiz = null;                    // a new set invalidates the old quiz
+      await this.persistSet(words);
+      this.renderLearn();
+    } catch (err) {
+      console.warn('Vocab generation failed:', err.message);
+      panel.innerHTML = `<div class="cp-fallback" style="text-align:center; padding:2rem 0;">
+        Couldn't build the word set: ${escapeAttr(err.message)}
+      </div>
+      <div class="vocab-actions"><button class="btn btn-ghost" id="btn-vocab-retry">Try again</button></div>`;
+      document.getElementById('btn-vocab-retry').addEventListener('click', () => this.loadWords());
+    }
+  },
+
+  // Words join the shared SM-2 deck, and the profile tracks what's been seen so
+  // the generator never repeats itself.
+  async persistSet(words) {
+    const lang = this.lang;
+    lang.knownWords = [...new Set([...(lang.knownWords || []), ...words.map(w => w.word)])].slice(-400);
+    lang.vocabSet = (lang.vocabSet || 0) + 1;
+    lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+
+    try {
+      await dbAppendLangCards(lang.id, words.map(w => ({
+        front: w.cloze,
+        back: `${w.word} — ${w.meaning}`,
+        word: w.word,
+        romanization: null,
+        type: 'precision'
+      })));
+      await dbPutLanguage(lang);
+      if (!this.langs.some(l => l.id === lang.id)) this.langs.push(lang);
+      this.renderControls();
+    } catch (err) {
+      console.warn('Vocab persistence failed:', err.message);
+    }
+  },
+
+  // ── QUIZ ──
+  // Built locally from words already studied: no API call, no waiting, and the
+  // questions can never drift from what was actually taught. The one exception
+  // is the closing item, where you write your own sentence — recognition is
+  // cheap, production is the real test.
+  renderQuiz() {
+    const panel = document.getElementById('vocab-panel-quiz');
+    if (!panel) return;
+
+    const pool = this.words.length ? this.words : null;
+    if (!pool) {
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">Nothing to quiz yet</h3>
+          <p class="vocab-empty-sub">Learn a set of words first — the quiz is built from what you've studied.</p>
+          <button class="btn btn-primary" id="btn-quiz-to-learn">Go to Learn →</button>
+        </div>`;
+      document.getElementById('btn-quiz-to-learn').addEventListener('click', () => this.switchTab('learn'));
+      return;
+    }
+
+    if (!this.quiz) this.quiz = { items: buildVocabQuiz(pool), idx: 0, correct: 0, answered: false };
+    const q = this.quiz;
+
+    if (q.idx >= q.items.length) { this.renderQuizResults(); return; }
+
+    const item = q.items[q.idx];
+    panel.innerHTML = `
+      <div class="vocab-quiz-progress">
+        <span>${q.idx + 1} of ${q.items.length}</span>
+        <div class="vocab-quiz-bar"><i style="width:${(q.idx / q.items.length) * 100}%"></i></div>
+        <span class="vocab-quiz-score">${q.correct} correct</span>
+      </div>
+      <div class="vocab-quiz-card">
+        <div class="vocab-quiz-kind">${item.label}</div>
+        <div class="vocab-quiz-prompt">${item.promptHtml}</div>
+        ${item.kind === 'use'
+          ? `<textarea class="cp-answer" id="vocab-use-input" rows="2" placeholder="Write a sentence using “${escapeAttr(item.word.word)}”…"></textarea>
+             <div class="vocab-quiz-actions"><button class="btn btn-primary" id="btn-vocab-use-check">Check</button></div>`
+          : `<div class="vocab-options">${item.options.map((o, i) =>
+              `<button class="vocab-option" data-i="${i}">${escapeAttr(o)}</button>`).join('')}</div>`}
+        <div class="vocab-quiz-verdict" id="vocab-quiz-verdict"></div>
+      </div>
+    `;
+
+    if (item.kind === 'use') {
+      document.getElementById('btn-vocab-use-check').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-vocab-use-check');
+        const text = document.getElementById('vocab-use-input').value.trim();
+        if (!text) return;
+        btn.disabled = true; btn.textContent = 'Checking…';
+        let res;
+        try {
+          res = AppState.mode === 'demo'
+            ? { verdict: text.split(/\s+/).length >= 4 ? 'pass' : 'gap',
+                feedback: text.split(/\s+/).length >= 4 ? 'Used naturally — that\'s the word working.' : 'Give it a fuller sentence so the meaning shows.' }
+            : await callVocabUsageGrader(this.lang, item.word, text);
+        } catch (err) {
+          res = { verdict: 'pass', feedback: 'Check unavailable — counting it.' };
+        }
+        this.markAnswer(res.verdict === 'pass', res.feedback, item);
+      });
+    } else {
+      panel.querySelectorAll('.vocab-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (q.answered) return;
+          const chosen = parseInt(btn.dataset.i);
+          const right = chosen === item.answerIdx;
+          panel.querySelectorAll('.vocab-option').forEach((b, i) => {
+            if (i === item.answerIdx) b.classList.add('correct');
+            else if (i === chosen) b.classList.add('wrong');
+            b.disabled = true;
+          });
+          this.markAnswer(right, right ? 'Correct.' : `It's “${item.options[item.answerIdx]}”. ${item.word.meaning}`, item);
+        });
+      });
+    }
+  },
+
+  markAnswer(correct, feedback, item) {
+    const q = this.quiz;
+    q.answered = true;
+    if (correct) q.correct += 1;
+    // A missed word comes back at the end — the point is to learn it, not score it.
+    else if (!item.requeued) q.items.push({ ...item, requeued: true });
+
+    const v = document.getElementById('vocab-quiz-verdict');
+    v.innerHTML = `
+      <div class="cp-verdict ${correct ? 'cp-pass' : 'cp-gap'}">${correct ? '✓ ' : ''}${escapeAttr(feedback)}</div>
+      <button class="btn btn-primary btn-sm" id="btn-vocab-next">${q.idx + 1 >= q.items.length ? 'See results →' : 'Next →'}</button>
+    `;
+    document.getElementById('btn-vocab-next').addEventListener('click', () => {
+      q.idx += 1; q.answered = false; this.renderQuiz();
+    });
+  },
+
+  renderQuizResults() {
+    const panel = document.getElementById('vocab-panel-quiz');
+    const q = this.quiz;
+    const pct = Math.round((q.correct / q.items.length) * 100);
+    const lang = this.lang;
+
+    lang.quizStats = {
+      asked: (lang.quizStats?.asked || 0) + q.items.length,
+      correct: (lang.quizStats?.correct || 0) + q.correct
+    };
+    dbPutLanguage(lang).catch(err => console.warn('Quiz stats save failed:', err.message));
+
+    panel.innerHTML = `
+      <div class="vocab-empty">
+        <h3 class="vocab-empty-title">${q.correct} of ${q.items.length} — ${pct}%</h3>
+        <p class="vocab-empty-sub">
+          ${pct >= 80 ? 'These are yours. They\'ll come back in your flashcards to stay that way.'
+                      : 'The ones you missed came round again — and they\'re all in your flashcard deck now.'}
+        </p>
+        <div class="vocab-actions">
+          <button class="btn btn-primary" id="btn-vocab-requiz">Quiz again</button>
+          <button class="btn btn-ghost" id="btn-vocab-newset">Learn a new set →</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('btn-vocab-requiz').addEventListener('click', () => {
+      this.quiz = null; this.renderQuiz();
+    });
+    document.getElementById('btn-vocab-newset').addEventListener('click', () => {
+      this.switchTab('learn'); this.loadWords();
+    });
+  }
+};
+
+// Wraps the target word in its example so the eye lands on it immediately.
+function highlightWordIn(sentence, word) {
+  const stem = word.length > 4 ? word.slice(0, Math.ceil(word.length * 0.6)) : word;
+  const re = new RegExp(`\\b(${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\w*)\\b`, 'i');
+  const safe = escapeAttr(sentence);
+  return re.test(safe) ? safe.replace(re, '<strong>$1</strong>') : safe;
+}
+
+// Three recognition formats plus one production item, all derived from the set
+// itself — so the quiz costs nothing and always matches what was taught.
+function buildVocabQuiz(words) {
+  const items = [];
+  const pick = (arr, n, exclude) =>
+    shuffleArray(arr.filter(x => x !== exclude)).slice(0, n);
+
+  words.forEach(w => {
+    // 1. cloze: the studied sentence, word removed
+    const clozeDistractors = pick(words.map(x => x.word), 3, w.word);
+    if (clozeDistractors.length === 3) {
+      const options = shuffleArray([w.word, ...clozeDistractors]);
+      items.push({
+        kind: 'cloze', label: 'Which word fits?', word: w,
+        promptHtml: escapeAttr(w.cloze).replace('_____', '<span class="vocab-blank">_____</span>'),
+        options, answerIdx: options.indexOf(w.word)
+      });
+    }
+
+    // 2. meaning → word
+    const meaningDistractors = pick(words.map(x => x.word), 3, w.word);
+    if (meaningDistractors.length === 3) {
+      const options = shuffleArray([w.word, ...meaningDistractors]);
+      items.push({
+        kind: 'meaning', label: 'Which word means this?', word: w,
+        promptHtml: escapeAttr(w.meaning),
+        options, answerIdx: options.indexOf(w.word)
+      });
+    }
+  });
+
+  // 3. one production item: use a word yourself
+  const target = words[Math.floor(Math.random() * words.length)];
+  const quiz = shuffleArray(items).slice(0, 8);
+  quiz.push({
+    kind: 'use', label: 'Now use it yourself', word: target,
+    promptHtml: `<strong>${escapeAttr(target.word)}</strong> — ${escapeAttr(target.meaning)}`,
+    options: [], answerIdx: -1
+  });
+  return quiz;
+}
+
+function demoVocabBuilderWords(lang, tier) {
+  return [
+    { word: 'perfunctory', partOfSpeech: 'adjective', pronunciation: 'per-FUNK-tuh-ree',
+      meaning: 'done as a routine duty, without real care or interest',
+      example: 'He gave the report a perfunctory glance and signed it.',
+      cloze: 'He gave the report a _____ glance and signed it.',
+      contrast: 'Unlike "careless", it implies going through the motions of an obligation.' },
+    { word: 'equivocate', partOfSpeech: 'verb', pronunciation: 'ih-KWIV-uh-kayt',
+      meaning: 'to use vague language deliberately to avoid committing to a position',
+      example: 'Asked directly whether he would resign, the minister equivocated.',
+      cloze: 'Asked directly whether he would resign, the minister _____.',
+      contrast: 'Unlike "lie", it avoids the truth without stating a falsehood.' },
+    { word: 'trenchant', partOfSpeech: 'adjective', pronunciation: 'TREN-chunt',
+      meaning: 'sharply perceptive and forcefully expressed',
+      example: 'Her trenchant analysis left nothing of the argument standing.',
+      cloze: 'Her _____ analysis left nothing of the argument standing.',
+      contrast: 'Unlike "harsh", it implies incisiveness rather than cruelty.' },
+    { word: 'assuage', partOfSpeech: 'verb', pronunciation: 'uh-SWAYJ',
+      meaning: 'to make an unpleasant feeling less intense',
+      example: 'Nothing he said could assuage her guilt.',
+      cloze: 'Nothing he said could _____ her guilt.',
+      contrast: 'Unlike "solve", it eases the feeling without removing the cause.' },
+    { word: 'ostensible', partOfSpeech: 'adjective', pronunciation: 'oss-TEN-sih-bul',
+      meaning: 'stated as true, but likely not the real reason',
+      example: 'The ostensible purpose of the trip was research.',
+      cloze: 'The _____ purpose of the trip was research.',
+      contrast: 'Unlike "apparent", it hints that the truth is being concealed.' },
+    { word: 'inveterate', partOfSpeech: 'adjective', pronunciation: 'in-VET-er-it',
+      meaning: 'having a long-established habit unlikely to change',
+      example: 'He was an inveterate collector of other people\'s stories.',
+      cloze: 'He was an _____ collector of other people\'s stories.',
+      contrast: 'Unlike "frequent", it describes the person, not the act.' }
+  ];
+}
 
 // ── TAP ANY WORD ─────────────────────────────────────────────────────────────
 // Every piece of target-language text in the language section is tokenized so
@@ -6676,6 +7101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (view === 'review') initReviewSession();
       if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
+      if (view === 'vocab') VocabBuilder.open();
     });
   });
 
@@ -6689,7 +7115,53 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (view === 'review') initReviewSession();
       if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
+      if (view === 'vocab') VocabBuilder.open();
     });
+  });
+
+  // ── VOCABULARY BUILDER ──
+  document.querySelectorAll('.vocab-tab').forEach(btn => {
+    btn.addEventListener('click', () => VocabBuilder.switchTab(btn.dataset.tab));
+  });
+  document.getElementById('vocab-lang-select').addEventListener('change', async (e) => {
+    VocabBuilder.lang = VocabBuilder.langs.find(l => l.id === e.target.value) || VocabBuilder.lang;
+    VocabBuilder.words = [];
+    VocabBuilder.quiz = null;
+    VocabBuilder.renderControls();
+    VocabBuilder.renderTab();
+  });
+  document.getElementById('vocab-tier-select').addEventListener('change', (e) => {
+    VocabBuilder.lang.tier = e.target.value;
+  });
+  // Any language can have a vocabulary builder — it runs through the same
+  // profiler the courses use, so script and voice come out right.
+  document.getElementById('btn-vocab-add-lang').addEventListener('click', async () => {
+    const name = prompt('Which language do you want to build vocabulary in?');
+    if (!name || !name.trim()) return;
+    const btn = document.getElementById('btn-vocab-add-lang');
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      const profile = AppState.mode === 'demo'
+        ? demoLanguageProfile(name.trim())
+        : await callLanguageProfiler(name.trim());
+      const lang = {
+        ...profile, id: profile.code, recipeId: 'vocabBuilder',
+        tier: 'articulate', level: 'B2', knownWords: [], vocabSet: 0,
+        wordsLearned: 0, quizStats: { asked: 0, correct: 0 }, createdAt: Date.now()
+      };
+      await dbPutLanguage(lang);
+      VocabBuilder.langs.push(lang);
+      VocabBuilder.lang = lang;
+      VocabBuilder.words = [];
+      VocabBuilder.quiz = null;
+      VocabBuilder.renderControls();
+      VocabBuilder.renderTab();
+      showToast(`${lang.name} added to your vocabulary builder.`, 'success');
+    } catch (err) {
+      showToast('Could not add that language: ' + err.message, 'error', 6000);
+    } finally {
+      btn.disabled = false; btn.textContent = '+ Language';
+    }
   });
 
   // ── LIBRARY SEARCH ──

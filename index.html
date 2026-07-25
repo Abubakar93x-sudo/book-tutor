@@ -78,6 +78,10 @@
           <span class="nav-icon"></span>
           <span class="nav-label">Languages</span>
         </a>
+        <a href="#vocab" class="nav-link" id="nav-vocab" data-view="vocab">
+          <span class="nav-icon"></span>
+          <span class="nav-label">Vocabulary</span>
+        </a>
       </nav>
 
       <!-- Sidebar Footer: User info + Settings -->
@@ -714,6 +718,38 @@
         </div>
       </section>
 
+      <!-- ============================================================
+        VOCABULARY BUILDER — words that make you more articulate.
+        Two tabs: Learn (word, meaning, the sentence that fixes it in
+        memory) and Quiz (recognition MCQs built locally from what you
+        have studied, plus one write-it-yourself item).
+      ============================================================ -->
+      <section id="view-vocab" class="view">
+        <div class="page-header">
+          <h2 class="page-title">Vocabulary</h2>
+          <p class="page-subtitle">Words that let you say precisely what you mean. Learn them in a sentence, then prove you own them.</p>
+        </div>
+
+        <div class="vocab-controls" id="vocab-controls">
+          <select id="vocab-lang-select" class="vocab-select" title="Language"></select>
+          <select id="vocab-tier-select" class="vocab-select" title="How advanced">
+            <option value="everyday">Everyday precision</option>
+            <option value="articulate" selected>Articulate</option>
+            <option value="literary">Literary</option>
+          </select>
+          <input id="vocab-theme" class="vocab-theme" type="text" placeholder="Theme (optional) — e.g. argument, emotion" />
+          <button class="btn btn-ghost btn-sm" id="btn-vocab-add-lang">+ Language</button>
+        </div>
+
+        <div class="vocab-tabs" id="vocab-tabs">
+          <button class="vocab-tab active" data-tab="learn">Learn</button>
+          <button class="vocab-tab" data-tab="quiz">Quiz</button>
+        </div>
+
+        <div class="vocab-panel" id="vocab-panel-learn"></div>
+        <div class="vocab-panel" id="vocab-panel-quiz" style="display:none;"></div>
+      </section>
+
     </main>
   </div>
 
@@ -941,6 +977,10 @@
     <a href="#languages" class="mobile-nav-item" id="mobile-nav-languages" data-view="languages">
       <span class="mobile-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c-2.2 2.2-3.3 4.8-3.3 7.5s1.1 5.3 3.3 7.5c2.2-2.2 3.3-4.8 3.3-7.5S12.2 4.7 10 2.5z"/></svg></span>
       <span class="mobile-nav-label">Languages</span>
+    </a>
+    <a href="#vocab" class="mobile-nav-item" id="mobile-nav-vocab" data-view="vocab">
+      <span class="mobile-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h9a2 2 0 012 2v11a1.5 1.5 0 00-1.5-1.5H4z"/><path d="M4 3.5A1.5 1.5 0 002.5 5v11A1.5 1.5 0 004 17.5h11"/><path d="M6.5 7h6M6.5 10h4"/></svg></span>
+      <span class="mobile-nav-label">Vocab</span>
     </a>
   </nav>
 

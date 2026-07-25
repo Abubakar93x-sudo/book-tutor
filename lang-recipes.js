@@ -54,6 +54,21 @@ const RECIPES = {
     ui: { bookHarvest: true }
   },
 
+  // The vocabulary builder. Not a course — there is no session player, no
+  // strands, no daily loop. It lives in its own view and exists to make an
+  // already-competent speaker more ARTICULATE, which is why it is the one
+  // recipe that makes sense in the learner's own native language. Its cards
+  // still flow into the shared SM-2 deck like everything else.
+  vocabBuilder: {
+    id: 'vocabBuilder',
+    label: 'Vocabulary builder',
+    unitType: 'word',
+    strands: [],                      // never played as a session
+    assessment: 'none',
+    loadingCopy: (lang) => `Choosing your next ${lang.name} words…`,
+    ui: { standalone: true }
+  },
+
   // Quranic Arabic: root families in corpus-frequency order, anchored in real
   // verses. Closed corpus → honest coverage math from static data. No
   // conversation strand (nobody chats in classical fus'ha); shadowing is
