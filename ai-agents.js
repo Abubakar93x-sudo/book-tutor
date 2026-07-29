@@ -1988,49 +1988,83 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
       an author would choose deliberately, never dictionary curiosities nobody uses.`
   };
 
+  const isEnglish = /^en/i.test(langProfile.code || '') || /english/i.test(langProfile.name || '');
+  const nonLatin = langProfile.script && langProfile.script !== 'latin';
+  const romanName = langProfile.romanizationName || 'Roman letters';
+
   const prompt = `
-    You are building a vocabulary set to make a ${langProfile.name} speaker more
-    ARTICULATE — better able to say precisely what they mean.
+    You are building a vocabulary set in ${langProfile.name.toUpperCase()}.
+
+    EVERY WORD YOU RETURN MUST BE A ${langProfile.name.toUpperCase()} WORD,
+    written ${nonLatin ? `in ${langProfile.scriptName} script` : `as ${langProfile.name} is normally written`}.
+    ${isEnglish ? '' : `Do NOT return English words. The learner already speaks
+    English and wants to expand their ${langProfile.name}. If you cannot think of
+    a suitable ${langProfile.name} word, choose a different ${langProfile.name}
+    word — never substitute an English one.`}
+
+    The goal is ARTICULACY: words that let the learner say precisely what they
+    mean in ${langProfile.name}, instead of reaching for a vague general term.
 
     PICK: ${tiers[tier] || tiers.articulate}
     ${theme ? `THEME: focus on words useful for talking about "${theme}".` : ''}
 
-    ALREADY LEARNED (never repeat these): ${knownWords.slice(-120).join(', ') || '(none yet)'}
+    ALREADY LEARNED — these are BANNED. Do not return any of them, and do not
+    return a trivial inflection of one either:
+    ${knownWords.slice(-300).join(', ') || '(none yet)'}
 
-    Choose ${count} words. Avoid words that are merely long or obscure — every
-    one must earn its place by expressing something its common synonym cannot.
+    Choose ${count} words, all different from each other. Avoid words that are
+    merely long or obscure — every one must earn its place by expressing
+    something its common synonym cannot.
 
     For each word give:
-    - "word": the word itself
-    - "partOfSpeech": noun / verb / adjective / adverb
-    - "pronunciation": a simple respelling, e.g. "per-FUNK-tuh-ree"
-    - "meaning": a precise, compact definition — no circular wording
-    - "example": ONE natural sentence that uses it well and makes the meaning
-      felt from context. This is the sentence the learner will remember.
+    - "word": the word itself${nonLatin ? `, in ${langProfile.scriptName} script` : ''}
+    - "partOfSpeech": noun / verb / adjective / adverb${isEnglish ? '' : ' (in English)'}
+    ${nonLatin
+      ? `- "pronunciation": how to say it, written in ${romanName} — this is what an
+      English speaker reads to pronounce it`
+      : `- "pronunciation": a simple respelling, e.g. "per-FUNK-tuh-ree"`}
+    - "meaning": a precise, compact definition IN ENGLISH — no circular wording
+    - "example": ONE natural sentence IN ${langProfile.name.toUpperCase()}${nonLatin
+      ? `, written in ${langProfile.scriptName} script` : ''}, using the word well
+      so its meaning is felt from context
+    ${nonLatin ? `- "exampleRomanization": that same sentence in ${romanName}` : ''}
+    ${isEnglish ? '' : '- "exampleTranslation": the English translation of that sentence'}
     - "cloze": that same sentence with the word replaced by exactly "_____"
-    - "contrast": one line separating it from its nearest common synonym,
-      phrased "Unlike X, it implies …"
+    - "contrast": one line IN ENGLISH separating it from its nearest common
+      ${langProfile.name} synonym, phrased "Unlike X, it implies …"
 
     Return ONLY valid JSON, no markdown fences:
     {
       "words": [
         { "word": "…", "partOfSpeech": "…", "pronunciation": "…", "meaning": "…",
-          "example": "…", "cloze": "…", "contrast": "…" }
+          "example": "…", ${nonLatin ? '"exampleRomanization": "…", ' : ''}${isEnglish ? '' : '"exampleTranslation": "…", '}"cloze": "…", "contrast": "…" }
       ]
     }
   `;
   const result = await queryGemini(prompt, true, null, 'quick');
   const words = (Array.isArray(result.words) ? result.words : [])
-    .filter(w => w.word && w.meaning && w.example)
-    .slice(0, count);
+    .filter(w => w.word && w.meaning && w.example);
   if (!words.length) throw new Error('Vocabulary generation returned nothing usable.');
 
-  return words.map(w => ({
+  // Belt and braces on the "never repeat" instruction: models drift back to
+  // favourites across calls, so anything already learned is dropped here too.
+  const banned = new Set(knownWords.map(w => String(w).trim().toLowerCase()));
+  const seen = new Set();
+  const fresh = words.filter(w => {
+    const key = String(w.word).trim().toLowerCase();
+    if (!key || banned.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return fresh.slice(0, count).map(w => ({
     word: w.word,
     partOfSpeech: w.partOfSpeech || '',
     pronunciation: w.pronunciation || '',
     meaning: w.meaning,
     example: w.example,
+    exampleRomanization: w.exampleRomanization || '',
+    exampleTranslation: w.exampleTranslation || '',
     // A cloze is only useful if the blank is actually there
     cloze: (w.cloze && w.cloze.includes('_____')) ? w.cloze : blankOut(w.example, w.word),
     contrast: w.contrast || ''

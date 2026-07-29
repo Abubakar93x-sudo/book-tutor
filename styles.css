@@ -5098,3 +5098,66 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   transition: width 0.3s ease;
 }
 .video-part-btn { width: 100%; }
+
+/* Non-Latin vocabulary: the word in its own script, the English pronunciation
+   bracketed under it, and the example sentence carrying both a romanization
+   and a translation. */
+.vocab-card-script .vocab-word {
+  font-size: 1.6rem;
+  line-height: 1.5;
+}
+.vocab-ex-rom,
+.vocab-ex-trans {
+  display: block;
+  font-family: var(--font-body);
+  margin-top: 0.35rem;
+}
+.vocab-ex-rom {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.vocab-ex-trans {
+  font-size: 0.88rem;
+  color: var(--indigo);
+}
+
+/* ── Saved sets ── */
+.vocab-saved-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.vocab-saved-set {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.vocab-saved-head {
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  list-style: none;
+  display: grid;
+  gap: 0.2rem;
+}
+.vocab-saved-head::-webkit-details-marker { display: none; }
+.vocab-saved-head:hover { background: var(--bg-elevated); }
+.vocab-saved-title {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.vocab-saved-meta {
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.vocab-saved-words {
+  font-family: var(--font-reading);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vocab-saved-set[open] .vocab-saved-words { white-space: normal; }
+.vocab-saved-body { padding: 0 1rem 0.5rem; }
+.vocab-saved-set .vocab-actions { margin: 0 0 1rem; }

@@ -383,12 +383,27 @@ async function dbGetVocabSet(langId, setNumber) {
   return snap.exists ? snap.data() : null;
 }
 
-async function dbPutVocabSet(langId, setNumber, words) {
+async function dbPutVocabSet(langId, setNumber, words, meta = {}) {
   const col = userCol('vocabSets');
   if (!col) return;
   await col.doc(`${langId}_set_${setNumber}`).set(
-    { langId, setNumber, words, updatedAt: Date.now() }, { merge: true }
+    { langId, setNumber, words, ...meta, createdAt: Date.now(), updatedAt: Date.now() },
+    { merge: true }
   );
+}
+
+// Every set ever generated, newest first — the Saved tab reads back through
+// them so nothing a learner has studied is ever out of reach.
+async function dbGetAllVocabSets(langId) {
+  const col = userCol('vocabSets');
+  if (!col) return [];
+  try {
+    const snap = await col.where('langId', '==', langId).get();
+    return snap.docs.map(d => d.data()).sort((a, b) => (b.setNumber || 0) - (a.setNumber || 0));
+  } catch (err) {
+    console.warn('Vocab set history read failed:', err.message);
+    return [];
+  }
 }
 
 // ── FOUNDATION DECK ──────────────────────────────────────────────────────────
@@ -2066,14 +2081,100 @@ const VocabBuilder = {
     this.tab = tab;
     document.querySelectorAll('.vocab-tab').forEach(b =>
       b.classList.toggle('active', b.dataset.tab === tab));
-    document.getElementById('vocab-panel-learn').style.display = tab === 'learn' ? 'block' : 'none';
-    document.getElementById('vocab-panel-quiz').style.display = tab === 'quiz' ? 'block' : 'none';
+    ['learn', 'quiz', 'saved'].forEach(t => {
+      const el = document.getElementById(`vocab-panel-${t}`);
+      if (el) el.style.display = tab === t ? 'block' : 'none';
+    });
     this.renderTab();
   },
 
   renderTab() {
     if (this.tab === 'learn') this.renderLearn();
+    else if (this.tab === 'saved') this.renderSaved();
     else this.renderQuiz();
+  },
+
+  // ── SAVED SETS ──
+  // Every set ever generated, kept so a learner can go back over old words on
+  // their own terms rather than only meeting them again through the deck.
+  async renderSaved() {
+    const panel = document.getElementById('vocab-panel-saved');
+    if (!panel) return;
+
+    panel.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:2.5rem 0;">
+      <span class="cp-spinner"></span> Loading your sets…</div>`;
+
+    let sets = [];
+    try {
+      sets = await dbGetAllVocabSets(this.lang.id);
+    } catch (err) {
+      console.warn('Saved sets read failed:', err.message);
+    }
+
+    if (!sets.length) {
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">No sets saved yet</h3>
+          <p class="vocab-empty-sub">Every set you generate is kept here, so you can come back and review any of them.</p>
+          <button class="btn btn-primary" id="btn-saved-to-learn">Learn your first set →</button>
+        </div>`;
+      document.getElementById('btn-saved-to-learn').addEventListener('click', () => this.switchTab('learn'));
+      return;
+    }
+
+    const total = sets.reduce((n, s) => n + (s.words?.length || 0), 0);
+    panel.innerHTML = `
+      <p class="vocab-set-count" style="margin-bottom:1rem;">
+        ${sets.length} set${sets.length === 1 ? '' : 's'} · ${total} words in ${this.lang.name}
+      </p>
+      <div class="vocab-saved-list">
+        ${sets.map(s => `
+          <details class="vocab-saved-set" data-set="${s.setNumber}">
+            <summary class="vocab-saved-head">
+              <span class="vocab-saved-title">Set ${(s.setNumber || 0) + 1}</span>
+              <span class="vocab-saved-meta">
+                ${(s.words || []).length} words${s.tier ? ` · ${escapeAttr(s.tier)}` : ''}${s.theme ? ` · ${escapeAttr(s.theme)}` : ''}
+                ${s.createdAt ? ` · ${new Date(s.createdAt).toLocaleDateString()}` : ''}
+              </span>
+              <span class="vocab-saved-words">${(s.words || []).map(w => escapeAttr(w.word)).join(' · ')}</span>
+            </summary>
+            <div class="vocab-list vocab-saved-body">
+              ${(s.words || []).map((w, i) => vocabCardHtml(w, i, this.lang)).join('')}
+            </div>
+            <div class="vocab-actions">
+              <button class="btn btn-ghost btn-sm vocab-review-set" data-set="${s.setNumber}">Quiz me on this set →</button>
+            </div>
+          </details>
+        `).join('')}
+      </div>
+    `;
+
+    // Speaking a word works the same in a saved set as in a fresh one
+    panel.querySelectorAll('.vocab-saved-set').forEach(det => {
+      const setNum = parseInt(det.dataset.set);
+      const set = sets.find(s => s.setNumber === setNum);
+      det.querySelectorAll('.vocab-speak').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const w = set.words[parseInt(btn.dataset.idx)];
+          if (!NarrationEngine.speakLang(w.word, this.lang.ttsLangCode || this.lang.code, 0.85)) {
+            showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+          }
+        });
+      });
+    });
+
+    // Re-quiz any past set without disturbing the current one
+    panel.querySelectorAll('.vocab-review-set').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const set = sets.find(s => s.setNumber === parseInt(btn.dataset.set));
+        if (!set?.words?.length) return;
+        this.words = set.words;
+        this.setNumber = set.setNumber;
+        this.quiz = null;
+        this.switchTab('quiz');
+      });
+    });
   },
 
   // ── LEARN ──
@@ -2105,21 +2206,7 @@ const VocabBuilder = {
         <button class="btn btn-ghost btn-sm" id="btn-vocab-more">New set →</button>
       </div>
       <div class="vocab-list">
-        ${this.words.map((w, i) => `
-          <article class="vocab-card" data-idx="${i}">
-            <div class="vocab-card-head">
-              <h3 class="vocab-word">${escapeAttr(w.word)}</h3>
-              <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
-            </div>
-            <div class="vocab-meta">
-              ${w.partOfSpeech ? `<span class="vocab-pos">${escapeAttr(w.partOfSpeech)}</span>` : ''}
-              ${w.pronunciation ? `<span class="vocab-pron">${escapeAttr(w.pronunciation)}</span>` : ''}
-            </div>
-            <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
-            <blockquote class="vocab-example">${highlightWordIn(w.example, w.word)}</blockquote>
-            ${w.contrast ? `<p class="vocab-contrast">${escapeAttr(w.contrast)}</p>` : ''}
-          </article>
-        `).join('')}
+        ${this.words.map((w, i) => vocabCardHtml(w, i, this.lang)).join('')}
       </div>
       <div class="vocab-actions">
         <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
@@ -2149,16 +2236,33 @@ const VocabBuilder = {
 
     try {
       const setNumber = this.lang.vocabSet || 0;
-      // A themed request is always fresh; an untouched set replays from cache.
-      let cached = theme ? null : await dbGetVocabSet(this.lang.id, setNumber);
-      let words = cached?.words;
+      const known = this.lang.knownWords || [];
 
-      if (!words?.length) {
-        words = AppState.mode === 'demo'
-          ? demoVocabBuilderWords(this.lang, tier)
-          : await callVocabWords(this.lang, tier, this.lang.knownWords || [], theme);
-        await dbPutVocabSet(this.lang.id, setNumber, words);
+      // Always a genuinely new set. The old code replayed a cached set for the
+      // same number, which is how previously-seen words kept reappearing.
+      let words = AppState.mode === 'demo'
+        ? demoVocabBuilderWords(this.lang, tier)
+            .filter(w => !known.some(k => k.toLowerCase() === w.word.toLowerCase()))
+            .slice(0, 6)
+        : await callVocabWords(this.lang, tier, known, theme);
+
+      // The agent drops repeats itself, which can leave the set short. One
+      // top-up call, told about the words just issued as well, fills the gap.
+      if (words.length < 6 && AppState.mode !== 'demo') {
+        const excludeNow = [...known, ...words.map(w => w.word)];
+        try {
+          const more = await callVocabWords(this.lang, tier, excludeNow, theme, 6 - words.length);
+          words = [...words, ...more];
+        } catch (err) {
+          console.warn('Vocab top-up failed, continuing with a short set:', err.message);
+        }
       }
+
+      if (!words.length) throw new Error('No new words came back — try a different theme or tier.');
+
+      await dbPutVocabSet(this.lang.id, setNumber, words, {
+        tier, theme, langName: this.lang.name, script: this.lang.script
+      });
 
       this.words = words;
       this.setNumber = setNumber;
@@ -2184,13 +2288,25 @@ const VocabBuilder = {
     lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
 
     try {
-      await dbAppendLangCards(lang.id, words.map(w => ({
-        front: w.cloze,
-        back: `${w.word} — ${w.meaning}`,
-        word: w.word,
-        romanization: null,
-        type: 'precision'
-      })));
+      // The WORD goes on the front — recall runs word → meaning, which is what
+      // owning a word actually is. The back carries the definition and the
+      // sentence that makes it stick, plus the translation for a non-Latin
+      // script where the sentence itself needs one.
+      await dbAppendLangCards(lang.id, words.map(w => {
+        const back = [
+          w.meaning,
+          w.example ? `\n\n"${w.example}"` : '',
+          w.exampleRomanization ? `\n${w.exampleRomanization}` : '',
+          w.exampleTranslation ? `\n${w.exampleTranslation}` : ''
+        ].join('');
+        return {
+          front: w.word,
+          back,
+          word: w.word,
+          romanization: w.pronunciation || null,
+          type: 'precision'
+        };
+      }));
       await dbPutLanguage(lang);
       if (!this.langs.some(l => l.id === lang.id)) this.langs.push(lang);
       this.renderControls();
@@ -2329,6 +2445,32 @@ const VocabBuilder = {
   }
 };
 
+// One word card. A non-Latin language shows the word in its own script with the
+// English pronunciation bracketed beneath it, and its example sentence in that
+// script with a romanization and an English translation — everything an English
+// speaker needs to actually read, say and understand it.
+function vocabCardHtml(w, i, lang) {
+  const nonLatin = lang?.script && lang.script !== 'latin';
+  return `
+    <article class="vocab-card${nonLatin ? ' vocab-card-script' : ''}" data-idx="${i}">
+      <div class="vocab-card-head">
+        <h3 class="vocab-word">${escapeAttr(w.word)}</h3>
+        <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+      </div>
+      <div class="vocab-meta">
+        ${w.pronunciation ? `<span class="vocab-pron">(${escapeAttr(w.pronunciation)})</span>` : ''}
+        ${w.partOfSpeech ? `<span class="vocab-pos">${escapeAttr(w.partOfSpeech)}</span>` : ''}
+      </div>
+      <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
+      <blockquote class="vocab-example">
+        ${highlightWordIn(w.example, w.word)}
+        ${w.exampleRomanization ? `<span class="vocab-ex-rom">${escapeAttr(w.exampleRomanization)}</span>` : ''}
+        ${w.exampleTranslation ? `<span class="vocab-ex-trans">${escapeAttr(w.exampleTranslation)}</span>` : ''}
+      </blockquote>
+      ${w.contrast ? `<p class="vocab-contrast">${escapeAttr(w.contrast)}</p>` : ''}
+    </article>`;
+}
+
 // Wraps the target word in its example so the eye lands on it immediately.
 function highlightWordIn(sentence, word) {
   const stem = word.length > 4 ? word.slice(0, Math.ceil(word.length * 0.6)) : word;
@@ -2380,6 +2522,98 @@ function buildVocabQuiz(words) {
 }
 
 function demoVocabBuilderWords(lang, tier) {
+  // A non-Latin language must come back in its own script, with the English
+  // pronunciation, an English meaning, and a sentence that also carries a
+  // romanization and a translation.
+  if (lang.script && lang.script !== 'latin') {
+    return [
+      { word: 'دلچسپ', partOfSpeech: 'adjective', pronunciation: 'dil-CHASP',
+        meaning: 'interesting; engaging to the mind',
+        example: 'یہ کتاب بہت دلچسپ ہے۔',
+        exampleRomanization: 'Yeh kitaab bohot dilchasp hai.',
+        exampleTranslation: 'This book is very interesting.',
+        cloze: 'یہ کتاب بہت _____ ہے۔',
+        contrast: 'Unlike "اچھا" (good), it says the thing holds your attention.' },
+      { word: 'مشکل', partOfSpeech: 'adjective', pronunciation: 'mush-KIL',
+        meaning: 'difficult; hard to do',
+        example: 'یہ سوال بہت مشکل ہے۔',
+        exampleRomanization: 'Yeh sawaal bohot mushkil hai.',
+        exampleTranslation: 'This question is very difficult.',
+        cloze: 'یہ سوال بہت _____ ہے۔',
+        contrast: 'Unlike "بھاری" (heavy), it describes effort, not weight.' },
+      { word: 'کوشش', partOfSpeech: 'noun', pronunciation: 'ko-SHISH',
+        meaning: 'an effort or attempt',
+        example: 'اس نے دوبارہ کوشش کی۔',
+        exampleRomanization: 'Us ne dobara koshish ki.',
+        exampleTranslation: 'He tried again.',
+        cloze: 'اس نے دوبارہ _____ کی۔',
+        contrast: 'Unlike "کام" (work), it stresses the trying rather than the task.' },
+      { word: 'خوشی', partOfSpeech: 'noun', pronunciation: 'khu-SHEE',
+        meaning: 'happiness; gladness',
+        example: 'مجھے بہت خوشی ہوئی۔',
+        exampleRomanization: 'Mujhe bohot khushi hui.',
+        exampleTranslation: 'I was very happy.',
+        cloze: 'مجھے بہت _____ ہوئی۔',
+        contrast: 'Unlike "مزہ" (fun), it is an inward feeling, not an experience.' },
+      { word: 'ضروری', partOfSpeech: 'adjective', pronunciation: 'za-roo-REE',
+        meaning: 'necessary; required',
+        example: 'یہ کام ضروری ہے۔',
+        exampleRomanization: 'Yeh kaam zaroori hai.',
+        exampleTranslation: 'This task is necessary.',
+        cloze: 'یہ کام _____ ہے۔',
+        contrast: 'Unlike "اہم" (important), it means it cannot be skipped.' },
+      { word: 'تجربہ', partOfSpeech: 'noun', pronunciation: 'taj-ru-BA',
+        meaning: 'experience; a trial or experiment',
+        example: 'اسے پڑھانے کا تجربہ ہے۔',
+        exampleRomanization: 'Use parhaane ka tajruba hai.',
+        exampleTranslation: 'He has experience of teaching.',
+        cloze: 'اسے پڑھانے کا _____ ہے۔',
+        contrast: 'Unlike "علم" (knowledge), it comes from having done the thing.' },
+      // A second batch, so demo mode can actually show a fresh set with no repeats
+      { word: 'حیرت', partOfSpeech: 'noun', pronunciation: 'hai-RAT',
+        meaning: 'astonishment; wonder',
+        example: 'مجھے یہ سن کر حیرت ہوئی۔',
+        exampleRomanization: 'Mujhe yeh sun kar hairat hui.',
+        exampleTranslation: 'I was astonished to hear this.',
+        cloze: 'مجھے یہ سن کر _____ ہوئی۔',
+        contrast: 'Unlike "ڈر" (fear), it is surprise without threat.' },
+      { word: 'سنجیدہ', partOfSpeech: 'adjective', pronunciation: 'san-JEE-da',
+        meaning: 'serious; not joking',
+        example: 'وہ ہمیشہ سنجیدہ رہتا ہے۔',
+        exampleRomanization: 'Woh hamesha sanjeeda rehta hai.',
+        exampleTranslation: 'He is always serious.',
+        cloze: 'وہ ہمیشہ _____ رہتا ہے۔',
+        contrast: 'Unlike "اداس" (sad), it describes manner, not mood.' },
+      { word: 'اعتماد', partOfSpeech: 'noun', pronunciation: 'aiy-ti-MAAD',
+        meaning: 'confidence; trust placed in someone',
+        example: 'مجھے اس پر اعتماد ہے۔',
+        exampleRomanization: 'Mujhe us par aitmaad hai.',
+        exampleTranslation: 'I have confidence in him.',
+        cloze: 'مجھے اس پر _____ ہے۔',
+        contrast: 'Unlike "امید" (hope), it rests on evidence, not wishing.' },
+      { word: 'مہارت', partOfSpeech: 'noun', pronunciation: 'ma-haa-RAT',
+        meaning: 'skill; mastery of something',
+        example: 'اسے لکھنے میں مہارت ہے۔',
+        exampleRomanization: 'Use likhne mein mahaarat hai.',
+        exampleTranslation: 'He has skill in writing.',
+        cloze: 'اسے لکھنے میں _____ ہے۔',
+        contrast: 'Unlike "تجربہ" (experience), it is ability rather than exposure.' },
+      { word: 'واضح', partOfSpeech: 'adjective', pronunciation: 'WAA-zeh',
+        meaning: 'clear; plainly stated',
+        example: 'اس کا جواب واضح تھا۔',
+        exampleRomanization: 'Us ka jawaab waazeh tha.',
+        exampleTranslation: 'His answer was clear.',
+        cloze: 'اس کا جواب _____ تھا۔',
+        contrast: 'Unlike "آسان" (easy), it is about clarity, not difficulty.' },
+      { word: 'رویہ', partOfSpeech: 'noun', pronunciation: 'ra-VAI-ya',
+        meaning: 'attitude; the way one behaves toward others',
+        example: 'اس کا رویہ بہت اچھا تھا۔',
+        exampleRomanization: 'Us ka ravaiya bohot acha tha.',
+        exampleTranslation: 'His attitude was very good.',
+        cloze: 'اس کا _____ بہت اچھا تھا۔',
+        contrast: 'Unlike "عادت" (habit), it is stance toward people, not routine.' }
+    ];
+  }
   return [
     { word: 'perfunctory', partOfSpeech: 'adjective', pronunciation: 'per-FUNK-tuh-ree',
       meaning: 'done as a routine duty, without real care or interest',
@@ -2410,7 +2644,38 @@ function demoVocabBuilderWords(lang, tier) {
       meaning: 'having a long-established habit unlikely to change',
       example: 'He was an inveterate collector of other people\'s stories.',
       cloze: 'He was an _____ collector of other people\'s stories.',
-      contrast: 'Unlike "frequent", it describes the person, not the act.' }
+      contrast: 'Unlike "frequent", it describes the person, not the act.' },
+    // A second batch, so demo mode can actually show a fresh set with no repeats
+    { word: 'tendentious', partOfSpeech: 'adjective', pronunciation: 'ten-DEN-shuss',
+      meaning: 'presented as neutral but pushing a position',
+      example: 'The report was a tendentious reading of the same figures.',
+      cloze: 'The report was a _____ reading of the same figures.',
+      contrast: 'Unlike "biased", it implies the slant is deliberately disguised.' },
+    { word: 'obviate', partOfSpeech: 'verb', pronunciation: 'OB-vee-ate',
+      meaning: 'to remove the need for something',
+      example: 'A clear brief would obviate most of these meetings.',
+      cloze: 'A clear brief would _____ most of these meetings.',
+      contrast: 'Unlike "prevent", it removes the necessity rather than the event.' },
+    { word: 'salient', partOfSpeech: 'adjective', pronunciation: 'SAY-lee-unt',
+      meaning: 'standing out as the most noticeable or important',
+      example: 'She had a gift for the salient detail.',
+      cloze: 'She had a gift for the _____ detail.',
+      contrast: 'Unlike "important", it is what leaps out, not merely what matters.' },
+    { word: 'desultory', partOfSpeech: 'adjective', pronunciation: 'DEZ-ul-tor-ee',
+      meaning: 'moving from thing to thing without method or purpose',
+      example: 'They made desultory conversation until the train came.',
+      cloze: 'They made _____ conversation until the train came.',
+      contrast: 'Unlike "lazy", it describes the lack of direction, not the effort.' },
+    { word: 'venerate', partOfSpeech: 'verb', pronunciation: 'VEN-er-ate',
+      meaning: 'to regard with deep respect, close to reverence',
+      example: 'The students venerated him long after he stopped teaching.',
+      cloze: 'The students _____ him long after he stopped teaching.',
+      contrast: 'Unlike "admire", it carries something almost devotional.' },
+    { word: 'intransigent', partOfSpeech: 'adjective', pronunciation: 'in-TRAN-si-junt',
+      meaning: 'refusing to compromise, however reasonable the case',
+      example: 'One intransigent member held up the whole agreement.',
+      cloze: 'One _____ member held up the whole agreement.',
+      contrast: 'Unlike "firm", it implies refusal has become the point.' }
   ];
 }
 
