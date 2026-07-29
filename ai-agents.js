@@ -63,21 +63,22 @@ async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 
   const apiKey = getApiKey();
   const url = `${geminiUrl(modelFor(tier))}?key=${apiKey}`;
 
-  // Build parts array — text always first, file attachment second if provided
-  const parts = [{ text: prompt }];
+  // Media part FIRST, then the text — the order the API's own examples use.
+  // videoMetadata must sit beside fileData in the SAME part; that pairing is
+  // what clips the video server-side so only the requested window is ever
+  // tokenized. Without it a long video exceeds the context on its own.
+  const parts = [];
   if (fileUri) {
     const fileData = typeof fileUri === 'string'
       ? { mimeType: 'application/pdf', fileUri }
       : { fileUri: fileUri.fileUri, ...(fileUri.mimeType ? { mimeType: fileUri.mimeType } : {}) };
     const part = { fileData };
-    // videoMetadata clips the video server-side, so only the requested window
-    // is ever tokenized. This is what makes long videos affordable: without it
-    // a two-hour talk blows the input budget before it produces a word.
     if (typeof fileUri === 'object' && fileUri.videoMetadata) {
       part.videoMetadata = fileUri.videoMetadata;
     }
     parts.push(part);
   }
+  parts.push({ text: prompt });
 
   const payload = {
     contents: [{ parts }]
@@ -1741,9 +1742,19 @@ const VIDEO_PART_MAX_LESSONS = 5;
 // Video is charged by the second of runtime — roughly 300 input tokens per
 // second — so a video longer than about an hour exceeds the 1,048,576-token
 // context on its own, before a word of the prompt or the reply. Every request
-// therefore sends a bounded WINDOW of the video, never the rest of it: 20
-// minutes is ~360k tokens, which leaves comfortable room for everything else.
-const VIDEO_WINDOW_SECONDS = 20 * 60;
+// therefore sends one bounded SPLIT of the video and never the rest of it.
+//
+// 10 minutes is ~180k tokens: a sixth of the limit, which leaves room for the
+// prompt, the reply, and any slack in how a given video tokenizes.
+const VIDEO_WINDOW_SECONDS = 10 * 60;
+const VIDEO_WINDOW_MIN_SECONDS = 150;
+
+// A token-limit rejection is recoverable: the same split is simply too big for
+// this video, so halve it and try again rather than failing in the user's face.
+function isTokenLimitError(err) {
+  return /token count|too large|exceeds the maximum number of tokens|request payload size/i
+    .test(err?.message || '');
+}
 
 async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, existingChapters = [], opts = {}) {
   const parsed = parseYouTubeUrl(videoUrl);
@@ -1843,7 +1854,22 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     fileUri: parsed.url,
     videoMetadata: { startOffset: `${startOffset}s`, endOffset: `${endOffset}s` }
   };
-  const result = await queryGemini(prompt, true, attachment, 'fast');
+
+  let result;
+  try {
+    result = await queryGemini(prompt, true, attachment, 'fast');
+  } catch (err) {
+    // Too big for this video: halve the split and retry from the same point,
+    // so a dense or high-framerate recording still gets through.
+    if (isTokenLimitError(err) && windowSeconds > VIDEO_WINDOW_MIN_SECONDS) {
+      const smaller = Math.max(VIDEO_WINDOW_MIN_SECONDS, Math.floor(windowSeconds / 2));
+      console.warn(`Video split of ${windowSeconds}s exceeded the token limit — retrying with ${smaller}s.`);
+      if (typeof opts.onShrink === 'function') opts.onShrink(smaller);
+      return await callVideoCurriculum(videoUrl, userTitle, startChapter, existingChapters,
+        { ...opts, windowSeconds: smaller });
+    }
+    throw err;
+  }
 
   const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
     .map(c => {
@@ -1887,29 +1913,25 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     }
   }
 
-  // Where the next part starts. Trust the model's marker when it is plausible,
-  // otherwise fall back to the end of the last lesson produced. Clamp into the
-  // window: a time outside it is a hallucination, and letting it through would
-  // either skip material or stall the sequence.
-  const lastEnd = chapters[chapters.length - 1].endTime
-    || chapters[chapters.length - 1].passages.slice(-1)[0]?.time
-    || '';
-  let coveredSecs = stampToSeconds(result.coveredUntil) || stampToSeconds(lastEnd);
-  if (coveredSecs <= startOffset || coveredSecs > endOffset) {
-    coveredSecs = Math.min(Math.max(stampToSeconds(lastEnd), startOffset), endOffset);
-  }
-  // Nothing usable came back — advance by the window so the next part still
-  // makes progress rather than re-requesting the same stretch.
-  if (coveredSecs <= startOffset) coveredSecs = endOffset;
+  // The next part starts at the END OF THE SPLIT WE JUST SENT — a number we
+  // chose ourselves, not one the model reported. This is the whole reliability
+  // story: the model can misjudge where it stopped, drift, or answer in
+  // clip-relative times, but the split boundary is arithmetic. Parts therefore
+  // always tile forward exactly, with no gaps, overlaps or stalls.
+  const coveredSecs = endOffset;
   const coveredUntil = secondsToStamp(coveredSecs);
 
-  // Each part only ever sees its own window, so "is there more?" cannot be
-  // judged from a duration the model never saw. It is decided by whether the
-  // recording actually ended inside this window — and a claim that it did is
-  // disbelieved when the lessons run right up to the window edge, which is what
-  // a video that simply got cut off looks like.
-  const hitWindowEdge = coveredSecs >= endOffset - 45;
-  const hasMore = !(result.reachedVideoEnd === true && !hitWindowEdge);
+  // The only thing the model is trusted for here: did the recording itself end
+  // inside this split? Even that is disbelieved when its last lesson runs to
+  // the split's edge, which is what a video merely cut off by the split looks
+  // like.
+  const lastLessonEnd = stampToSeconds(
+    chapters[chapters.length - 1].endTime
+    || chapters[chapters.length - 1].passages.slice(-1)[0]?.time
+    || ''
+  );
+  const ranToTheEdge = lastLessonEnd >= endOffset - 45;
+  const hasMore = !(result.reachedVideoEnd === true && !ranToTheEdge);
 
   return {
     title: userTitle || result.title || 'Video curriculum',

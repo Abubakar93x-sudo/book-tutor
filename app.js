@@ -5327,9 +5327,9 @@ function renderVideoPartPanel(book) {
   // the total runtime is genuinely unknown. Better to state what IS known —
   // where the curriculum reaches and what the next part will cover — than to
   // invent a percentage out of a duration nobody measured.
-  const nextEnd = secondsToStamp((pending.nextOffset || 0) + (pending.windowSeconds || 1200));
+  const nextEnd = secondsToStamp((pending.nextOffset || 0) + (pending.windowSeconds || 600));
   line.innerHTML = `Covered up to <strong>${pending.coveredUntil}</strong>.
-    Part ${pending.nextPart} picks up there and runs to about ${nextEnd}.`;
+    Part ${pending.nextPart} covers <strong>${pending.coveredUntil}–${nextEnd}</strong>.`;
   btn.textContent = `Generate part ${pending.nextPart} →`;
   panel.style.display = 'block';
 }
@@ -6424,7 +6424,7 @@ async function checkBookCoverage() {
       a chapter with its own summaries, concepts, flashcards and quizzes.
       <br><br>
       <em style="color:var(--text-muted); font-size:0.85rem;">
-        Long videos are built about 20 minutes at a time — you'll get the first
+        Long videos are built about 10 minutes at a time — you'll get the first
         part now and can pull each next part when you want it. Private,
         age-restricted and members-only videos can't be read.
       </em>
@@ -6489,14 +6489,18 @@ async function generateNextVideoPart() {
 
   const btn = document.getElementById('btn-next-video-part');
   const original = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = `Watching from ${pending.coveredUntil}…`; }
+  const splitEnd = secondsToStamp((pending.nextOffset || 0) + (pending.windowSeconds || 600));
+  if (btn) { btn.disabled = true; btn.textContent = `Watching ${pending.coveredUntil}–${splitEnd}…`; }
 
   try {
     const startChapter = (book.chapters || []).reduce((m, c) => Math.max(m, c.number), 0) + 1;
     const existingTitles = (book.chapters || []).map(c => c.title);
     const result = await callVideoCurriculum(pending.videoUrl, '', startChapter, existingTitles, {
       startOffset: pending.nextOffset,
-      part: pending.nextPart
+      part: pending.nextPart,
+      onShrink: (secs) => {
+        if (btn) btn.textContent = `Too dense — retrying with ${Math.round(secs / 60)} min…`;
+      }
     });
 
     for (const ch of result.chapters) {
@@ -6697,8 +6701,11 @@ async function generateCurriculum() {
   if (sourceMode === 'video') {
     const rawUrl = document.getElementById('input-video-url').value.trim();
     try {
-      logStep('🎬 Watching the first stretch of the video…');
-      const result = await callVideoCurriculum(rawUrl, title);
+      logStep('🎬 Watching the video from 0:00 to 10:00 (part 1)…');
+      const result = await callVideoCurriculum(rawUrl, title, 1, [], {
+        onShrink: (secs) => logStep(`⚙️ That stretch was too dense — retrying with a ${Math.round(secs / 60)}-minute split…`)
+      });
+      logStep(`✅ Part 1 covers 0:00–${result.coveredUntil}`);
 
       logStep(`✅ Found ${result.chapters.length} lesson${result.chapters.length !== 1 ? 's' : ''} — "${result.title}"`);
       logStep('💾 Saving to your library…');
