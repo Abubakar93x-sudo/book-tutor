@@ -1741,10 +1741,10 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     teaches, in the order taught. Use however many the content genuinely has
     (typically 3-10); do not pad it out or force it into a round number.
 
-    For each lesson write "text": a thorough, faithful piece of study prose that
-    someone could learn from WITHOUT watching the video. This is the most
-    important part of your output, so make it substantial — several hundred
-    words per lesson:
+    For each lesson write "passages": the lesson broken into timestamped
+    paragraphs of study prose that someone could learn from WITHOUT watching
+    the video. This is the most important part of your output, so make it
+    substantial — several hundred words per lesson across 3-8 passages:
     - Capture every real point the speaker makes, in their order of reasoning
     - Keep their actual claims, definitions, numbers, names and examples exact.
       Never round a figure, invent an example, or smooth over a caveat.
@@ -1754,9 +1754,13 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
       material in its own right.
     - If the speaker states something contentious or unsupported, report it as
       their claim rather than as fact.
+    - Each passage carries "time": the moment in the video where THAT passage's
+      material is said, as mm:ss (or hh:mm:ss for long videos). Be accurate —
+      these timestamps are used to jump straight to the source, so a passage's
+      time must point at where its content actually appears.
 
-    Also give each lesson a "startTime" and "endTime" as mm:ss (or hh:mm:ss for
-    long videos) marking where it runs in the video.
+    Also give each lesson a "startTime" and "endTime" marking where the whole
+    lesson runs in the video.
 
     Finally identify:
     - "title": a good name for the whole curriculum${userTitle ? ` (the learner's name for it takes priority: "${userTitle}")` : ''}
@@ -1769,7 +1773,11 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
       "author": "...",
       "topic": "...",
       "chapters": [
-        { "number": ${startChapter}, "title": "lesson title", "startTime": "0:00", "endTime": "4:12", "text": "the full study prose…" }
+        { "number": ${startChapter}, "title": "lesson title", "startTime": "0:00", "endTime": "4:12",
+          "passages": [
+            { "time": "0:00", "text": "a paragraph of study prose…" },
+            { "time": "1:35", "text": "the next paragraph…" }
+          ] }
       ]
     }
   `;
@@ -1777,13 +1785,21 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
   const result = await queryGemini(prompt, true, { fileUri: parsed.url }, 'fast');
 
   const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
-    .filter(c => c.title && c.text)
+    .map(c => {
+      // Tolerate a model that ignores the passage split and returns flat text
+      const passages = Array.isArray(c.passages) && c.passages.length
+        ? c.passages.filter(p => p && p.text)
+        : (c.text ? [{ time: c.startTime || '', text: c.text }] : []);
+      return { ...c, passages };
+    })
+    .filter(c => c.title && c.passages.length)
     .map((c, i) => ({
       number: startChapter + i,
       title: c.title,
-      startTime: c.startTime || '',
+      startTime: c.startTime || c.passages[0].time || '',
       endTime: c.endTime || '',
-      text: c.text
+      passages: c.passages.map(p => ({ time: p.time || '', text: p.text })),
+      text: c.passages.map(p => p.text).join('\n\n')
     }));
 
   if (!chapters.length) {

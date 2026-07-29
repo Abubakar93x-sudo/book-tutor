@@ -4958,3 +4958,31 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .source-toggle { grid-template-columns: 1fr; }
   .reader-watch { display: none !important; }
 }
+
+/* Citation chip: the moment in the video a quoted passage was said. Appears
+   wherever the app cites its source — tutor quotes, checkpoint evidence,
+   consolidation notes, saved notes. */
+.video-cite {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  color: var(--text-muted);
+  text-decoration: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: 100px;
+  padding: 0.05rem 0.42rem;
+  margin-left: 0.4rem;
+  vertical-align: baseline;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.video-cite:hover {
+  color: var(--purple);
+  border-color: var(--purple);
+  background: var(--purple-dim);
+}
+.cp-quote .video-cite,
+.note-quote .video-cite { margin-top: 0.3rem; }

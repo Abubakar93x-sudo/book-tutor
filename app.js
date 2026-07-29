@@ -552,16 +552,141 @@ function timeToSeconds(stamp) {
   return parts.reduce((total, n) => total * 60 + n, 0);
 }
 
+// Interleaves the sentinel lines that let any later passage be traced back to
+// its moment in the video — the same trick page extraction uses for pages.
+function markedVideoText(passages) {
+  return (passages || [])
+    .map(p => (p.time ? `${timeMarkerLine(p.time)}\n` : '') + p.text)
+    .join('\n\n');
+}
+
+function videoTimeUrl(videoId, stamp) {
+  const secs = timeToSeconds(stamp);
+  return `https://www.youtube.com/watch?v=${videoId}${secs ? `&t=${secs}s` : ''}`;
+}
+
+// Where in the video was this said? Finds the passage in the chapter's marked
+// text and walks back to the nearest preceding time sentinel. Used wherever the
+// app cites the source — tutor quotes, checkpoint evidence, consolidation notes
+// — so a citation points at the moment it came from, not just the lesson.
+function timeForQuote(quote, chapter) {
+  const raw = chapter?._chapterTextRaw || chapter?.text || '';
+  if (!raw || !quote) return null;
+
+  // Match on a distinctive slice, ignoring whitespace and the quote marks the
+  // model tends to add. Falls back to progressively shorter probes because a
+  // quote is often lightly reworded at the edges.
+  const norm = (s) => String(s).replace(/[“”"'’‘]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const haystackRaw = raw;
+  const haystack = norm(raw);
+  const needleFull = norm(quote);
+  if (!needleFull) return null;
+
+  let idx = -1;
+  for (const len of [needleFull.length, 60, 40, 25]) {
+    const probe = needleFull.slice(0, Math.min(len, needleFull.length));
+    if (probe.length < 12) break;
+    idx = haystack.indexOf(probe);
+    if (idx !== -1) break;
+  }
+  if (idx === -1) return null;
+
+  // Map the normalised offset back to the raw string, then take the last time
+  // marker before it.
+  let rawIdx = 0, normCount = 0;
+  while (rawIdx < haystackRaw.length && normCount < idx) {
+    const ch = haystackRaw[rawIdx];
+    if (!/[“”"'’‘]/.test(ch)) {
+      if (/\s/.test(ch)) {
+        if (normCount > 0 && haystack[normCount - 1] !== ' ') normCount++;
+      } else normCount++;
+    }
+    rawIdx++;
+  }
+
+  const before = haystackRaw.slice(0, rawIdx);
+  const marks = [...before.matchAll(/@@@vtime:([\d:]+)@@@/g)];
+  return marks.length ? marks[marks.length - 1][1] : null;
+}
+
+// Walks the rendered text of a tutor reply and tags every quoted passage with
+// the moment it was said. Text nodes only — attributes and markup are never
+// touched, so this can't corrupt the rendered HTML.
+function annotateVideoQuotes(el, chapter = AppState.selectedChapter, book = AppState.selectedBook) {
+  if (!el || book?.sourceType !== 'video') return;
+  const videoId = chapter?.videoId || book?.videoIds?.[0];
+  if (!videoId) return;
+
+  const QUOTE_RE = /[“"']([^“”"']{25,400})[”"']/g;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const targets = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement.closest('.video-cite')) continue;
+    if (QUOTE_RE.test(node.nodeValue)) targets.push(node);
+    QUOTE_RE.lastIndex = 0;
+  }
+
+  targets.forEach(textNode => {
+    const text = textNode.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    QUOTE_RE.lastIndex = 0;
+    let m;
+    while ((m = QUOTE_RE.exec(text)) !== null) {
+      const stamp = timeForQuote(m[1], chapter);
+      if (!stamp) continue;
+      frag.appendChild(document.createTextNode(text.slice(last, m.index + m[0].length)));
+      const a = document.createElement('a');
+      a.className = 'video-cite';
+      a.href = videoTimeUrl(videoId, stamp);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = 'Watch this moment in the video';
+      a.textContent = `🎬 ${stamp}`;
+      frag.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    if (!last) return;                       // nothing resolved — leave as-is
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    textNode.parentNode.replaceChild(frag, textNode);
+  });
+}
+
+// A citation chip: the timestamp, linked to that moment. Returns '' for
+// anything that isn't a video book, so callers can drop it in unconditionally.
+function videoCiteHtml(quote, chapter = AppState.selectedChapter, book = AppState.selectedBook) {
+  if (book?.sourceType !== 'video') return '';
+  const videoId = chapter?.videoId || book?.videoIds?.[0];
+  if (!videoId) return '';
+  const stamp = timeForQuote(quote, chapter) || chapter?.startTime;
+  if (!stamp) return '';
+  return `<a class="video-cite" href="${videoTimeUrl(videoId, stamp)}" target="_blank" rel="noopener"
+    title="Watch this moment in the video">🎬 ${stamp}</a>`;
+}
+
 const PAGE_MARK_LINE_RE = /^@@@pgbrk:(\d+)@@@$/;
 const PAGE_MARK_STRIP_RE = /@@@pgbrk:\d+@@@/g;
+
+// The same sentinel trick, for video lessons: where a PDF chapter records which
+// page a paragraph came from, a video chapter records the moment in the video it
+// was spoken. Planted at ingest, carried through splitting, stripped before the
+// text ever reaches the AI or a word count — so any passage can be traced back
+// to its timestamp without the marker leaking into what the learner reads.
+const TIME_MARK_LINE_RE = /^@@@vtime:([\d:]+)@@@$/;
+const TIME_MARK_STRIP_RE = /@@@vtime:[\d:]+@@@/g;
 
 function pageMarkerLine(pageNum) {
   return `@@@pgbrk:${pageNum}@@@`;
 }
 
-// Remove all page sentinels — used everywhere text is shown to the AI or counted
+function timeMarkerLine(stamp) {
+  return `@@@vtime:${stamp}@@@`;
+}
+
+// Remove all sentinels — used everywhere text is shown to the AI or counted
 function stripPageMarkers(text) {
-  return (text || '').replace(PAGE_MARK_STRIP_RE, '');
+  return (text || '').replace(PAGE_MARK_STRIP_RE, '').replace(TIME_MARK_STRIP_RE, '');
 }
 
 // Detect the offset between the PDF's page index and the number actually
@@ -690,69 +815,90 @@ function groupLinesIntoParagraphs(text) {
   const lines = text.split('\n');
   const paras = [];
   const pages = [];
+  const times = [];
   let cur = [];
   let curPage = null;   // page the in-progress paragraph started on
   let pageNow = null;   // most recent page sentinel seen
+  let curTime = null;   // video moment the in-progress paragraph started at
+  let timeNow = null;   // most recent time sentinel seen
 
   const flush = () => {
-    if (cur.length) { paras.push(cur.join(' ')); pages.push(curPage); cur = []; curPage = null; }
+    if (cur.length) {
+      paras.push(cur.join(' ')); pages.push(curPage); times.push(curTime);
+      cur = []; curPage = null; curTime = null;
+    }
   };
 
   for (const raw of lines) {
     const line = raw.trim();
     const pm = line.match(PAGE_MARK_LINE_RE);
     if (pm) { pageNow = parseInt(pm[1], 10); continue; } // sentinel: record, don't render
+    const tm = line.match(TIME_MARK_LINE_RE);
+    if (tm) { timeNow = tm[1]; continue; }
     if (!line) { flush(); continue; }
-    if (!cur.length) curPage = pageNow; // paragraph begins on the current page
+    if (!cur.length) { curPage = pageNow; curTime = timeNow; } // paragraph begins here
     cur.push(line);
     const joined = cur.join(' ');
-    if (joined.length > 350 && /[.!?"'”’]$/.test(line)) { paras.push(joined); pages.push(curPage); cur = []; curPage = null; }
+    if (joined.length > 350 && /[.!?"'”’]$/.test(line)) {
+      paras.push(joined); pages.push(curPage); times.push(curTime);
+      cur = []; curPage = null; curTime = null;
+    }
   }
   flush();
 
-  // Forward/back-fill any stray null pages so every paragraph carries one:
-  // interior gaps inherit the previous page, leading gaps the first known page.
-  let lastKnown = null;
-  for (let i = 0; i < pages.length; i++) {
-    if (pages[i] == null) pages[i] = lastKnown;
-    else lastKnown = pages[i];
-  }
-  const firstKnown = pages.find(p => p != null) ?? null;
-  for (let i = 0; i < pages.length && pages[i] == null; i++) pages[i] = firstKnown;
+  // Forward/back-fill any stray nulls so every paragraph carries one:
+  // interior gaps inherit the previous value, leading gaps the first known one.
+  const fill = (arr) => {
+    let lastKnown = null;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i] == null) arr[i] = lastKnown;
+      else lastKnown = arr[i];
+    }
+    const firstKnown = arr.find(v => v != null) ?? null;
+    for (let i = 0; i < arr.length && arr[i] == null; i++) arr[i] = firstKnown;
+  };
+  fill(pages);
+  fill(times);
 
-  // Oversized paragraphs get re-split by sentence; each chunk keeps its page
+  // Oversized paragraphs get re-split by sentence; each chunk keeps its page/time
   const MAX_PARA_WORDS = 250;
   const outParas = [];
   const outPages = [];
+  const outTimes = [];
   for (let i = 0; i < paras.length; i++) {
     const p = paras[i];
     if (p.split(/\s+/).length > MAX_PARA_WORDS) {
-      splitLongParagraphBySentences(p, MAX_PARA_WORDS).forEach(c => { outParas.push(c); outPages.push(pages[i]); });
+      splitLongParagraphBySentences(p, MAX_PARA_WORDS).forEach(c => {
+        outParas.push(c); outPages.push(pages[i]); outTimes.push(times[i]);
+      });
     } else {
-      outParas.push(p); outPages.push(pages[i]);
+      outParas.push(p); outPages.push(pages[i]); outTimes.push(times[i]);
     }
   }
-  return { paragraphs: outParas, pages: outPages };
+  return { paragraphs: outParas, pages: outPages, times: outTimes };
 }
 
 function splitChapterIntoSegments(rawText) {
   const TARGET_WORDS = 1200;
-  const { paragraphs: paras, pages } = groupLinesIntoParagraphs(rawText);
+  const { paragraphs: paras, pages, times } = groupLinesIntoParagraphs(rawText);
 
   const segments = [];
   let curParas = [];
   let curPages = [];
+  let curTimes = [];
   let curWords = 0;
 
   for (let i = 0; i < paras.length; i++) {
     const p = paras[i];
     curParas.push(p);
     curPages.push(pages[i]);
+    curTimes.push(times[i]);
     curWords += p.split(/\s+/).length;
     if (curWords >= TARGET_WORDS) {
-      segments.push({ paragraphs: curParas, pages: curPages, wordCount: curWords });
+      segments.push({ paragraphs: curParas, pages: curPages, times: curTimes, wordCount: curWords });
       curParas = [];
       curPages = [];
+      curTimes = [];
       curWords = 0;
     }
   }
@@ -762,9 +908,10 @@ function splitChapterIntoSegments(rawText) {
       const last = segments[segments.length - 1];
       last.paragraphs.push(...curParas);
       last.pages.push(...curPages);
+      last.times.push(...curTimes);
       last.wordCount += curWords;
     } else {
-      segments.push({ paragraphs: curParas, pages: curPages, wordCount: curWords });
+      segments.push({ paragraphs: curParas, pages: curPages, times: curTimes, wordCount: curWords });
     }
   }
   return segments.map((s, i) => ({ index: i, ...s }));
@@ -1107,7 +1254,7 @@ const Checkpoint = {
 
   showHint(card, state, result) {
     const quote = result.sourceQuote
-      ? `<blockquote class="cp-quote">“${result.sourceQuote}”</blockquote>`
+      ? `<blockquote class="cp-quote">“${result.sourceQuote}”${videoCiteHtml(result.sourceQuote)}</blockquote>`
       : '';
     const verdictHtml = `
       <div class="cp-verdict cp-gap">${result.feedback}${quote}</div>
@@ -1117,7 +1264,7 @@ const Checkpoint = {
 
   showReveal(card, state, result) {
     const quote = result.sourceQuote
-      ? `<blockquote class="cp-quote">“${result.sourceQuote}”</blockquote>`
+      ? `<blockquote class="cp-quote">“${result.sourceQuote}”${videoCiteHtml(result.sourceQuote)}</blockquote>`
       : '';
     card.innerHTML = `
       <div class="cp-verdict cp-gap">Here's the key passage — worth a re-read before moving on:${quote}
@@ -1304,7 +1451,7 @@ const Consolidate = {
     const missedHtml = bucket('Missed', 'missed',
       missed.map(c => `<span class="recall-memo">${c}</span>`));
     const mixedHtml = bucket('Mixed up', 'mixed',
-      mixedUp.map(m => `<span class="recall-memo">${m.note}${m.quote ? `<blockquote class="cp-quote">“${m.quote}”</blockquote>` : ''}</span>`));
+      mixedUp.map(m => `<span class="recall-memo">${m.note}${m.quote ? `<blockquote class="cp-quote">“${m.quote}”${videoCiteHtml(m.quote, chapter)}</blockquote>` : ''}</span>`));
 
     // Calibration line from this chapter's checkpoints
     const cps = (chapter._checkpoints || []).filter(c => c.confidence);
@@ -4496,6 +4643,8 @@ const Reader = {
       el.dataset.pidx = offset + i;
       const page = segment.pages?.[i];
       if (page != null) el.dataset.page = page;
+      const time = segment.times?.[i];
+      if (time != null) el.dataset.time = time;
       wrap.appendChild(el);
     });
 
@@ -4637,8 +4786,23 @@ const Reader = {
     return page;
   },
 
-  // A video chapter has no pages, but it does have a place in the video —
-  // so the reader offers the source instead: jump straight to that moment.
+  // The timestamp of whatever is currently at the top of the viewport — the
+  // video equivalent of currentPdfPage().
+  currentVideoTime() {
+    const ps = document.querySelectorAll('#reader-column p[data-time]');
+    if (!ps.length) return null;
+    const line = 96;
+    let time = ps[0].dataset.time;
+    for (const p of ps) {
+      if (p.getBoundingClientRect().top <= line) time = p.dataset.time;
+      else break;
+    }
+    return time;
+  },
+
+  // A video chapter has no pages, but it does have a place in the video — so
+  // the reader offers the source instead, tracking where you actually are
+  // rather than just where the lesson began.
   renderWatchLink() {
     const el = document.getElementById('reader-watch');
     if (!el) return;
@@ -4648,10 +4812,10 @@ const Reader = {
       el.style.display = 'none';
       return;
     }
-    const secs = timeToSeconds(chapter.startTime);
-    el.href = `https://www.youtube.com/watch?v=${chapter.videoId}${secs ? `&t=${secs}s` : ''}`;
-    el.textContent = chapter.startTime ? `🎬 ${chapter.startTime}` : '🎬 Watch';
-    el.title = 'Watch this lesson in the video';
+    const stamp = this.currentVideoTime() || chapter.startTime || '';
+    el.href = videoTimeUrl(chapter.videoId, stamp);
+    el.textContent = stamp ? `🎬 ${stamp}` : '🎬 Watch';
+    el.title = 'Watch this part of the video';
     el.style.display = '';
   },
 
@@ -4678,7 +4842,11 @@ const Reader = {
     // Update the page readout at most once per frame while scrolling
     if (!this._pageRafPending) {
       this._pageRafPending = true;
-      requestAnimationFrame(() => { this._pageRafPending = false; this.renderPage(); });
+      requestAnimationFrame(() => {
+        this._pageRafPending = false;
+        this.renderPage();
+        this.renderWatchLink();   // the video timestamp follows the reading position
+      });
     }
   }
 };
@@ -5446,6 +5614,10 @@ function renderMessageBubble(role, content, container) {
         ${chips}
       </div>
     `;
+    // The tutor quotes the source as it teaches. On a video curriculum each
+    // quote gets the moment it was said, linked — so "where did that come
+    // from?" is one tap away.
+    annotateVideoQuotes(msg.querySelector('.prose'));
   } else {
     msg.className = 'turn user';
     const initial = (AppState.currentUser?.displayName || AppState.currentUser?.email || 'You').charAt(0).toUpperCase();
@@ -6022,6 +6194,10 @@ function initNoteCapture() {
       chapterNumber: chapter.number,
       chapterTitle: chapter.title,
       quote: pendingText,
+      // Resolve the video moment now, while the chapter's marked text is in
+      // hand — the Notes tab shows saved quotes long after it has unloaded.
+      videoId: book.sourceType === 'video' ? (chapter.videoId || book.videoIds?.[0] || null) : null,
+      videoTime: book.sourceType === 'video' ? timeForQuote(pendingText, chapter) : null,
       timestamp: Date.now()
     });
     showToast('Saved to Notes', 'success', 1800);
@@ -6063,7 +6239,9 @@ async function renderNotesTab() {
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4.5c1.8-.9 3.6-1.3 5.5-1.1 1 .1 1.9.4 2.5.9v11c-.6-.5-1.5-.8-2.5-.9-1.9-.2-3.7.2-5.5 1.1v-11z"/><path d="M18 4.5c-1.8-.9-3.6-1.3-5.5-1.1-1 .1-1.9.4-2.5.9v11c.6-.5 1.5-.8 2.5-.9 1.9-.2 3.7.2 5.5 1.1v-11z"/></svg>
           ${n.chapterNumber ? `Ch. ${n.chapterNumber} — ${n.chapterTitle}` : 'General note'}
         </div>
-        <p class="note-quote">"${n.quote}"</p>
+        <p class="note-quote">"${n.quote}"${n.videoTime && n.videoId
+          ? `<a class="video-cite" href="${videoTimeUrl(n.videoId, n.videoTime)}" target="_blank" rel="noopener" title="Watch this moment in the video">🎬 ${n.videoTime}</a>`
+          : ''}</p>
         <div class="note-actions">
           <span class="note-deepdive" data-quote="${encodeURIComponent(n.quote)}" data-chapter="${n.chapterNumber}" data-chapter-title="${encodeURIComponent(n.chapterTitle)}">
             Deep dive into this
@@ -6268,7 +6446,7 @@ async function addChaptersFromVideo() {
       await dbPutChapter(book.id, {
         chapterNumber: ch.number,
         title: ch.title,
-        text: ch.text.substring(0, 200000),
+        text: markedVideoText(ch.passages).substring(0, 200000),
         videoId: result.videoId,
         startTime: ch.startTime,
         endTime: ch.endTime,
@@ -6407,7 +6585,7 @@ async function generateCurriculum() {
         await dbPutChapter(bookId, {
           chapterNumber: ch.number,
           title: ch.title,
-          text: ch.text.substring(0, 200000),
+          text: markedVideoText(ch.passages).substring(0, 200000),
           videoId: result.videoId,
           startTime: ch.startTime,
           endTime: ch.endTime,
