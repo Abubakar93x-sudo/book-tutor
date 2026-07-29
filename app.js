@@ -5214,8 +5214,15 @@ async function renderLibrary() {
       <div class="book-card-tags">
         ${tagsHtml}
       </div>
-
+      ${book.sourceType === 'video' && (book.videoIds || [])[0]
+        ? `<a class="book-card-source" href="${videoTimeUrl(book.videoIds[0], '')}" target="_blank" rel="noopener"
+             title="Open the original video on YouTube">▶ Watch on YouTube</a>`
+        : ''}
     `;
+
+    // The source link opens the video, not the book
+    const sourceLink = card.querySelector('.book-card-source');
+    if (sourceLink) sourceLink.addEventListener('click', (e) => e.stopPropagation());
 
     card.addEventListener('click', () => openBook(book.id));
     grid.appendChild(card);
@@ -5298,6 +5305,40 @@ function populateChapterSelect(book) {
   // Video curricula can always take another video as further chapters
   const addVideoBtn = document.getElementById('btn-add-video-chapter');
   if (addVideoBtn) addVideoBtn.style.display = book.sourceType === 'video' ? 'block' : 'none';
+
+  renderVideoSources(book);
+}
+
+// Lists every video this curriculum was built from, so the original is always
+// one tap away. Each entry names the chapters it produced, which is what makes
+// it useful once a curriculum has grown past a single video.
+function renderVideoSources(book) {
+  const wrap = document.getElementById('video-sources');
+  const list = document.getElementById('video-sources-list');
+  if (!wrap || !list) return;
+
+  const ids = book?.sourceType === 'video' ? (book.videoIds || []) : [];
+  if (!ids.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+
+  list.innerHTML = ids.map((id, i) => {
+    const chapters = (book.chapters || []).filter(c => c.videoId === id);
+    const range = chapters.length
+      ? (chapters.length === 1
+          ? `Chapter ${chapters[0].number}`
+          : `Chapters ${chapters[0].number}–${chapters[chapters.length - 1].number}`)
+      : '';
+    return `
+      <a class="video-source-link" href="${videoTimeUrl(id, '')}" target="_blank" rel="noopener"
+         title="Open the original video on YouTube">
+        <img class="video-source-thumb" src="https://i.ytimg.com/vi/${id}/default.jpg" alt="" loading="lazy">
+        <span class="video-source-meta">
+          <span class="video-source-label">${ids.length > 1 ? `Video ${i + 1}` : 'Watch on YouTube'}</span>
+          ${range ? `<span class="video-source-range">${range}</span>` : ''}
+        </span>
+        <span class="video-source-arrow">↗</span>
+      </a>`;
+  }).join('');
+  wrap.style.display = 'block';
 }
 
 // ── 10. LOAD CHAPTER INTO TUTOR ───────────────────────────────────────────────

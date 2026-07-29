@@ -4986,3 +4986,81 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 }
 .cp-quote .video-cite,
 .note-quote .video-cite { margin-top: 0.3rem; }
+
+/* ── Back to the source video ──────────────────────────────────────────────
+   A video curriculum should never strand you from the thing it was built
+   from. The library card carries a direct link, and the chapter switcher
+   lists every video the curriculum was made of. */
+
+.book-card-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border-light);
+  border-radius: 100px;
+  transition: all 0.15s ease;
+}
+.book-card-source:hover {
+  color: var(--rose);
+  border-color: var(--rose);
+  background: rgba(109,37,48,0.06);
+}
+
+.video-sources {
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.video-sources-head {
+  font-family: var(--font-body);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+.video-sources-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.video-source-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  text-decoration: none;
+  transition: all 0.15s ease;
+  min-width: 0;
+}
+.video-source-link:hover { border-color: var(--purple); background: var(--purple-dim); }
+
+.video-source-thumb {
+  width: 44px;
+  height: 33px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+}
+.video-source-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.video-source-label {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.video-source-range {
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.video-source-arrow { color: var(--text-muted); font-size: 0.8rem; flex-shrink: 0; }
