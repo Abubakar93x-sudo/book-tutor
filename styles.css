@@ -5064,3 +5064,37 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   font-variant-numeric: tabular-nums;
 }
 .video-source-arrow { color: var(--text-muted); font-size: 0.8rem; flex-shrink: 0; }
+
+/* ── Video generated in parts ──────────────────────────────────────────────
+   A long video exceeds what one response can carry, so its curriculum is
+   built a part at a time. This shows how far through the video the
+   curriculum reaches, and pulls the next part on demand. */
+.video-part-panel {
+  margin-top: 0.9rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--gold);
+  background: var(--gold-dim);
+  border-radius: var(--radius-sm);
+}
+.video-part-line {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+.video-part-line strong { color: var(--gold); font-variant-numeric: tabular-nums; }
+.video-part-track {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 100px;
+  overflow: hidden;
+  margin-bottom: 0.6rem;
+}
+.video-part-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 100px;
+  transition: width 0.3s ease;
+}
+.video-part-btn { width: 100%; }

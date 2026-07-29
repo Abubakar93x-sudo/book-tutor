@@ -69,7 +69,14 @@ async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 
     const fileData = typeof fileUri === 'string'
       ? { mimeType: 'application/pdf', fileUri }
       : { fileUri: fileUri.fileUri, ...(fileUri.mimeType ? { mimeType: fileUri.mimeType } : {}) };
-    parts.push({ fileData });
+    const part = { fileData };
+    // videoMetadata clips the video server-side, so only the requested window
+    // is ever tokenized. This is what makes long videos affordable: without it
+    // a two-hour talk blows the input budget before it produces a word.
+    if (typeof fileUri === 'object' && fileUri.videoMetadata) {
+      part.videoMetadata = fileUri.videoMetadata;
+    }
+    parts.push(part);
   }
 
   const payload = {
@@ -1723,23 +1730,49 @@ function parseYouTubeUrl(url) {
   return { id: m[1], url: `https://www.youtube.com/watch?v=${m[1]}` };
 }
 
-async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, existingChapters = []) {
+// Long videos cannot be turned into a curriculum in one response — the study
+// text for a two-hour talk far exceeds the output token limit, and the whole
+// video exceeds the input budget too. So generation is done in PARTS: each call
+// clips the video to a window starting where the last part stopped, produces as
+// much as comfortably fits under the cap, and reports where it got to. The
+// learner pulls the next part when they want it.
+const VIDEO_PART_MAX_LESSONS = 5;
+
+async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, existingChapters = [], opts = {}) {
   const parsed = parseYouTubeUrl(videoUrl);
   if (!parsed) throw new Error('That doesn\'t look like a YouTube link. Paste a youtube.com or youtu.be URL.');
 
+  const startOffset = Math.max(0, Math.floor(opts.startOffset || 0));
+  const part = opts.part || 1;
+  const maxLessons = opts.maxLessons || VIDEO_PART_MAX_LESSONS;
+  const fromStamp = secondsToStamp(startOffset);
+
   const prompt = `
-    Watch this video from beginning to end and turn it into study material.
+    Watch this video and turn it into study material.
 
     ${userTitle ? `The learner has named this curriculum "${userTitle}".` : ''}
+    ${startOffset > 0 ? `
+    THIS IS PART ${part}. Earlier parts already covered everything up to
+    ${fromStamp}. The video you are given begins at ${fromStamp} of the original
+    recording. Continue from there — do not re-teach earlier material.
+
+    IMPORTANT: every timestamp you report must be its position in the ORIGINAL
+    full video, so add ${fromStamp} to any time you measure from the start of
+    what you were given.` : ''}
     ${existingChapters.length ? `
-    This video is being ADDED to an existing curriculum that already covers:
+    This is being ADDED to an existing curriculum that already covers:
     ${existingChapters.map((t, i) => `${i + 1}. ${t}`).join('\n    ')}
     Do not repeat material already covered above. Number your chapters starting
     from ${startChapter}.` : ''}
 
-    Break the video into its natural LESSONS — the distinct things it actually
-    teaches, in the order taught. Use however many the content genuinely has
-    (typically 3-10); do not pad it out or force it into a round number.
+    Break what you cover into its natural LESSONS — the distinct things it
+    actually teaches, in the order taught.
+
+    STOP AFTER AT MOST ${maxLessons} LESSONS. This matters: your reply has a hard
+    length limit, and a reply that runs over is lost entirely. If the video
+    continues past your ${maxLessons}th lesson, stop cleanly at that lesson's
+    natural boundary rather than compressing the rest — the remainder will be
+    requested as the next part. Never rush or summarise the tail to fit it in.
 
     For each lesson write "passages": the lesson broken into timestamped
     paragraphs of study prose that someone could learn from WITHOUT watching
@@ -1766,12 +1799,20 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     - "title": a good name for the whole curriculum${userTitle ? ` (the learner's name for it takes priority: "${userTitle}")` : ''}
     - "author": who is teaching — the speaker or channel name
     - "topic": one line on what this curriculum covers
+    - "videoDuration": how long the whole original video is (mm:ss or hh:mm:ss)
+    - "coveredUntil": the timestamp in the ORIGINAL video where your last lesson
+      ends — where the next part must pick up
+    - "hasMore": true if there is still teaching material after "coveredUntil",
+      false only if you genuinely reached the end of the video
 
     Return ONLY valid JSON, no markdown fences:
     {
       "title": "...",
       "author": "...",
       "topic": "...",
+      "videoDuration": "1:24:30",
+      "coveredUntil": "18:40",
+      "hasMore": true,
       "chapters": [
         { "number": ${startChapter}, "title": "lesson title", "startTime": "0:00", "endTime": "4:12",
           "passages": [
@@ -1782,7 +1823,9 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     }
   `;
 
-  const result = await queryGemini(prompt, true, { fileUri: parsed.url }, 'fast');
+  const attachment = { fileUri: parsed.url };
+  if (startOffset > 0) attachment.videoMetadata = { startOffset: `${startOffset}s` };
+  const result = await queryGemini(prompt, true, attachment, 'fast');
 
   const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
     .map(c => {
@@ -1806,14 +1849,76 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     throw new Error('The AI could not extract any lessons from that video. It may be private, age-restricted, or too long.');
   }
 
+  // A clipped video may be described in times measured from the clip rather
+  // than the original. If everything came back before where this part was told
+  // to start, that's what happened — shift it all back onto the real timeline
+  // so timestamps stay comparable across parts.
+  if (startOffset > 0) {
+    const firstSeen = chapters
+      .flatMap(c => [c.startTime, ...c.passages.map(p => p.time)])
+      .map(stampToSeconds).filter(n => n > 0);
+    const minSeen = firstSeen.length ? Math.min(...firstSeen) : 0;
+    if (minSeen < startOffset) {
+      const shift = (t) => (t ? secondsToStamp(stampToSeconds(t) + startOffset) : t);
+      chapters.forEach(c => {
+        c.startTime = shift(c.startTime);
+        c.endTime = shift(c.endTime);
+        c.passages.forEach(p => { p.time = shift(p.time); });
+      });
+      if (result.coveredUntil) result.coveredUntil = shift(result.coveredUntil);
+    }
+  }
+
+  // Where the next part starts. Trust the model's own marker when it is
+  // plausible, otherwise fall back to the end of the last lesson produced.
+  const lastEnd = chapters[chapters.length - 1].endTime
+    || chapters[chapters.length - 1].passages.slice(-1)[0]?.time
+    || '';
+  let coveredUntil = result.coveredUntil || lastEnd;
+  if (stampToSeconds(coveredUntil) <= startOffset) coveredUntil = lastEnd;
+
+  const durationSecs = stampToSeconds(result.videoDuration);
+  const coveredSecs = stampToSeconds(coveredUntil);
+  // Believe "no more" only if it squares with the duration; a model that stops
+  // early and says it finished would silently lose the rest of the video.
+  const hasMore = result.hasMore === false
+    ? (durationSecs > 0 && coveredSecs > 0 && durationSecs - coveredSecs > 90)
+    : true;
+
   return {
     title: userTitle || result.title || 'Video curriculum',
     author: result.author || 'Unknown',
     topic: result.topic || '',
     videoId: parsed.id,
     videoUrl: parsed.url,
-    chapters
+    chapters,
+    part,
+    startOffset,
+    coveredUntil,
+    coveredSeconds: coveredSecs,
+    videoDuration: result.videoDuration || '',
+    durationSeconds: durationSecs,
+    hasMore
   };
+}
+
+// mm:ss / hh:mm:ss → seconds, and back. Kept beside the agent so prompt and
+// parsing share one definition of a timestamp.
+function stampToSeconds(stamp) {
+  if (!stamp) return 0;
+  const parts = String(stamp).trim().split(':').map(n => parseInt(n, 10));
+  if (!parts.length || parts.some(isNaN)) return 0;
+  return parts.reduce((total, n) => total * 60 + n, 0);
+}
+
+function secondsToStamp(total) {
+  const s = Math.max(0, Math.floor(total || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
 // ── AGENT: VOCAB BUILDER ─────────────────────────────────────────────────────

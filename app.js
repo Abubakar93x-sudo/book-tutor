@@ -5186,6 +5186,8 @@ async function renderLibrary() {
 
     if (book.sourceType === 'video') tags.push(['#Video', 'tag-burgundy']);
     else if (book.isPdfBook) tags.push(['#PDF', 'tag-burgundy']);
+    // An unfinished video is worth flagging — there is more curriculum to pull
+    if (book.pendingPart) tags.push([`#Part${book.pendingPart.nextPart}Ready`, 'tag-brass']);
     if (book.level === 'deep') tags.push(['#DeepStudy', 'tag-brass']);
 
     const tagsHtml = tags.map(([label, cls]) => `<span class="book-tag ${cls}">${label}</span>`).join('');
@@ -5306,7 +5308,33 @@ function populateChapterSelect(book) {
   const addVideoBtn = document.getElementById('btn-add-video-chapter');
   if (addVideoBtn) addVideoBtn.style.display = book.sourceType === 'video' ? 'block' : 'none';
 
+  renderVideoPartPanel(book);
   renderVideoSources(book);
+}
+
+// A video too long to fit one response is generated in parts. This shows how
+// far through the video the curriculum reaches and pulls the next part.
+function renderVideoPartPanel(book) {
+  const panel = document.getElementById('video-part-panel');
+  if (!panel) return;
+  const pending = book?.sourceType === 'video' ? book.pendingPart : null;
+  if (!pending) { panel.style.display = 'none'; return; }
+
+  const line = document.getElementById('video-part-line');
+  const fill = document.getElementById('video-part-fill');
+  const btn = document.getElementById('btn-next-video-part');
+
+  const covered = pending.nextOffset || 0;
+  const total = pending.durationSeconds || 0;
+  const pct = total > 0 ? Math.min(100, Math.round((covered / total) * 100)) : null;
+
+  line.innerHTML = total
+    ? `Covered up to <strong>${pending.coveredUntil}</strong> of ${pending.videoDuration}`
+    : `Covered up to <strong>${pending.coveredUntil}</strong> — more of the video remains`;
+  fill.style.width = pct != null ? `${pct}%` : '0%';
+  fill.parentElement.style.display = pct != null ? 'block' : 'none';
+  btn.textContent = `Generate part ${pending.nextPart} →`;
+  panel.style.display = 'block';
 }
 
 // Lists every video this curriculum was built from, so the original is always
@@ -6448,6 +6476,82 @@ async function checkBookCoverage() {
   }
 }
 
+// Continue a video that was too long to finish in one response. Picks up from
+// where the last part stopped, clipping the video so only the unread remainder
+// is ever sent, and appends its lessons as further chapters.
+async function generateNextVideoPart() {
+  const book = AppState.selectedBook;
+  const pending = book?.pendingPart;
+  if (!book || !pending) return;
+
+  if (AppState.mode === 'demo') {
+    showToast('Generating video parts needs a Gemini API key — turn off Demo Mode in Settings.', 'info', 5000);
+    return;
+  }
+
+  const btn = document.getElementById('btn-next-video-part');
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = `Watching from ${pending.coveredUntil}…`; }
+
+  try {
+    const startChapter = (book.chapters || []).reduce((m, c) => Math.max(m, c.number), 0) + 1;
+    const existingTitles = (book.chapters || []).map(c => c.title);
+    const result = await callVideoCurriculum(pending.videoUrl, '', startChapter, existingTitles, {
+      startOffset: pending.nextOffset,
+      part: pending.nextPart
+    });
+
+    for (const ch of result.chapters) {
+      await dbPutChapter(book.id, {
+        chapterNumber: ch.number,
+        title: ch.title,
+        text: markedVideoText(ch.passages).substring(0, 200000),
+        videoId: result.videoId,
+        startTime: ch.startTime,
+        endTime: ch.endTime,
+        part: result.part,
+        summary_10s: null, summary_3m: null, summary_15m: null,
+        concepts: null, flashcards: null, studiedAt: null
+      });
+    }
+
+    book.chapters = [...(book.chapters || []), ...result.chapters.map(ch => ({
+      number: ch.number, title: ch.title,
+      startTime: ch.startTime, endTime: ch.endTime,
+      videoId: result.videoId, part: result.part
+    }))];
+    book.totalChapters = book.chapters.length;
+    book.wordsTotal = (book.wordsTotal || 0)
+      + result.chapters.reduce((n, ch) => n + ch.text.split(/\s+/).filter(Boolean).length, 0);
+
+    // A part that made no forward progress would loop forever — treat it as
+    // the end of the video rather than offering the same part again.
+    const advanced = result.coveredSeconds > pending.nextOffset;
+    book.pendingPart = (result.hasMore && advanced) ? {
+      videoId: result.videoId,
+      videoUrl: result.videoUrl,
+      nextOffset: result.coveredSeconds,
+      nextPart: result.part + 1,
+      coveredUntil: result.coveredUntil,
+      videoDuration: result.videoDuration || pending.videoDuration,
+      durationSeconds: result.durationSeconds || pending.durationSeconds
+    } : null;
+
+    await dbPut('books', book);
+    populateChapterSelect(book);
+    showToast(book.pendingPart
+      ? `Part ${result.part}: ${result.chapters.length} more lessons, up to ${result.coveredUntil}.`
+      : `Part ${result.part}: ${result.chapters.length} more lessons — that's the whole video.`,
+      'success', 6000);
+    await renderLibrary();
+  } catch (err) {
+    console.error('Next video part failed:', err);
+    showToast(`Couldn't generate the next part: ${err.message}`, 'error', 10000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
+
 // A video curriculum grows the same way it was created: point it at another
 // video and its lessons are appended as further chapters. The AI is told what
 // the curriculum already covers so it doesn't teach the same thing twice.
@@ -6614,8 +6718,21 @@ async function generateCurriculum() {
         wordsRead: 0,
         chapters: result.chapters.map(ch => ({
           number: ch.number, title: ch.title,
-          startTime: ch.startTime, endTime: ch.endTime, videoId: result.videoId
+          startTime: ch.startTime, endTime: ch.endTime,
+          videoId: result.videoId, part: result.part
         })),
+        // A long video can't be turned into a curriculum in one response, so
+        // generation is resumable: this records where to pick up, and the UI
+        // offers the next part until the video is exhausted.
+        pendingPart: result.hasMore ? {
+          videoId: result.videoId,
+          videoUrl: result.videoUrl,
+          nextOffset: result.coveredSeconds,
+          nextPart: result.part + 1,
+          coveredUntil: result.coveredUntil,
+          videoDuration: result.videoDuration,
+          durationSeconds: result.durationSeconds
+        } : null,
         readyChapters: [],
         studiedChapters: [],
         createdAt: Date.now()
@@ -6636,7 +6753,10 @@ async function generateCurriculum() {
       }
 
       document.getElementById('modal-add-book').style.display = 'none';
-      showToast(`"${result.title}" added — ${result.chapters.length} lessons ready to study.`, 'success');
+      showToast(result.hasMore
+        ? `"${result.title}" added — ${result.chapters.length} lessons up to ${result.coveredUntil}. Open it to generate the next part.`
+        : `"${result.title}" added — ${result.chapters.length} lessons ready to study.`,
+        'success', result.hasMore ? 8000 : 5000);
       await renderLibrary();
     } catch (videoErr) {
       document.getElementById('add-book-step-3').style.display = 'none';
@@ -7657,6 +7777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btn-add-video-chapter').addEventListener('click', addChaptersFromVideo);
+  document.getElementById('btn-next-video-part').addEventListener('click', generateNextVideoPart);
 
   // ── PDF DROP ZONE ──
 
