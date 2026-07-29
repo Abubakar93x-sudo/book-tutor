@@ -5321,18 +5321,15 @@ function renderVideoPartPanel(book) {
   if (!pending) { panel.style.display = 'none'; return; }
 
   const line = document.getElementById('video-part-line');
-  const fill = document.getElementById('video-part-fill');
   const btn = document.getElementById('btn-next-video-part');
 
-  const covered = pending.nextOffset || 0;
-  const total = pending.durationSeconds || 0;
-  const pct = total > 0 ? Math.min(100, Math.round((covered / total) * 100)) : null;
-
-  line.innerHTML = total
-    ? `Covered up to <strong>${pending.coveredUntil}</strong> of ${pending.videoDuration}`
-    : `Covered up to <strong>${pending.coveredUntil}</strong> — more of the video remains`;
-  fill.style.width = pct != null ? `${pct}%` : '0%';
-  fill.parentElement.style.display = pct != null ? 'block' : 'none';
+  // No progress bar: each part only ever sees its own window of the video, so
+  // the total runtime is genuinely unknown. Better to state what IS known —
+  // where the curriculum reaches and what the next part will cover — than to
+  // invent a percentage out of a duration nobody measured.
+  const nextEnd = secondsToStamp((pending.nextOffset || 0) + (pending.windowSeconds || 1200));
+  line.innerHTML = `Covered up to <strong>${pending.coveredUntil}</strong>.
+    Part ${pending.nextPart} picks up there and runs to about ${nextEnd}.`;
   btn.textContent = `Generate part ${pending.nextPart} →`;
   panel.style.display = 'block';
 }
@@ -6422,13 +6419,14 @@ async function checkBookCoverage() {
     document.getElementById('add-book-step-2').style.display = 'block';
     document.getElementById('diagnostic-result').innerHTML = `
       <strong style="color:#b8863f">🎬 Video ready</strong><br><br>
-      The AI will watch the whole video and pull out the lessons it teaches, in
-      order — keeping the speaker's own claims, figures and examples. Each lesson
-      becomes a chapter with its own summaries, concepts, flashcards and quizzes.
+      The AI will watch the video and pull out the lessons it teaches, in order —
+      keeping the speaker's own claims, figures and examples. Each lesson becomes
+      a chapter with its own summaries, concepts, flashcards and quizzes.
       <br><br>
       <em style="color:var(--text-muted); font-size:0.85rem;">
-        A long video takes a couple of minutes to watch. Private, age-restricted
-        and members-only videos can't be read.
+        Long videos are built about 20 minutes at a time — you'll get the first
+        part now and can pull each next part when you want it. Private,
+        age-restricted and members-only videos can't be read.
       </em>
     `;
     document.getElementById('btn-generate-book').dataset.level = 'ref';
@@ -6533,8 +6531,7 @@ async function generateNextVideoPart() {
       nextOffset: result.coveredSeconds,
       nextPart: result.part + 1,
       coveredUntil: result.coveredUntil,
-      videoDuration: result.videoDuration || pending.videoDuration,
-      durationSeconds: result.durationSeconds || pending.durationSeconds
+      windowSeconds: result.windowSeconds
     } : null;
 
     await dbPut('books', book);
@@ -6545,8 +6542,18 @@ async function generateNextVideoPart() {
       'success', 6000);
     await renderLibrary();
   } catch (err) {
-    console.error('Next video part failed:', err);
-    showToast(`Couldn't generate the next part: ${err.message}`, 'error', 10000);
+    // A window that starts past the end of the recording has nothing in it.
+    // That means the video is finished, not that anything went wrong.
+    if (/could not extract any lessons|no lessons/i.test(err.message)) {
+      book.pendingPart = null;
+      await dbPut('books', book).catch(() => {});
+      populateChapterSelect(book);
+      showToast('That\'s the whole video — the curriculum is complete.', 'success', 5000);
+      await renderLibrary();
+    } else {
+      console.error('Next video part failed:', err);
+      showToast(`Couldn't generate the next part: ${err.message}`, 'error', 10000);
+    }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = original; }
   }
@@ -6690,7 +6697,7 @@ async function generateCurriculum() {
   if (sourceMode === 'video') {
     const rawUrl = document.getElementById('input-video-url').value.trim();
     try {
-      logStep('🎬 Watching the video end to end…');
+      logStep('🎬 Watching the first stretch of the video…');
       const result = await callVideoCurriculum(rawUrl, title);
 
       logStep(`✅ Found ${result.chapters.length} lesson${result.chapters.length !== 1 ? 's' : ''} — "${result.title}"`);
@@ -6730,8 +6737,7 @@ async function generateCurriculum() {
           nextOffset: result.coveredSeconds,
           nextPart: result.part + 1,
           coveredUntil: result.coveredUntil,
-          videoDuration: result.videoDuration,
-          durationSeconds: result.durationSeconds
+          windowSeconds: result.windowSeconds
         } : null,
         readyChapters: [],
         studiedChapters: [],

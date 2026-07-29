@@ -1738,27 +1738,41 @@ function parseYouTubeUrl(url) {
 // learner pulls the next part when they want it.
 const VIDEO_PART_MAX_LESSONS = 5;
 
+// Video is charged by the second of runtime — roughly 300 input tokens per
+// second — so a video longer than about an hour exceeds the 1,048,576-token
+// context on its own, before a word of the prompt or the reply. Every request
+// therefore sends a bounded WINDOW of the video, never the rest of it: 20
+// minutes is ~360k tokens, which leaves comfortable room for everything else.
+const VIDEO_WINDOW_SECONDS = 20 * 60;
+
 async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, existingChapters = [], opts = {}) {
   const parsed = parseYouTubeUrl(videoUrl);
   if (!parsed) throw new Error('That doesn\'t look like a YouTube link. Paste a youtube.com or youtu.be URL.');
 
   const startOffset = Math.max(0, Math.floor(opts.startOffset || 0));
+  const windowSeconds = Math.max(60, Math.floor(opts.windowSeconds || VIDEO_WINDOW_SECONDS));
+  const endOffset = startOffset + windowSeconds;
   const part = opts.part || 1;
   const maxLessons = opts.maxLessons || VIDEO_PART_MAX_LESSONS;
   const fromStamp = secondsToStamp(startOffset);
+  const toStamp = secondsToStamp(endOffset);
 
   const prompt = `
     Watch this video and turn it into study material.
 
     ${userTitle ? `The learner has named this curriculum "${userTitle}".` : ''}
-    ${startOffset > 0 ? `
-    THIS IS PART ${part}. Earlier parts already covered everything up to
-    ${fromStamp}. The video you are given begins at ${fromStamp} of the original
-    recording. Continue from there — do not re-teach earlier material.
+    YOU ARE SEEING ONE WINDOW OF A LONGER RECORDING: ${fromStamp} to ${toStamp}.
+    ${startOffset > 0 ? `This is PART ${part}; earlier parts already covered
+    everything up to ${fromStamp}, so continue from there and do not re-teach
+    earlier material.
 
-    IMPORTANT: every timestamp you report must be its position in the ORIGINAL
-    full video, so add ${fromStamp} to any time you measure from the start of
-    what you were given.` : ''}
+    Every timestamp you report must be its position in the ORIGINAL full video,
+    so add ${fromStamp} to any time you measure from the start of what you were
+    given.` : 'This is PART 1, the opening window of the recording.'}
+
+    The window may cut off mid-sentence — that is expected and simply means the
+    recording continues past it. Say so via "reachedVideoEnd" rather than
+    inventing a conclusion.
     ${existingChapters.length ? `
     This is being ADDED to an existing curriculum that already covers:
     ${existingChapters.map((t, i) => `${i + 1}. ${t}`).join('\n    ')}
@@ -1799,20 +1813,20 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     - "title": a good name for the whole curriculum${userTitle ? ` (the learner's name for it takes priority: "${userTitle}")` : ''}
     - "author": who is teaching — the speaker or channel name
     - "topic": one line on what this curriculum covers
-    - "videoDuration": how long the whole original video is (mm:ss or hh:mm:ss)
     - "coveredUntil": the timestamp in the ORIGINAL video where your last lesson
-      ends — where the next part must pick up
-    - "hasMore": true if there is still teaching material after "coveredUntil",
-      false only if you genuinely reached the end of the video
+      ends — where the next part must pick up. It must fall between ${fromStamp}
+      and ${toStamp}.
+    - "reachedVideoEnd": true ONLY if the recording itself finished inside this
+      window — the talk concluded, the speaker signed off. If the window simply
+      ran out while material was still being taught, this is false.
 
     Return ONLY valid JSON, no markdown fences:
     {
       "title": "...",
       "author": "...",
       "topic": "...",
-      "videoDuration": "1:24:30",
       "coveredUntil": "18:40",
-      "hasMore": true,
+      "reachedVideoEnd": false,
       "chapters": [
         { "number": ${startChapter}, "title": "lesson title", "startTime": "0:00", "endTime": "4:12",
           "passages": [
@@ -1823,8 +1837,12 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     }
   `;
 
-  const attachment = { fileUri: parsed.url };
-  if (startOffset > 0) attachment.videoMetadata = { startOffset: `${startOffset}s` };
+  // ALWAYS bounded at both ends — an open-ended clip sends the whole remaining
+  // video and blows the context limit on anything feature-length.
+  const attachment = {
+    fileUri: parsed.url,
+    videoMetadata: { startOffset: `${startOffset}s`, endOffset: `${endOffset}s` }
+  };
   const result = await queryGemini(prompt, true, attachment, 'fast');
 
   const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
@@ -1869,21 +1887,29 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     }
   }
 
-  // Where the next part starts. Trust the model's own marker when it is
-  // plausible, otherwise fall back to the end of the last lesson produced.
+  // Where the next part starts. Trust the model's marker when it is plausible,
+  // otherwise fall back to the end of the last lesson produced. Clamp into the
+  // window: a time outside it is a hallucination, and letting it through would
+  // either skip material or stall the sequence.
   const lastEnd = chapters[chapters.length - 1].endTime
     || chapters[chapters.length - 1].passages.slice(-1)[0]?.time
     || '';
-  let coveredUntil = result.coveredUntil || lastEnd;
-  if (stampToSeconds(coveredUntil) <= startOffset) coveredUntil = lastEnd;
+  let coveredSecs = stampToSeconds(result.coveredUntil) || stampToSeconds(lastEnd);
+  if (coveredSecs <= startOffset || coveredSecs > endOffset) {
+    coveredSecs = Math.min(Math.max(stampToSeconds(lastEnd), startOffset), endOffset);
+  }
+  // Nothing usable came back — advance by the window so the next part still
+  // makes progress rather than re-requesting the same stretch.
+  if (coveredSecs <= startOffset) coveredSecs = endOffset;
+  const coveredUntil = secondsToStamp(coveredSecs);
 
-  const durationSecs = stampToSeconds(result.videoDuration);
-  const coveredSecs = stampToSeconds(coveredUntil);
-  // Believe "no more" only if it squares with the duration; a model that stops
-  // early and says it finished would silently lose the rest of the video.
-  const hasMore = result.hasMore === false
-    ? (durationSecs > 0 && coveredSecs > 0 && durationSecs - coveredSecs > 90)
-    : true;
+  // Each part only ever sees its own window, so "is there more?" cannot be
+  // judged from a duration the model never saw. It is decided by whether the
+  // recording actually ended inside this window — and a claim that it did is
+  // disbelieved when the lessons run right up to the window edge, which is what
+  // a video that simply got cut off looks like.
+  const hitWindowEdge = coveredSecs >= endOffset - 45;
+  const hasMore = !(result.reachedVideoEnd === true && !hitWindowEdge);
 
   return {
     title: userTitle || result.title || 'Video curriculum',
@@ -1894,10 +1920,11 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
     chapters,
     part,
     startOffset,
+    endOffset,
+    windowSeconds,
     coveredUntil,
     coveredSeconds: coveredSecs,
-    videoDuration: result.videoDuration || '',
-    durationSeconds: durationSecs,
+    reachedVideoEnd: result.reachedVideoEnd === true,
     hasMore
   };
 }
