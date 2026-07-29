@@ -55,7 +55,9 @@ function getApiKey() {
 
 // ── CORE: GEMINI HTTP REQUEST ─────────────────────────────────────────────────
 // Sends a prompt to the Gemini API and returns either raw text or parsed JSON.
-// fileUri: optional Gemini File API URI to attach (e.g. uploaded PDF)
+// fileUri: optional attachment. A bare string is a PDF (Gemini File API URI).
+//          Pass { fileUri, mimeType } to attach anything else; omit mimeType
+//          for a YouTube URL, which Gemini fetches and watches by itself.
 // tier:    'fast' (default) or 'deep' — resolved to a model via modelFor()
 async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 'fast') {
   const apiKey = getApiKey();
@@ -64,12 +66,10 @@ async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 
   // Build parts array — text always first, file attachment second if provided
   const parts = [{ text: prompt }];
   if (fileUri) {
-    parts.push({
-      fileData: {
-        mimeType: 'application/pdf',
-        fileUri: fileUri
-      }
-    });
+    const fileData = typeof fileUri === 'string'
+      ? { mimeType: 'application/pdf', fileUri }
+      : { fileUri: fileUri.fileUri, ...(fileUri.mimeType ? { mimeType: fileUri.mimeType } : {}) };
+    parts.push({ fileData });
   }
 
   const payload = {
@@ -1702,6 +1702,102 @@ async function callPrecisionWords(langProfile, frontierBand, knownWords = []) {
     word: w.word, meaning: w.meaning, example: w.example,
     cloze: w.cloze || w.example, contrast: w.contrast || ''
   }));
+}
+
+// ── VIDEO CURRICULUM ─────────────────────────────────────────────────────────
+// Gemini can watch a YouTube video directly from its URL — no download, no
+// transcript service. The trick is what we ask it to produce: not a summary,
+// but faithful STUDY TEXT per lesson. Everything downstream in this app
+// (chapter curricula, the reader, checkpoints, flashcards, the tutor's quoting)
+// already works on chapter text, so producing good text is the whole job — the
+// rest of the pipeline needs no knowledge that a video was involved.
+
+// Gemini's direct-URL ingestion is YouTube-only; anything else has to be
+// uploaded as bytes, which this client-side app can't do. Fail early and say so.
+function parseYouTubeUrl(url) {
+  const clean = String(url || '').trim();
+  const m = clean.match(
+    /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|live\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  );
+  if (!m) return null;
+  return { id: m[1], url: `https://www.youtube.com/watch?v=${m[1]}` };
+}
+
+async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, existingChapters = []) {
+  const parsed = parseYouTubeUrl(videoUrl);
+  if (!parsed) throw new Error('That doesn\'t look like a YouTube link. Paste a youtube.com or youtu.be URL.');
+
+  const prompt = `
+    Watch this video from beginning to end and turn it into study material.
+
+    ${userTitle ? `The learner has named this curriculum "${userTitle}".` : ''}
+    ${existingChapters.length ? `
+    This video is being ADDED to an existing curriculum that already covers:
+    ${existingChapters.map((t, i) => `${i + 1}. ${t}`).join('\n    ')}
+    Do not repeat material already covered above. Number your chapters starting
+    from ${startChapter}.` : ''}
+
+    Break the video into its natural LESSONS — the distinct things it actually
+    teaches, in the order taught. Use however many the content genuinely has
+    (typically 3-10); do not pad it out or force it into a round number.
+
+    For each lesson write "text": a thorough, faithful piece of study prose that
+    someone could learn from WITHOUT watching the video. This is the most
+    important part of your output, so make it substantial — several hundred
+    words per lesson:
+    - Capture every real point the speaker makes, in their order of reasoning
+    - Keep their actual claims, definitions, numbers, names and examples exact.
+      Never round a figure, invent an example, or smooth over a caveat.
+    - Preserve the reasoning that connects points, not just the conclusions
+    - Write in clean prose paragraphs. No bullet lists, no markdown headings,
+      no "in this video" or "the speaker says" framing — write it as teaching
+      material in its own right.
+    - If the speaker states something contentious or unsupported, report it as
+      their claim rather than as fact.
+
+    Also give each lesson a "startTime" and "endTime" as mm:ss (or hh:mm:ss for
+    long videos) marking where it runs in the video.
+
+    Finally identify:
+    - "title": a good name for the whole curriculum${userTitle ? ` (the learner's name for it takes priority: "${userTitle}")` : ''}
+    - "author": who is teaching — the speaker or channel name
+    - "topic": one line on what this curriculum covers
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "title": "...",
+      "author": "...",
+      "topic": "...",
+      "chapters": [
+        { "number": ${startChapter}, "title": "lesson title", "startTime": "0:00", "endTime": "4:12", "text": "the full study prose…" }
+      ]
+    }
+  `;
+
+  const result = await queryGemini(prompt, true, { fileUri: parsed.url }, 'fast');
+
+  const chapters = (Array.isArray(result.chapters) ? result.chapters : [])
+    .filter(c => c.title && c.text)
+    .map((c, i) => ({
+      number: startChapter + i,
+      title: c.title,
+      startTime: c.startTime || '',
+      endTime: c.endTime || '',
+      text: c.text
+    }));
+
+  if (!chapters.length) {
+    throw new Error('The AI could not extract any lessons from that video. It may be private, age-restricted, or too long.');
+  }
+
+  return {
+    title: userTitle || result.title || 'Video curriculum',
+    author: result.author || 'Unknown',
+    topic: result.topic || '',
+    videoId: parsed.id,
+    videoUrl: parsed.url,
+    chapters
+  };
 }
 
 // ── AGENT: VOCAB BUILDER ─────────────────────────────────────────────────────

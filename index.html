@@ -279,6 +279,8 @@
             <span class="reader-title" id="reader-chapter-label"></span>
             <div class="reader-progress-track"><div class="reader-progress-fill" id="reader-progress-fill" style="width:0%"></div></div>
             <span class="reader-page" id="reader-page" style="display:none;"></span>
+            <!-- Video chapters: jump to the moment this lesson comes from -->
+            <a class="reader-watch" id="reader-watch" style="display:none;" target="_blank" rel="noopener"></a>
             <span class="reader-time" id="reader-time-left"></span>
             <button class="reader-top-btn reader-top-btn-labelled" id="btn-reader-tutor" title="Open tutor &amp; study notes">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-3.5 3v-3H5a2 2 0 01-2-2v-6z"/></svg>
@@ -322,6 +324,10 @@
                       <option value="">-- Choose a Chapter --</option>
                     </select>
                   </div>
+                  <!-- Video curricula grow by adding more videos as chapters -->
+                  <button id="btn-add-video-chapter" class="btn btn-ghost btn-sm add-video-chapter-btn" style="display:none;">
+                    🎬 Add chapters from another video
+                  </button>
                 </div>
               </div>
 
@@ -816,7 +822,29 @@
                   </div>
                 </div>
               </label>
+              <label class="source-option">
+                <input type="radio" name="book-source" id="source-video" value="video">
+                <div class="source-option-card">
+                  <span class="source-icon">🎬</span>
+                  <div>
+                    <strong>Video</strong>
+                    <span>The AI watches it</span>
+                  </div>
+                </div>
+              </label>
             </div>
+          </div>
+
+          <!-- Video URL (video mode) -->
+          <div id="source-video-zone" class="form-group mt-3" style="display:none;">
+            <label for="input-video-url">YouTube link</label>
+            <input type="url" id="input-video-url" class="form-input" placeholder="https://www.youtube.com/watch?v=…">
+            <p class="video-hint">
+              The AI watches the whole video, pulls out every lesson it teaches, and
+              builds a curriculum from them — with summaries, flashcards and quizzes
+              exactly like a book. You can add more videos as extra chapters later.
+            </p>
+            <div id="video-url-status" class="video-url-status" style="display:none;"></div>
           </div>
 
           <!-- Reference text (AI knowledge mode) -->

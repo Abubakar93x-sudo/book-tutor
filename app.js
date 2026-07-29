@@ -544,6 +544,14 @@ async function dbUpdateBookProgress(bookId, type, chapterNumber) {
 // consumer (AI prompts, quoting, word counts) strips it first.
 // The sentinel contains a lowercase run so it can never be mistaken for an
 // ALL-CAPS chapter heading, and the literal "@@@pgbrk:" never occurs in prose.
+// "4:12" / "1:04:12" → seconds, for deep-linking into a video
+function timeToSeconds(stamp) {
+  if (!stamp) return 0;
+  const parts = String(stamp).split(':').map(n => parseInt(n, 10));
+  if (parts.some(isNaN)) return 0;
+  return parts.reduce((total, n) => total * 60 + n, 0);
+}
+
 const PAGE_MARK_LINE_RE = /^@@@pgbrk:(\d+)@@@$/;
 const PAGE_MARK_STRIP_RE = /@@@pgbrk:\d+@@@/g;
 
@@ -4368,6 +4376,7 @@ const Reader = {
       if (current && this.segmentsDone > 0) current.scrollIntoView({ block: 'start' });
     }
     this.renderPage(); // reflect the resumed position
+    this.renderWatchLink();
     return true;
   },
 
@@ -4626,6 +4635,24 @@ const Reader = {
       else break;
     }
     return page;
+  },
+
+  // A video chapter has no pages, but it does have a place in the video —
+  // so the reader offers the source instead: jump straight to that moment.
+  renderWatchLink() {
+    const el = document.getElementById('reader-watch');
+    if (!el) return;
+    const book = AppState.selectedBook;
+    const chapter = AppState.selectedChapter;
+    if (book?.sourceType !== 'video' || !chapter?.videoId) {
+      el.style.display = 'none';
+      return;
+    }
+    const secs = timeToSeconds(chapter.startTime);
+    el.href = `https://www.youtube.com/watch?v=${chapter.videoId}${secs ? `&t=${secs}s` : ''}`;
+    el.textContent = chapter.startTime ? `🎬 ${chapter.startTime}` : '🎬 Watch';
+    el.title = 'Watch this lesson in the video';
+    el.style.display = '';
   },
 
   renderPage() {
@@ -4989,7 +5016,8 @@ async function renderLibrary() {
     else if (pct > 0) tags.push(['#Read', '']);
     else tags.push(['#New', 'tag-brass']);
 
-    if (book.isPdfBook) tags.push(['#PDF', 'tag-burgundy']);
+    if (book.sourceType === 'video') tags.push(['#Video', 'tag-burgundy']);
+    else if (book.isPdfBook) tags.push(['#PDF', 'tag-burgundy']);
     if (book.level === 'deep') tags.push(['#DeepStudy', 'tag-brass']);
 
     const tagsHtml = tags.map(([label, cls]) => `<span class="book-tag ${cls}">${label}</span>`).join('');
@@ -5098,6 +5126,10 @@ function populateChapterSelect(book) {
     opt.textContent = `Ch. ${ch.number}: ${ch.title}${badge}`;
     select.appendChild(opt);
   });
+
+  // Video curricula can always take another video as further chapters
+  const addVideoBtn = document.getElementById('btn-add-video-chapter');
+  if (addVideoBtn) addVideoBtn.style.display = book.sourceType === 'video' ? 'block' : 'none';
 }
 
 // ── 10. LOAD CHAPTER INTO TUTOR ───────────────────────────────────────────────
@@ -6094,8 +6126,14 @@ function openAddBookModal() {
   document.getElementById('source-knowledge').checked              = true;
   document.getElementById('source-knowledge-zone').style.display   = 'block';
   document.getElementById('source-pdf-zone').style.display         = 'none';
+  document.getElementById('source-video-zone').style.display       = 'none';
   document.getElementById('title-author-group').style.display      = 'block';
   document.getElementById('pdf-autodetect-note').style.display     = 'none';
+  document.getElementById('input-video-url').value                 = '';
+  document.getElementById('video-url-status').style.display        = 'none';
+  document.querySelector('label[for="input-book-title"]').textContent = 'Book Title';
+  document.querySelector('label[for="input-book-author"]').parentElement.style.display = 'block';
+  document.getElementById('btn-check-book').textContent            = 'Check Book Coverage →';
   document.getElementById('input-pdf-file').value                  = '';
   document.getElementById('drop-zone-idle').style.display          = 'flex';
   document.getElementById('drop-zone-selected').style.display      = 'none';
@@ -6108,8 +6146,8 @@ async function checkBookCoverage() {
   const author = document.getElementById('input-book-author').value.trim();
   const sourceMode = document.querySelector('input[name="book-source"]:checked')?.value || 'knowledge';
 
-  // PDF mode auto-extracts title from the document — don't require manual entry
-  if (sourceMode !== 'pdf' && !title) {
+  // PDF auto-extracts its title; video mode can name itself from the content.
+  if (sourceMode === 'knowledge' && !title) {
     showToast('Please enter a book title.', 'error');
     return;
   }
@@ -6122,6 +6160,31 @@ async function checkBookCoverage() {
       In Demo Mode, the app uses the built-in Chase Hughes demo library.<br>
       To add real books, enter a valid Gemini API key in Settings and disable Demo Mode.
     `;
+    return;
+  }
+
+  // ── VIDEO MODE: validate the link, then straight to Step 2 ──
+  if (sourceMode === 'video') {
+    const raw = document.getElementById('input-video-url').value.trim();
+    const parsed = parseYouTubeUrl(raw);
+    if (!parsed) {
+      showToast('Paste a YouTube link first — that\'s what the AI can watch.', 'error');
+      return;
+    }
+    document.getElementById('add-book-step-1').style.display = 'none';
+    document.getElementById('add-book-step-2').style.display = 'block';
+    document.getElementById('diagnostic-result').innerHTML = `
+      <strong style="color:#b8863f">🎬 Video ready</strong><br><br>
+      The AI will watch the whole video and pull out the lessons it teaches, in
+      order — keeping the speaker's own claims, figures and examples. Each lesson
+      becomes a chapter with its own summaries, concepts, flashcards and quizzes.
+      <br><br>
+      <em style="color:var(--text-muted); font-size:0.85rem;">
+        A long video takes a couple of minutes to watch. Private, age-restricted
+        and members-only videos can't be read.
+      </em>
+    `;
+    document.getElementById('btn-generate-book').dataset.level = 'ref';
     return;
   }
 
@@ -6163,6 +6226,76 @@ async function checkBookCoverage() {
   } finally {
     document.getElementById('btn-check-book').disabled = false;
     document.getElementById('btn-check-book').textContent = 'Check Book Coverage →';
+  }
+}
+
+// A video curriculum grows the same way it was created: point it at another
+// video and its lessons are appended as further chapters. The AI is told what
+// the curriculum already covers so it doesn't teach the same thing twice.
+async function addChaptersFromVideo() {
+  const book = AppState.selectedBook;
+  if (!book || book.sourceType !== 'video') return;
+
+  if (AppState.mode === 'demo') {
+    showToast('Adding videos needs a Gemini API key — turn off Demo Mode in Settings.', 'info', 5000);
+    return;
+  }
+
+  const raw = prompt(`Add another video to "${book.title}".\n\nPaste the YouTube link:`);
+  if (!raw || !raw.trim()) return;
+
+  const parsed = parseYouTubeUrl(raw);
+  if (!parsed) {
+    showToast('Only YouTube links work — that\'s what the AI can watch.', 'error', 6000);
+    return;
+  }
+  if ((book.videoIds || []).includes(parsed.id)) {
+    showToast('That video is already part of this curriculum.', 'info', 5000);
+    return;
+  }
+
+  const btn = document.getElementById('btn-add-video-chapter');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '🎬 Watching the video…';
+
+  try {
+    const startChapter = (book.chapters || []).reduce((m, c) => Math.max(m, c.number), 0) + 1;
+    const existingTitles = (book.chapters || []).map(c => c.title);
+    const result = await callVideoCurriculum(parsed.url, '', startChapter, existingTitles);
+
+    for (const ch of result.chapters) {
+      await dbPutChapter(book.id, {
+        chapterNumber: ch.number,
+        title: ch.title,
+        text: ch.text.substring(0, 200000),
+        videoId: result.videoId,
+        startTime: ch.startTime,
+        endTime: ch.endTime,
+        summary_10s: null, summary_3m: null, summary_15m: null,
+        concepts: null, flashcards: null, studiedAt: null
+      });
+    }
+
+    book.chapters = [...(book.chapters || []), ...result.chapters.map(ch => ({
+      number: ch.number, title: ch.title,
+      startTime: ch.startTime, endTime: ch.endTime, videoId: result.videoId
+    }))];
+    book.videoIds = [...(book.videoIds || []), result.videoId];
+    book.totalChapters = book.chapters.length;
+    book.wordsTotal = (book.wordsTotal || 0)
+      + result.chapters.reduce((n, ch) => n + ch.text.split(/\s+/).filter(Boolean).length, 0);
+    await dbPut('books', book);
+
+    populateChapterSelect(book);
+    showToast(`${result.chapters.length} new chapter${result.chapters.length !== 1 ? 's' : ''} added from that video.`, 'success');
+    await renderLibrary();
+  } catch (err) {
+    console.error('Add-video-chapter failed:', err);
+    showToast(`Couldn't add that video: ${err.message}`, 'error', 10000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 
@@ -6226,6 +6359,76 @@ async function generateCurriculum() {
   AppState.settings.apiKey = resolvedKey;
 
   let fileUri = null;
+
+  // ── VIDEO MODE ────────────────────────────────────────────────────────────
+  // The AI watches the video and writes each lesson up as study prose. From
+  // there the book is indistinguishable from an uploaded one: the same chapter
+  // docs, the same on-demand curriculum, the same reader, quizzes and cards.
+  if (sourceMode === 'video') {
+    const rawUrl = document.getElementById('input-video-url').value.trim();
+    try {
+      logStep('🎬 Watching the video end to end…');
+      const result = await callVideoCurriculum(rawUrl, title);
+
+      logStep(`✅ Found ${result.chapters.length} lesson${result.chapters.length !== 1 ? 's' : ''} — "${result.title}"`);
+      logStep('💾 Saving to your library…');
+
+      const bookId = `book-${Date.now()}`;
+      const newBook = {
+        id: bookId,
+        title:  result.title,
+        author: result.author,
+        coverUrl: `https://i.ytimg.com/vi/${result.videoId}/hqdefault.jpg`,
+        level: 'ref',
+        // Video books are text-backed with on-demand curriculum, exactly like
+        // uploaded ones — this flag is what the rest of the app keys off.
+        isPdfBook: true,
+        sourceType: 'video',
+        videoUrl: result.videoUrl,
+        videoIds: [result.videoId],
+        topic: result.topic,
+        totalPages: 0,
+        pageOffset: 0,
+        pageLabelConfident: false,
+        totalChapters: result.chapters.length,
+        wordsTotal: result.chapters.reduce((n, ch) => n + ch.text.split(/\s+/).filter(Boolean).length, 0),
+        wordsRead: 0,
+        chapters: result.chapters.map(ch => ({
+          number: ch.number, title: ch.title,
+          startTime: ch.startTime, endTime: ch.endTime, videoId: result.videoId
+        })),
+        readyChapters: [],
+        studiedChapters: [],
+        createdAt: Date.now()
+      };
+      await dbPut('books', newBook);
+
+      for (const ch of result.chapters) {
+        await dbPutChapter(bookId, {
+          chapterNumber: ch.number,
+          title: ch.title,
+          text: ch.text.substring(0, 200000),
+          videoId: result.videoId,
+          startTime: ch.startTime,
+          endTime: ch.endTime,
+          summary_10s: null, summary_3m: null, summary_15m: null,
+          concepts: null, flashcards: null, studiedAt: null
+        });
+      }
+
+      document.getElementById('modal-add-book').style.display = 'none';
+      showToast(`"${result.title}" added — ${result.chapters.length} lessons ready to study.`, 'success');
+      await renderLibrary();
+    } catch (videoErr) {
+      document.getElementById('add-book-step-3').style.display = 'none';
+      document.getElementById('add-book-step-2').style.display = 'block';
+      document.getElementById('diagnostic-result').innerHTML =
+        `<strong style="color:#f87171;">Video Error:</strong> ${videoErr.message}`;
+      showToast(`Error: ${videoErr.message}`, 'error', 10000);
+      console.error('Video processing error:', videoErr);
+    }
+    return;
+  }
 
   // ── PDF MODE: chapter-by-chapter approach ─────────────────────────────────
   // Instead of generating the entire curriculum at once (which hits Gemini's
@@ -7196,13 +7399,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── SOURCE TOGGLE (AI knowledge vs. PDF upload) ──
   document.querySelectorAll('input[name="book-source"]').forEach(radio => {
     radio.addEventListener('change', () => {
-      const isPdf = document.getElementById('source-pdf').checked;
-      document.getElementById('source-knowledge-zone').style.display  = isPdf ? 'none'  : 'block';
+      const mode = document.querySelector('input[name="book-source"]:checked')?.value || 'knowledge';
+      const isPdf = mode === 'pdf', isVideo = mode === 'video';
+      document.getElementById('source-knowledge-zone').style.display  = mode === 'knowledge' ? 'block' : 'none';
       document.getElementById('source-pdf-zone').style.display        = isPdf ? 'block' : 'none';
-      document.getElementById('title-author-group').style.display     = isPdf ? 'none'  : 'block';
+      document.getElementById('source-video-zone').style.display      = isVideo ? 'block' : 'none';
+      // Video mode keeps the name field: the learner names their own curriculum,
+      // and leaving it blank lets the AI name it from the content.
+      document.getElementById('title-author-group').style.display     = isPdf ? 'none' : 'block';
       document.getElementById('pdf-autodetect-note').style.display    = isPdf ? 'block' : 'none';
+
+      const titleLabel = document.querySelector('label[for="input-book-title"]');
+      const titleInput = document.getElementById('input-book-title');
+      const authorGroup = document.querySelector('label[for="input-book-author"]')?.parentElement;
+      if (titleLabel) titleLabel.textContent = isVideo ? 'Curriculum name' : 'Book Title';
+      if (titleInput) titleInput.placeholder = isVideo
+        ? 'e.g. Huberman on Sleep — leave blank to let the AI name it'
+        : 'e.g. The Behavior Operational Manual';
+      if (authorGroup) authorGroup.style.display = isVideo ? 'none' : 'block';
+
+      document.getElementById('btn-check-book').textContent =
+        isVideo ? 'Check Video →' : 'Check Book Coverage →';
     });
   });
+
+  // Live feedback on the pasted link — a wrong URL should be obvious before
+  // the learner waits on a generation that was never going to work.
+  document.getElementById('input-video-url').addEventListener('input', (e) => {
+    const status = document.getElementById('video-url-status');
+    const val = e.target.value.trim();
+    if (!val) { status.style.display = 'none'; return; }
+    const parsed = parseYouTubeUrl(val);
+    status.style.display = 'block';
+    status.className = 'video-url-status ' + (parsed ? 'ok' : 'bad');
+    status.textContent = parsed
+      ? '✓ YouTube video recognised'
+      : 'Only YouTube links work — the AI streams the video from there.';
+  });
+
+  document.getElementById('btn-add-video-chapter').addEventListener('click', addChaptersFromVideo);
 
   // ── PDF DROP ZONE ──
 

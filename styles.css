@@ -2697,7 +2697,8 @@ body.immersive .immersive-only { display: flex !important; }
 /* ── 34. PDF UPLOAD — SOURCE TOGGLE ── */
 .source-toggle {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Three sources now: AI knowledge, an uploaded file, or a video */
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-top: 10px;
 }
@@ -4903,4 +4904,57 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .vocab-word { font-size: 1.18rem; }
   .vocab-actions .btn { width: 100%; }
   .vocab-tab { padding: 0.6rem 0.8rem; font-size: 0.84rem; }
+}
+
+/* ============================================================
+   VIDEO CURRICULA
+   A pasted YouTube link becomes a book: the AI watches it and
+   writes each lesson up as study text, so every downstream
+   feature (summaries, cards, quizzes, the reader) just works.
+   ============================================================ */
+
+.video-hint {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0.6rem 0 0;
+}
+
+.video-url-status {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+}
+.video-url-status.ok  { color: var(--teal); background: var(--teal-dim); }
+.video-url-status.bad { color: var(--gold); background: var(--gold-dim); }
+
+.add-video-chapter-btn {
+  width: 100%;
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+}
+
+/* Reader: the page slot is empty for video chapters, so it carries a
+   jump-to-the-source link instead */
+.reader-watch {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border-light);
+  border-radius: 100px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.reader-watch:hover { color: var(--purple); border-color: var(--purple); }
+
+@media (max-width: 768px) {
+  /* Three source cards don't fit side by side on a phone */
+  .source-toggle { grid-template-columns: 1fr; }
+  .reader-watch { display: none !important; }
 }
