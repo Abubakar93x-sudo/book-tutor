@@ -4766,8 +4766,9 @@ const Reader = {
     setFocusMode(true);
 
     const book = AppState.selectedBook;
+    const total = (book?.chapters || []).length;
     document.getElementById('reader-chapter-label').textContent =
-      `Ch ${chapter.number} · ${chapter.title}`;
+      `Ch ${chapter.number}${total ? ` of ${total}` : ''} · ${chapter.title}`;
 
     this.renderColumn();
     this.updateTopbar();
@@ -4934,6 +4935,83 @@ const Reader = {
     return wrap;
   },
 
+  // Chapter list, in the reader, without a trip through the tutor's dropdown.
+  openChapterJump() {
+    const book = AppState.selectedBook;
+    const wrap = document.getElementById('chapter-jump');
+    const list = document.getElementById('chapter-jump-list');
+    if (!book || !wrap || !list) return;
+
+    const studied = new Set(book.studiedChapters || []);
+    const ready = new Set(book.readyChapters || []);
+    const current = this.chapter?.number;
+
+    list.innerHTML = [...(book.chapters || [])]
+      .sort((a, b) => a.number - b.number)
+      .map(ch => {
+        const mark = studied.has(ch.number) ? '✓' : (ready.has(ch.number) ? '✨' : '');
+        return `
+          <button class="chapter-jump-item${ch.number === current ? ' current' : ''}" data-ch="${ch.number}">
+            <span class="chapter-jump-num">${ch.number}</span>
+            <span class="chapter-jump-title">${escapeAttr(ch.title)}</span>
+            ${ch.startTime ? `<span class="chapter-jump-time">${escapeAttr(ch.startTime)}</span>` : ''}
+            ${mark ? `<span class="chapter-jump-mark">${mark}</span>` : ''}
+          </button>`;
+      }).join('');
+
+    list.querySelectorAll('.chapter-jump-item').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const n = parseInt(btn.dataset.ch);
+        this.closeChapterJump();
+        if (n === current) return;
+        const sel = document.getElementById('tutor-chapter-select');
+        if (sel) sel.value = n;
+        await loadChapter(n);
+      });
+    });
+
+    wrap.style.display = 'flex';
+    list.querySelector('.chapter-jump-item.current')?.scrollIntoView({ block: 'center' });
+  },
+
+  closeChapterJump() {
+    const wrap = document.getElementById('chapter-jump');
+    if (wrap) wrap.style.display = 'none';
+  },
+
+  // The chapter after this one, in reading order. Null on the last chapter.
+  nextChapterSkeleton() {
+    const book = AppState.selectedBook;
+    if (!book || !this.chapter) return null;
+    const ordered = [...(book.chapters || [])].sort((a, b) => a.number - b.number);
+    const idx = ordered.findIndex(c => c.number === this.chapter.number);
+    return idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : null;
+  },
+
+  // Finishing a chapter used to leave the reader with nowhere to go but the
+  // tutor's chapter dropdown. Video curricula made that obvious — their lessons
+  // are short, so the dead end came round every few minutes.
+  buildNextChapterBtn(className = 'btn btn-primary') {
+    const next = this.nextChapterSkeleton();
+    const btn = document.createElement('button');
+    if (next) {
+      btn.className = className;
+      btn.textContent = `Next: Ch. ${next.number} — ${next.title} →`;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = 'Opening…';
+        const sel = document.getElementById('tutor-chapter-select');
+        if (sel) sel.value = next.number;
+        await loadChapter(next.number);
+      });
+    } else {
+      btn.className = 'cp-skip';
+      btn.textContent = "That's the last chapter — back to library";
+      btn.addEventListener('click', () => navigateTo('library'));
+    }
+    return btn;
+  },
+
   buildChapterCompleteEl() {
     const done = document.createElement('div');
     done.className = 'reader-chapter-done';
@@ -4943,8 +5021,11 @@ const Reader = {
         <div class="seg-rule">Chapter consolidated ✓</div>
         <p>Recall checked and review cards scheduled. Prove it in the field — or talk it through with the tutor.</p>
       `;
+      // Moving on is the most likely next action once a chapter is done
+      done.appendChild(this.buildNextChapterBtn());
+
       const transferBtn = document.createElement('button');
-      transferBtn.className = 'btn btn-primary';
+      transferBtn.className = 'btn btn-ghost';
       transferBtn.textContent = 'Try an application problem →';
       transferBtn.addEventListener('click', () => startTransferProblem(transferBtn));
       done.appendChild(transferBtn);
@@ -4966,6 +5047,9 @@ const Reader = {
     btn.textContent = 'Brain dump →';
     btn.addEventListener('click', () => Consolidate.open(this.chapter));
     done.appendChild(btn);
+
+    // Consolidating is the better move, but never at the price of being stuck
+    done.appendChild(this.buildNextChapterBtn('btn btn-ghost'));
 
     const tutorBtn = document.createElement('button');
     tutorBtn.className = 'cp-skip';
@@ -5123,6 +5207,15 @@ function initReader() {
   });
   document.getElementById('btn-reader-tutor').addEventListener('click', () => Reader.showTutor());
   document.getElementById('btn-back-to-reader').addEventListener('click', () => Reader.showReader());
+
+  // Chapter jump: the title in the reader IS the chapter picker
+  document.getElementById('reader-chapter-label')
+    .addEventListener('click', () => Reader.openChapterJump());
+  document.getElementById('btn-chapter-jump-close')
+    .addEventListener('click', () => Reader.closeChapterJump());
+  document.getElementById('chapter-jump').addEventListener('click', (e) => {
+    if (e.target.id === 'chapter-jump') Reader.closeChapterJump();  // tap the backdrop
+  });
   const scrollEl = document.getElementById('reader-scroll');
   scrollEl.addEventListener('scroll', () => Reader.handleScroll(scrollEl), { passive: true });
 

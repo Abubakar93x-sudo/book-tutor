@@ -5161,3 +5161,118 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .vocab-saved-set[open] .vocab-saved-words { white-space: normal; }
 .vocab-saved-body { padding: 0 1rem 0.5rem; }
 .vocab-saved-set .vocab-actions { margin: 0 0 1rem; }
+
+/* ── Chapter navigation from inside the reader ─────────────────────────────
+   Finishing a chapter used to leave nowhere to go but the tutor's dropdown.
+   The title is now the chapter picker, and the end-of-chapter card offers
+   the next chapter directly. */
+.reader-title-btn {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+  margin-left: -0.4rem;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+.reader-title-btn:hover { background: var(--bg-elevated); }
+.reader-title-btn::after {
+  content: '▾';
+  font-size: 0.7em;
+  opacity: 0.5;
+  margin-left: 0.35rem;
+}
+
+.chapter-jump {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(36, 26, 16, 0.35);
+  animation: fadeInScale 0.15s ease;
+}
+.chapter-jump-sheet {
+  width: 100%;
+  max-width: 520px;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -8px 32px rgba(36, 26, 16, 0.2);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 769px) {
+  .chapter-jump { align-items: center; }
+  .chapter-jump-sheet { border-radius: var(--radius-lg); border-bottom: 1px solid var(--border); }
+}
+.chapter-jump-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.9rem 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.chapter-jump-close {
+  border: none; background: none; cursor: pointer;
+  font-size: 0.95rem; color: var(--text-muted);
+  padding: 0.2rem 0.4rem; line-height: 1;
+}
+.chapter-jump-close:hover { color: var(--text-primary); }
+.chapter-jump-list { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0.4rem; }
+
+.chapter-jump-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.6rem 0.7rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.chapter-jump-item:hover { background: var(--bg-elevated); }
+.chapter-jump-item.current { background: var(--purple-dim); }
+.chapter-jump-num {
+  flex-shrink: 0;
+  min-width: 1.6rem;
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.chapter-jump-item.current .chapter-jump-num { color: var(--purple); font-weight: 700; }
+.chapter-jump-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-reading);
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chapter-jump-time,
+.chapter-jump-mark {
+  flex-shrink: 0;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The end-of-chapter card now stacks several actions */
+.reader-chapter-done .btn { display: block; width: 100%; margin: 0.5rem 0 0; }
