@@ -2418,76 +2418,91 @@ const VocabBuilder = {
     if (!panel) return;
 
     panel.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:2.5rem 0;">
-      <span class="cp-spinner"></span> Loading your sets…</div>`;
+      <span class="cp-spinner"></span> Loading your vocab…</div>`;
 
-    let sets = [];
-    try {
-      sets = await dbGetAllVocabSets(this.lang.id);
-    } catch (err) {
-      console.warn('Saved sets read failed:', err.message);
+    // One entry per language, holding everything ever learned in it. The words
+    // matter to a learner; which batch they arrived in does not.
+    const byLang = [];
+    for (const lang of this.langs) {
+      let sets = [];
+      try {
+        sets = await dbGetAllVocabSets(lang.id);
+      } catch (err) {
+        console.warn(`Saved vocab read failed for ${lang.id}:`, err.message);
+      }
+      // Newest first, and never the same word twice however often it appeared
+      const seen = new Set();
+      const words = [];
+      for (const set of sets) {
+        for (const w of (set.words || [])) {
+          const key = String(w.word).trim().toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          words.push({ ...w, _learnedAt: set.createdAt || null });
+        }
+      }
+      if (words.length) byLang.push({ lang, words });
     }
 
-    if (!sets.length) {
+    if (!byLang.length) {
       panel.innerHTML = `
         <div class="vocab-empty">
-          <h3 class="vocab-empty-title">No sets saved yet</h3>
-          <p class="vocab-empty-sub">Every set you generate is kept here, so you can come back and review any of them.</p>
-          <button class="btn btn-primary" id="btn-saved-to-learn">Learn your first set →</button>
+          <h3 class="vocab-empty-title">No vocab saved yet</h3>
+          <p class="vocab-empty-sub">Every word you learn is kept here, grouped by language, so you can come back to any of it.</p>
+          <button class="btn btn-primary" id="btn-saved-to-learn">Learn your first words →</button>
         </div>`;
       document.getElementById('btn-saved-to-learn').addEventListener('click', () => this.switchTab('learn'));
       return;
     }
 
-    const total = sets.reduce((n, s) => n + (s.words?.length || 0), 0);
+    // The language currently being studied opens by default
     panel.innerHTML = `
-      <p class="vocab-set-count" style="margin-bottom:1rem;">
-        ${sets.length} set${sets.length === 1 ? '' : 's'} · ${total} words in ${this.lang.name}
-      </p>
       <div class="vocab-saved-list">
-        ${sets.map(s => `
-          <details class="vocab-saved-set" data-set="${s.setNumber}">
+        ${byLang.map(({ lang, words }) => `
+          <details class="vocab-saved-set" data-lang="${escapeAttr(lang.id)}"${lang.id === this.lang?.id ? ' open' : ''}>
             <summary class="vocab-saved-head">
-              <span class="vocab-saved-title">Set ${(s.setNumber || 0) + 1}</span>
-              <span class="vocab-saved-meta">
-                ${(s.words || []).length} words${s.tier ? ` · ${escapeAttr(s.tier)}` : ''}${s.theme ? ` · ${escapeAttr(s.theme)}` : ''}
-                ${s.createdAt ? ` · ${new Date(s.createdAt).toLocaleDateString()}` : ''}
-              </span>
-              <span class="vocab-saved-words">${(s.words || []).map(w => escapeAttr(w.word)).join(' · ')}</span>
+              <span class="vocab-saved-title">${escapeAttr(lang.name)}</span>
+              <span class="vocab-saved-meta">${words.length} word${words.length === 1 ? '' : 's'}</span>
+              <span class="vocab-saved-words">${words.slice(0, 12).map(w => escapeAttr(w.word)).join(' · ')}${words.length > 12 ? ' …' : ''}</span>
             </summary>
             <div class="vocab-list vocab-saved-body">
-              ${(s.words || []).map((w, i) => vocabCardHtml(w, i, this.lang)).join('')}
+              ${words.map((w, i) => vocabCardHtml(w, i, lang)).join('')}
             </div>
             <div class="vocab-actions">
-              <button class="btn btn-ghost btn-sm vocab-review-set" data-set="${s.setNumber}">Quiz me on this set →</button>
+              <button class="btn btn-ghost btn-sm vocab-review-set" data-lang="${escapeAttr(lang.id)}">
+                Quiz me on ${escapeAttr(lang.name)} →
+              </button>
             </div>
           </details>
         `).join('')}
       </div>
     `;
 
-    // Speaking a word works the same in a saved set as in a fresh one
     panel.querySelectorAll('.vocab-saved-set').forEach(det => {
-      const setNum = parseInt(det.dataset.set);
-      const set = sets.find(s => s.setNumber === setNum);
+      const entry = byLang.find(e => e.lang.id === det.dataset.lang);
+      if (!entry) return;
+
       det.querySelectorAll('.vocab-speak').forEach(btn => {
         btn.addEventListener('click', () => {
-          const w = set.words[parseInt(btn.dataset.idx)];
-          if (!NarrationEngine.speakLang(w.word, this.lang.ttsLangCode || this.lang.code, 0.85)) {
-            showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+          const w = entry.words[parseInt(btn.dataset.idx)];
+          if (!NarrationEngine.speakLang(w.word, entry.lang.ttsLangCode || entry.lang.code, 0.85)) {
+            showToast(`No ${entry.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
           }
         });
       });
     });
 
-    // Re-quiz any past set without disturbing the current one
+    // Quizzing a language pulls from everything learned in it, most recent
+    // first, capped so a long history doesn't produce an endless quiz.
     panel.querySelectorAll('.vocab-review-set').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
-        const set = sets.find(s => s.setNumber === parseInt(btn.dataset.set));
-        if (!set?.words?.length) return;
-        this.words = set.words;
-        this.setNumber = set.setNumber;
+        const entry = byLang.find(x => x.lang.id === btn.dataset.lang);
+        if (!entry?.words.length) return;
+        this.lang = entry.lang;
+        this.words = entry.words.slice(0, 12);
         this.quiz = null;
+        this.renderControls();
         this.switchTab('quiz');
       });
     });
@@ -2508,7 +2523,7 @@ const VocabBuilder = {
             ${(this.lang.knownWords || []).length ? `<br>${(this.lang.knownWords || []).length} words learned so far.` : ''}
           </p>
           <button class="btn btn-primary" id="btn-vocab-generate">
-            ${(this.lang.knownWords || []).length ? 'Next set of words →' : 'Start with 6 words →'}
+            ${(this.lang.knownWords || []).length ? 'Next 6 words →' : 'Start with 6 words →'}
           </button>
         </div>
       `;
@@ -2518,8 +2533,8 @@ const VocabBuilder = {
 
     panel.innerHTML = `
       <div class="vocab-set-head">
-        <span class="vocab-set-count">${this.words.length} words · set ${this.setNumber + 1}</span>
-        <button class="btn btn-ghost btn-sm" id="btn-vocab-more">New set →</button>
+        <span class="vocab-set-count">${this.words.length} new words</span>
+        <button class="btn btn-ghost btn-sm" id="btn-vocab-more">New vocab →</button>
       </div>
       <div class="vocab-list">
         ${this.words.map((w, i) => vocabCardHtml(w, i, this.lang)).join('')}
@@ -2588,7 +2603,7 @@ const VocabBuilder = {
     } catch (err) {
       console.warn('Vocab generation failed:', err.message);
       panel.innerHTML = `<div class="cp-fallback" style="text-align:center; padding:2rem 0;">
-        Couldn't build the word set: ${escapeAttr(err.message)}
+        Couldn't build your vocab: ${escapeAttr(err.message)}
       </div>
       <div class="vocab-actions"><button class="btn btn-ghost" id="btn-vocab-retry">Try again</button></div>`;
       document.getElementById('btn-vocab-retry').addEventListener('click', () => this.loadWords());
@@ -2645,7 +2660,7 @@ const VocabBuilder = {
       panel.innerHTML = `
         <div class="vocab-empty">
           <h3 class="vocab-empty-title">Nothing to quiz yet</h3>
-          <p class="vocab-empty-sub">Learn a set of words first — the quiz is built from what you've studied.</p>
+          <p class="vocab-empty-sub">Learn some vocab first — the quiz is built from what you've studied.</p>
           <button class="btn btn-primary" id="btn-quiz-to-learn">Go to Learn →</button>
         </div>`;
       document.getElementById('btn-quiz-to-learn').addEventListener('click', () => this.switchTab('learn'));
@@ -2748,7 +2763,7 @@ const VocabBuilder = {
         </p>
         <div class="vocab-actions">
           <button class="btn btn-primary" id="btn-vocab-requiz">Quiz again</button>
-          <button class="btn btn-ghost" id="btn-vocab-newset">Learn a new set →</button>
+          <button class="btn btn-ghost" id="btn-vocab-newset">Learn new vocab →</button>
         </div>
       </div>
     `;
