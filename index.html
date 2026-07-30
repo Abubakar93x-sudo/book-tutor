@@ -357,6 +357,14 @@
               <div class="chat-tabs" id="chat-tabs-container" style="display:none;">
                 <button class="chat-tab active" id="tab-teach" data-target="chat-history-teach">Teach Me</button>
                 <button class="chat-tab" id="tab-quiz" data-target="chat-history-quiz">Quiz & Review</button>
+                <!-- How much of the book the tutor and quiz draw on. Applies to
+                     both tabs; cumulative is the default. -->
+                <div class="scope-toggle" id="scope-toggle" style="display:none;">
+                  <button class="scope-btn active" data-scope="cumulative"
+                          title="Everything you've studied up to and including this chapter">Whole book so far</button>
+                  <button class="scope-btn" data-scope="chapter"
+                          title="Only this chapter">This chapter</button>
+                </div>
               </div>
             </div>
 

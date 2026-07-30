@@ -795,9 +795,25 @@ async function callTransferProblem(chapterText, concepts, chapterTitle, bookTitl
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.
 // "quiz" mode:  Comprehensive chapter review and retention testing.
 // chapterText: raw PDF text for the chapter (optional) — enables direct quoting.
-async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '', onChunk = null) {
+async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '', onChunk = null, opts = {}) {
   const bookTitle = AppState.selectedBook.title;
   const chapter = AppState.selectedChapter;
+  const { priorContext = '', scope = 'cumulative' } = opts;
+
+  // Everything studied before this chapter, compactly. A book is one argument
+  // running across its chapters, so by default the tutor and the quiz both see
+  // the whole of it up to here — not the open chapter in isolation.
+  const priorBlock = (scope === 'cumulative' && priorContext) ? `
+      EVERYTHING THE STUDENT HAS STUDIED BEFORE THIS CHAPTER:
+      ---
+      ${priorContext}
+      ---
+      Treat the book as ONE continuous argument. Connect what you teach back to
+      these earlier chapters wherever the link is real — "this is the same
+      principle as X in chapter 3, applied to…" — and correct any earlier idea
+      the student now seems to have muddled. Never re-teach an earlier chapter
+      from scratch; assume they have read it and build on it.
+` : '';
 
   // Only load history for the current mode to prevent context bleeding.
   const historyText = AppState.activeChatHistory
@@ -819,7 +835,10 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
     prompt = `
       You are an expert AI Tutor. Your job is to teach Chapter ${chapter.number}: "${chapter.title}"
       from "${bookTitle}" page-by-page using the 80/20 rule.
-
+      ${scope === 'cumulative'
+        ? 'You are teaching this chapter IN THE CONTEXT OF the whole book so far.'
+        : 'The student has asked to focus on THIS CHAPTER ONLY — do not reach back to earlier chapters.'}
+${priorBlock}
       CHAPTER CONTENT (for reference):
       ---
       ${chapter.summary_15m}
@@ -873,10 +892,11 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
     `;
   } else {
     prompt = `
-      You are a Socratic Quiz Master reviewing Chapter ${chapter.number}: "${chapter.title}"
-      from "${bookTitle}".
-
-      CHAPTER CONTENT:
+      You are a Socratic Quiz Master reviewing "${bookTitle}"${scope === 'cumulative'
+        ? ` — everything up to and including Chapter ${chapter.number}: "${chapter.title}"`
+        : ` — Chapter ${chapter.number}: "${chapter.title}" ONLY`}.
+${priorBlock}
+      CURRENT CHAPTER CONTENT:
       ---
       ${chapter.summary_15m}
       ---
@@ -889,6 +909,9 @@ async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts 
 
       QUIZ RULES:
       1. Ask probing questions that test deep comprehension of all core concepts.
+      ${scope === 'cumulative' ? `Draw from the WHOLE book so far, not just the
+         current chapter, and favour questions that join two chapters together —
+         those are the ones that reveal whether the argument has actually landed.` : ''}
       2. If they answer correctly, praise them and move to the next concept or ask a deeper follow-up.
       3. If they answer incorrectly, guide them with a Socratic hint — don't give the answer directly.
       4. The student may also ask clarifying questions. Answer them clearly with analogies.

@@ -314,6 +314,77 @@ async function dbDeleteBookChapters(bookId) {
   await batch.commit();
 }
 
+// ── CUMULATIVE TUTOR CONTEXT ─────────────────────────────────────────────────
+// A book is one argument, not a stack of unrelated chapters. By chapter nine
+// the useful question is "how does this rest on chapter three", which a tutor
+// that only ever sees the open chapter can never ask. So both the tutor and the
+// quiz get everything studied SO FAR by default — earlier chapters compactly,
+// as their summaries and concepts, with the open chapter's full text reserved
+// for exact quoting. A per-chapter scope remains one tap away.
+
+const PRIOR_CONTEXT_MAX_CHARS = 14000;
+
+async function buildPriorChaptersContext(book, currentNumber) {
+  if (!book || !currentNumber || currentNumber <= 1) return '';
+
+  let chapters = [];
+  try {
+    if (book.isPdfBook) {
+      // Curriculum lives in bookChapters docs, generated on demand — only
+      // chapters actually studied have anything worth carrying forward.
+      const all = await dbGetChaptersForBook(book.id);
+      chapters = all
+        .filter(c => c.chapterNumber < currentNumber && c.summary_10s)
+        .sort((a, b) => a.chapterNumber - b.chapterNumber)
+        .map(c => ({
+          number: c.chapterNumber, title: c.title,
+          summary: c.summary_3m || c.summary_10s || '',
+          concepts: (c.concepts || []).map(x => x.name || x).filter(Boolean)
+        }));
+    } else {
+      chapters = (book.chapters || [])
+        .filter(c => c.number < currentNumber && (c.summary_3m || c.summary_10s))
+        .sort((a, b) => a.number - b.number)
+        .map(c => ({
+          number: c.number, title: c.title,
+          summary: c.summary_3m || c.summary_10s || '',
+          concepts: (c.concepts || []).map(x => x.name || x).filter(Boolean)
+        }));
+    }
+  } catch (err) {
+    console.warn('Prior-chapter context unavailable:', err.message);
+    return '';
+  }
+
+  if (!chapters.length) return '';
+
+  const block = (c) => `Chapter ${c.number}: ${c.title}\n`
+    + `${stripPageMarkers(c.summary).trim()}\n`
+    + (c.concepts.length ? `Key concepts: ${c.concepts.join(', ')}\n` : '');
+
+  // If the whole history doesn't fit, EVERY chapter still gets a line — a
+  // chapter dropped completely is one the tutor stops knowing exists, which is
+  // worse than one it knows only by name. So lay down the thin version of all
+  // of them first, then spend what budget remains upgrading the most recent
+  // back to full detail, working backwards.
+  let out = chapters.map(block).join('\n');
+  if (out.length > PRIOR_CONTEXT_MAX_CHARS) {
+    const thin = (c) => `Chapter ${c.number}: ${c.title}`
+      + (c.concepts.length ? ` — ${c.concepts.join(', ')}` : '') + '\n';
+
+    const lines = chapters.map(thin);
+    let budget = PRIOR_CONTEXT_MAX_CHARS - lines.join('\n').length;
+
+    for (let i = chapters.length - 1; i >= 0 && budget > 0; i--) {
+      const full = block(chapters[i]);
+      const extra = full.length - lines[i].length;
+      if (extra > 0 && extra <= budget) { lines[i] = full; budget -= extra; }
+    }
+    out = lines.join('\n');
+  }
+  return out;
+}
+
 // ── TRASH ────────────────────────────────────────────────────────────────────
 // Deleting is a two-stage business. Stage one marks `deletedAt` and the item
 // disappears from every list — library, languages, the flashcard deck, notes.
@@ -5635,6 +5706,23 @@ function initReader() {
   document.getElementById('btn-reader-tutor').addEventListener('click', () => Reader.showTutor());
   document.getElementById('btn-back-to-reader').addEventListener('click', () => Reader.showReader());
 
+  // Scope: how much of the book the tutor and quiz draw on. One control for
+  // both tabs — a learner thinks in terms of "how much am I covering", not
+  // "how much is the teach tab covering".
+  document.querySelectorAll('.scope-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const scope = btn.dataset.scope;
+      if (scope === AppState.tutorScope) return;
+      AppState.tutorScope = scope;
+      document.querySelectorAll('.scope-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.scope === scope));
+      try { await dbPut('settings', { key: 'tutorScope', value: scope }); } catch (_) {}
+      showToast(scope === 'cumulative'
+        ? 'Tutor and quiz now cover the whole book up to this chapter.'
+        : 'Tutor and quiz now cover this chapter only.', 'info', 3500);
+    });
+  });
+
   // Chapter jump: the title in the reader IS the chapter picker
   document.getElementById('reader-chapter-label')
     .addEventListener('click', () => Reader.openChapterJump());
@@ -5820,6 +5908,7 @@ async function loadSettings() {
   const demoRecord   = await dbGet('settings', 'demoMode');
   const modelRecord  = await dbGet('settings', 'model');
   const hqRecord     = await dbGet('settings', 'highQualityGrading');
+  const scopeRecord  = await dbGet('settings', 'tutorScope');
 
   // ── AUTO-CONFIGURE ON FIRST LAUNCH ──────────────────────────────
   // API key must be entered via Settings — never hardcode it here
@@ -5839,6 +5928,11 @@ async function loadSettings() {
   // Model preferences (local-only, like the API key)
   AppState.settings.model = modelRecord?.value || 'gemini-2.5-flash';
   AppState.settings.highQualityGrading = hqRecord?.value || false;
+  // Cumulative by default: a book is one argument, and treating each chapter
+  // as an island is the behaviour worth opting OUT of, not into.
+  AppState.tutorScope = scopeRecord?.value === 'chapter' ? 'chapter' : 'cumulative';
+  document.querySelectorAll('.scope-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.scope === AppState.tutorScope));
 
   const isDemoMode = AppState.mode === 'demo';
 
@@ -6327,6 +6421,11 @@ function renderChapterUI(chapter) {
   renderConceptMap(chapter);
 
   document.getElementById('chat-tabs-container').style.display = 'flex';
+  // The scope control only means anything once there are earlier chapters
+  const scopeToggle = document.getElementById('scope-toggle');
+  if (scopeToggle) {
+    scopeToggle.style.display = (AppState.selectedChapter?.number || 1) > 1 ? 'flex' : 'none';
+  }
   document.getElementById('chat-input').disabled = false;
   document.getElementById('btn-chat-send').disabled = false;
   document.getElementById('chat-mode-label').textContent = `Ch. ${chapter.number}: ${chapter.title}`;
@@ -6626,10 +6725,18 @@ async function sendChatMessage() {
         .filter(c => !AppState.masteredConcepts.includes(c))[0] || chapter.title;
       const visualContext = `${activeConcept}. ${chapter.summary_15m.substring(0, 500)}`;
 
+      // Everything studied before this chapter, unless the learner has scoped
+      // the conversation down to this one.
+      const scope = AppState.tutorScope || 'cumulative';
+      const priorContext = scope === 'cumulative'
+        ? await buildPriorChaptersContext(book, chapter.number).catch(() => '')
+        : '';
+
       const [tutorReply, visualData] = await Promise.all([
         callLiveTutorAgent(
           message, AppState.currentChatMode, AppState.masteredConcepts, chapter._chapterText || '',
-          (piece, fullSoFar) => updateStreamingTutorTurn(streamEl, fullSoFar)
+          (piece, fullSoFar) => updateStreamingTutorTurn(streamEl, fullSoFar),
+          { priorContext, scope }
         ),
         wantsVisuals
           ? callVisualDirectorAgent(visualContext, book.title, chapter.title)
