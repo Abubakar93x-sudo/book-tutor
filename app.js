@@ -231,13 +231,18 @@ async function dbGet(storeName, key) {
   }
 }
 
-async function dbGetAll(storeName) {
+// Deleted items are filtered out HERE rather than at each call site, so the
+// library, the tutor's selects, the Feynman picker, the flashcard deck and the
+// notes tab all forget a deleted book without any of them having to know that
+// trash exists. Pass { includeDeleted: true } to see inside the bin.
+async function dbGetAll(storeName, opts = {}) {
   if (storeName === 'settings') return idbGetAll(storeName);
   if (storeName === 'books') {
     const col = userCol('books');
     if (!col) return [];
     const snap = await col.get();
-    return snap.docs.map(d => d.data());
+    const all = snap.docs.map(d => d.data());
+    return opts.includeDeleted ? all : all.filter(b => !b.deletedAt);
   }
   if (storeName === 'chatHistory') {
     const col = userCol('chat');
@@ -309,6 +314,306 @@ async function dbDeleteBookChapters(bookId) {
   await batch.commit();
 }
 
+// ── TRASH ────────────────────────────────────────────────────────────────────
+// Deleting is a two-stage business. Stage one marks `deletedAt` and the item
+// disappears from every list — library, languages, the flashcard deck, notes.
+// Stage two, after the grace period, actually destroys it and everything it
+// owns. Nothing is unrecoverable until the window closes, because "I deleted
+// the wrong book" should never be the end of the story.
+const TRASH_DAYS = 30;
+const TRASH_MS = TRASH_DAYS * 24 * 60 * 60 * 1000;
+
+function isDeleted(item) {
+  return !!item?.deletedAt;
+}
+
+function trashDaysLeft(item) {
+  if (!item?.deletedAt) return null;
+  return Math.max(0, Math.ceil((item.deletedAt + TRASH_MS - Date.now()) / (24 * 60 * 60 * 1000)));
+}
+
+async function dbSoftDeleteBook(bookId) {
+  const col = userCol('books');
+  if (!col) return;
+  await col.doc(String(bookId)).set({ deletedAt: Date.now() }, { merge: true });
+}
+
+async function dbRestoreBook(bookId) {
+  const col = userCol('books');
+  if (!col) return;
+  await col.doc(String(bookId)).set(
+    { deletedAt: firebase.firestore.FieldValue.delete() }, { merge: true }
+  );
+}
+
+// Deletes every document belonging to a query, in batches Firestore accepts.
+async function deleteQueryDocs(col, field, value) {
+  if (!col) return 0;
+  const snap = await col.where(field, '==', value).get();
+  if (snap.empty) return 0;
+  let done = 0;
+  for (let i = 0; i < snap.docs.length; i += 400) {
+    const batch = firestoreDB.batch();
+    snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    done += Math.min(400, snap.docs.length - i);
+  }
+  return done;
+}
+
+// Everything a book owns: its chapters, the notes taken in it, and the chat
+// history of every chapter. Cards live inside the chapter docs, so they go with
+// them. Called only once the grace period has passed, or on an explicit
+// "delete permanently".
+async function dbPurgeBook(bookId) {
+  const chapters = userCol('bookChapters');
+  const notes = userCol('notes');
+  const chat = userCol('chat');
+  const books = userCol('books');
+  if (!books) return;
+
+  await deleteQueryDocs(chapters, 'bookId', bookId);
+  await deleteQueryDocs(notes, 'bookId', bookId);
+
+  // Chat is keyed `{bookId}-ch{n}`, so it needs a prefix sweep rather than a
+  // field match.
+  if (chat) {
+    const snap = await chat
+      .where('chapterKey', '>=', `${bookId}-ch`)
+      .where('chapterKey', '<=', `${bookId}-ch`)
+      .get()
+      .catch(() => null);
+    if (snap && !snap.empty) {
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = firestoreDB.batch();
+        snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+  }
+
+  await books.doc(String(bookId)).delete();
+}
+
+async function dbSoftDeleteLanguage(langId) {
+  await dbPatchLanguage(langId, { deletedAt: Date.now() });
+}
+
+async function dbRestoreLanguage(langId) {
+  const col = userCol('languages');
+  if (!col) return;
+  await col.doc(langId).set(
+    { deletedAt: firebase.firestore.FieldValue.delete() }, { merge: true }
+  );
+}
+
+// A language owns rather a lot: its cards, its cached lessons, its syllabus,
+// its gloss cache and its vocabulary sets.
+async function dbPurgeLanguage(langId) {
+  const languages = userCol('languages');
+  if (!languages) return;
+
+  await deleteQueryDocs(userCol('langCards'), 'langId', langId);
+  await deleteQueryDocs(userCol('langLessons'), 'langId', langId);
+  await deleteQueryDocs(userCol('vocabSets'), 'langId', langId);
+
+  for (const [name, docId] of [['langSyllabus', langId], ['langGloss', langId]]) {
+    const col = userCol(name);
+    if (col) await col.doc(docId).delete().catch(() => {});
+  }
+
+  await languages.doc(langId).delete();
+  delete _glossCache[langId];
+}
+
+// Anything past its grace period is destroyed for good. Runs once on load —
+// quietly, and never blocking what the learner is trying to do.
+async function purgeExpiredTrash() {
+  try {
+    const cutoff = Date.now() - TRASH_MS;
+    const [books, langs] = await Promise.all([
+      dbGetAll('books', { includeDeleted: true }).catch(() => []),
+      dbGetAllLanguages({ includeDeleted: true }).catch(() => [])
+    ]);
+    const staleBooks = books.filter(b => b.deletedAt && b.deletedAt < cutoff);
+    const staleLangs = langs.filter(l => l.deletedAt && l.deletedAt < cutoff);
+    for (const b of staleBooks) await dbPurgeBook(b.id).catch(() => {});
+    for (const l of staleLangs) await dbPurgeLanguage(l.id).catch(() => {});
+    if (staleBooks.length || staleLangs.length) {
+      console.log(`Trash: purged ${staleBooks.length} book(s), ${staleLangs.length} language(s) past ${TRASH_DAYS} days.`);
+    }
+  } catch (err) {
+    console.warn('Trash purge failed:', err.message);
+  }
+}
+
+async function deleteBookFlow(book) {
+  const ok = await confirmAction({
+    title: `Delete "${escapeAttr(book.title)}"?`,
+    body: `Its chapters, flashcards, notes and tutor conversations go with it.
+      <br><br>You can restore it from <strong>Recently deleted</strong> for the next
+      ${TRASH_DAYS} days, after which it's gone for good.`,
+    confirmLabel: 'Delete book'
+  });
+  if (!ok) return false;
+
+  try {
+    await dbSoftDeleteBook(book.id);
+    // A deleted book can't stay open in the tutor behind you
+    if (AppState.selectedBook?.id === book.id) {
+      AppState.selectedBook = null;
+      AppState.selectedChapter = null;
+      navigateTo('library');
+    }
+    AppState._reviewLangCache = null;
+    showToast(`"${book.title}" deleted — restorable for ${TRASH_DAYS} days.`, 'success', 5000);
+    await renderLibrary();
+    return true;
+  } catch (err) {
+    showToast('Could not delete that book: ' + err.message, 'error', 7000);
+    return false;
+  }
+}
+
+async function deleteLanguageFlow(lang) {
+  const ok = await confirmAction({
+    title: `Delete ${escapeAttr(lang.name)}?`,
+    body: `Its cards, lessons, syllabus and vocabulary sets go with it.
+      <br><br>You can restore it from <strong>Recently deleted</strong> for the next
+      ${TRASH_DAYS} days, after which it's gone for good.`,
+    confirmLabel: 'Delete language'
+  });
+  if (!ok) return false;
+
+  try {
+    await dbSoftDeleteLanguage(lang.id);
+    if (LangSession.lang?.id === lang.id) LangSession.close();
+    AppState._reviewLangCache = null;
+    AppState._harvestLang = undefined;
+    showToast(`${lang.name} deleted — restorable for ${TRASH_DAYS} days.`, 'success', 5000);
+    await renderLanguages();
+    if (typeof VocabBuilder !== 'undefined' && VocabBuilder.lang?.id === lang.id) {
+      VocabBuilder.words = []; VocabBuilder.quiz = null; VocabBuilder.lang = null;
+    }
+    return true;
+  } catch (err) {
+    showToast('Could not delete that language: ' + err.message, 'error', 7000);
+    return false;
+  }
+}
+
+// Renders the "Recently deleted" strip for whichever kind it's given. Hidden
+// entirely when the bin is empty, so it never becomes furniture.
+async function renderTrashSection(kind) {
+  const wrap = document.getElementById(`trash-${kind}`);
+  const list = document.getElementById(`trash-${kind}-list`);
+  const count = document.getElementById(`trash-${kind}-count`);
+  if (!wrap || !list) return;
+
+  const items = kind === 'books'
+    ? (await dbGetAll('books', { includeDeleted: true }).catch(() => [])).filter(isDeleted)
+    : (await dbGetAllLanguages({ includeDeleted: true }).catch(() => [])).filter(isDeleted);
+
+  if (!items.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+
+  items.sort((a, b) => b.deletedAt - a.deletedAt);
+  if (count) count.textContent = items.length;
+
+  list.innerHTML = items.map(it => {
+    const name = kind === 'books' ? it.title : it.name;
+    const left = trashDaysLeft(it);
+    return `
+      <div class="trash-item" data-id="${escapeAttr(it.id)}">
+        <div class="trash-item-body">
+          <span class="trash-item-name">${escapeAttr(name)}</span>
+          <span class="trash-item-meta">${left > 0
+            ? `${left} day${left === 1 ? '' : 's'} left to restore`
+            : 'will be removed shortly'}</span>
+        </div>
+        <button class="trash-btn trash-restore" data-id="${escapeAttr(it.id)}">Restore</button>
+        <button class="trash-btn trash-purge" data-id="${escapeAttr(it.id)}">Delete now</button>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.trash-restore').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        if (kind === 'books') await dbRestoreBook(btn.dataset.id);
+        else await dbRestoreLanguage(btn.dataset.id);
+        AppState._reviewLangCache = null;
+        AppState._harvestLang = undefined;
+        showToast('Restored.', 'success', 3000);
+        if (kind === 'books') await renderLibrary(); else await renderLanguages();
+      } catch (err) {
+        showToast('Could not restore: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  list.querySelectorAll('.trash-purge').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const item = items.find(i => String(i.id) === btn.dataset.id);
+      const name = kind === 'books' ? item.title : item.name;
+      const ok = await confirmAction({
+        title: `Permanently delete "${escapeAttr(name)}"?`,
+        body: 'This cannot be undone. Everything it owns is destroyed immediately.',
+        confirmLabel: 'Delete permanently'
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        if (kind === 'books') await dbPurgeBook(item.id);
+        else await dbPurgeLanguage(item.id);
+        showToast('Permanently deleted.', 'success', 3000);
+        if (kind === 'books') await renderLibrary(); else await renderLanguages();
+      } catch (err) {
+        showToast('Could not delete: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  wrap.style.display = 'block';
+}
+
+// A real confirm step before anything destructive. Resolves true/false, so
+// callers read as `if (await confirmAction(...))`.
+function confirmAction({ title, body, confirmLabel = 'Delete', danger = true }) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('confirm-overlay');
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    if (!overlay) return resolve(window.confirm(`${title}\n\n${body}`));
+
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-body').innerHTML = body;
+    okBtn.textContent = confirmLabel;
+    okBtn.className = danger ? 'btn btn-danger' : 'btn btn-primary';
+    overlay.style.display = 'flex';
+
+    const done = (result) => {
+      overlay.style.display = 'none';
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => done(true);
+    const onCancel = () => done(false);
+    const onBackdrop = (e) => { if (e.target === overlay) done(false); };
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+    okBtn.focus();
+  });
+}
+
 // ── LANGUAGE LEARNING DB (Firestore) ─────────────────────────────────────────
 // languages/{langId}                — one profile doc per language
 // langCards/{langId}_batch_{n}     — sentence-card batches (≤100 cards/doc,
@@ -332,11 +637,12 @@ async function dbPatchLanguage(langId, fields) {
   await col.doc(langId).set({ ...fields, updatedAt: Date.now() }, { merge: true });
 }
 
-async function dbGetAllLanguages() {
+async function dbGetAllLanguages(opts = {}) {
   const col = userCol('languages');
   if (!col) return [];
   const snap = await col.get();
-  return snap.docs.map(d => d.data());
+  const all = snap.docs.map(d => d.data());
+  return opts.includeDeleted ? all : all.filter(l => !l.deletedAt);
 }
 
 async function dbGetLangCardBatches(langId) {
@@ -1744,8 +2050,18 @@ async function renderLanguages() {
       scriptBtn.addEventListener('click', () => startScriptUnit(lang, scriptBtn));
       card.appendChild(scriptBtn);
     }
+    const delBtn = document.createElement('button');
+    delBtn.className = 'card-delete-btn';
+    delBtn.title = 'Delete this language';
+    delBtn.setAttribute('aria-label', `Delete ${lang.name}`);
+    delBtn.textContent = '✕';
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteLanguageFlow(lang); });
+    card.appendChild(delBtn);
+
     grid.insertBefore(card, document.getElementById('btn-add-language'));
   });
+
+  renderTrashSection('languages');
 }
 
 // ── SESSION PLAYER ────────────────────────────────────────────────────────────
@@ -5475,6 +5791,9 @@ async function renderLibrary() {
 
   if (books.length === 0) {
     emptyShelf.style.display = 'block';
+    // Still render the bin: deleting your only book is exactly when you most
+    // need a way back to it.
+    renderTrashSection('books');
     return;
   }
 
@@ -5531,8 +5850,10 @@ async function renderLibrary() {
       ['#8a6229', '#5c4018'],
       ['#4f7a6c', '#2b453c'],
     ];
-    const colorIndex = book.id.charCodeAt(4) % coverColors.length;
-    const [c1, c2] = coverColors[colorIndex];
+    // Any id shorter than 5 characters would give NaN here and take the whole
+    // grid down with it, so fall back to the first palette entry.
+    const colorIndex = (book.id.charCodeAt(4) || 0) % coverColors.length;
+    const [c1, c2] = coverColors[colorIndex] || coverColors[0];
 
     const pct = totalChapters > 0 ? Math.round((studiedCount / totalChapters) * 100) : 0;
     
@@ -5578,15 +5899,24 @@ async function renderLibrary() {
         ? `<a class="book-card-source" href="${videoTimeUrl(book.videoIds[0], '')}" target="_blank" rel="noopener"
              title="Open the original video on YouTube">▶ Watch on YouTube</a>`
         : ''}
+      <button class="card-delete-btn" title="Delete this book" aria-label="Delete ${escapeAttr(book.title)}">✕</button>
     `;
 
     // The source link opens the video, not the book
     const sourceLink = card.querySelector('.book-card-source');
     if (sourceLink) sourceLink.addEventListener('click', (e) => e.stopPropagation());
 
+    // Delete acts on the book, and must not also open it
+    card.querySelector('.card-delete-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteBookFlow(book);
+    });
+
     card.addEventListener('click', () => openBook(book.id));
     grid.appendChild(card);
   });
+
+  renderTrashSection('books');
 
   // Update stats
   const totalCards = books.reduce((sum, b) => sum + b.chapters.reduce((s, c) => s + (c.flashcards?.length || 0), 0), 0);
@@ -8299,6 +8629,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initConsolidate();
   initLanguages();
   initNavReveal();
+
+  // Sweep anything whose grace period has run out. Fire-and-forget: nothing
+  // the learner is doing should wait on housekeeping.
+  purgeExpiredTrash();
 
   document.getElementById('btn-recap').addEventListener('click', requestRecap);
 

@@ -194,6 +194,16 @@
               <button id="btn-add-book-empty" class="btn btn-primary mt-4">+ Add a Book</button>
             </div>
           </div>
+
+          <!-- Recently deleted: hidden unless the bin has something in it -->
+          <div class="trash-section" id="trash-books" style="display:none;">
+            <details class="trash-details">
+              <summary class="trash-summary">
+                Recently deleted <span class="trash-count" id="trash-books-count">0</span>
+              </summary>
+              <div class="trash-list" id="trash-books-list"></div>
+            </details>
+          </div>
         </div>
 
         <!-- Features Showcase Row -->
@@ -716,6 +726,15 @@
           </button>
         </div>
 
+        <div class="trash-section" id="trash-languages" style="display:none;">
+          <details class="trash-details">
+            <summary class="trash-summary">
+              Recently deleted <span class="trash-count" id="trash-languages-count">0</span>
+            </summary>
+            <div class="trash-list" id="trash-languages-list"></div>
+          </details>
+        </div>
+
         <!-- Daily Session player — scrollable overlay, one activity at a time -->
         <div id="lang-session-overlay" class="consolidate-overlay" style="display:none;">
           <button class="prime-close" id="btn-lang-session-close" title="Pause session">✕</button>
@@ -987,6 +1006,18 @@
           <button id="btn-reset-db" class="btn btn-danger btn-sm">Reset All Data</button>
           <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm dialog: used before anything destructive -->
+  <div class="confirm-overlay" id="confirm-overlay" style="display:none;">
+    <div class="confirm-box">
+      <h3 class="confirm-title" id="confirm-title">Are you sure?</h3>
+      <p class="confirm-body" id="confirm-body"></p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" id="btn-confirm-cancel">Cancel</button>
+        <button class="btn btn-danger" id="btn-confirm-ok">Delete</button>
       </div>
     </div>
   </div>
