@@ -3187,7 +3187,14 @@ body.immersive .immersive-only { display: flex !important; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Content taller than the viewport — an assessment question with four
+     options on a phone — must scroll. `justify-content: center` cannot be
+     used with overflow: it clips the top of tall content beyond reach, so the
+     stage centres itself with auto margins instead. */
+  justify-content: flex-start;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 2rem 1.4rem 5.5rem;
 }
 
@@ -3213,6 +3220,8 @@ body.immersive .immersive-only { display: flex !important; }
   text-align: center;
   max-width: 520px;
   width: 100%;
+  margin: auto 0;      /* centred when it fits, scrollable when it doesn't */
+  flex-shrink: 0;      /* never squash the content to avoid a scrollbar */
 }
 
 .prime-kicker {

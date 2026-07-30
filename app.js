@@ -788,6 +788,15 @@ function unitKey(unitIndex) {
   return `unit_${unitIndex}`;
 }
 
+// Bump whenever the SHAPE of a generated lesson changes — a new field the
+// renderer depends on, a reworked prompt. Cached lessons stamped below this
+// are thrown away and regenerated, so improvements to teaching actually reach
+// learners instead of being masked by yesterday's cache.
+//   1 — original lesson shape
+//   2 — Quranic root lessons gain rootMeaning, formTable, principle,
+//       derivation and summary
+const LESSON_SCHEMA_VERSION = 2;
+
 async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
   if (!col) return null;
@@ -3240,8 +3249,19 @@ const LangSession = {
       const key = this.recipe.ui?.syllabus ? unitKey(this.unitIndex) : todayKey();
       this.lessonKey = key;
       let lesson = await dbGetLangLesson(lang.id, key);
+
+      // A cached lesson written before the current lesson shape existed would
+      // replay the old teaching forever — the learner sees no change however
+      // much the generator improves. Anything stamped with an older version is
+      // regenerated rather than served.
+      if (lesson && (lesson.schemaVersion || 0) < LESSON_SCHEMA_VERSION) {
+        console.log(`Lesson ${lang.id}/${key} predates schema v${LESSON_SCHEMA_VERSION} — regenerating.`);
+        lesson = null;
+      }
+
       if (!lesson) {
         lesson = await getLessonGenerator(this.recipe.id)(lang, this.unit);
+        lesson.schemaVersion = LESSON_SCHEMA_VERSION;
         await dbPutLangLesson(lang.id, key, lesson);
       }
       // Rough shadow sentences from the previous session come back for redo
