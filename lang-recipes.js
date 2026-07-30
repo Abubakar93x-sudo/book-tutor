@@ -77,10 +77,13 @@ const RECIPES = {
     id: 'quranic',
     label: 'Quranic Arabic',
     unitType: 'root',
-    strands: ['review', 'rootLesson', 'verses', 'recite', 'wrap'],
+    // Roots give meaning; the Instructor's grammar and drill strands give the
+    // machinery to decode words never met before, and the syntax to see who
+    // did what to whom. Both halves run in the same session.
+    strands: ['review', 'grammar', 'drill', 'rootLesson', 'verses', 'recite', 'wrap'],
     assessment: 'verse-ladder',
     loadingCopy: () => `Preparing today's root family and its verses…`,
-    ui: { coverageMeter: true },
+    ui: { coverageMeter: true, syllabus: true, staticSyllabus: 'QURAN_GRAMMAR' },
     dataSource: 'QURAN_ROOTS'
   }
 };

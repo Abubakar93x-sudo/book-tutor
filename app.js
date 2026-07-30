@@ -2263,6 +2263,47 @@ function demoLangLesson(lang) {
 // order from quran-roots-data.js. The static file owns WHICH root and its
 // frequency; the LLM writes the teaching content around it.
 
+// Demo content for a Quranic grammar unit — Form II, the unit that most
+// repays being taught properly, since it looks inconsistent until it isn't.
+function demoQuranGrammarUnit(unit) {
+  if (!unit) return null;
+  return {
+    explanation: `Doubling the middle radical is the whole of Form II — **فَعَّلَ**. It always *strengthens* the verb, but what strengthening looks like depends entirely on what the base verb already was. That is why the same pattern can seem to mean three different things.`,
+    patternTable: {
+      caption: 'What Form II does, by type of base verb',
+      rows: [
+        { form: 'Intransitive base', example: 'عَلِمَ → عَلَّمَ', gloss: 'he knew → he taught (causative)' },
+        { form: 'Transitive base', example: 'كَسَرَ → كَسَّرَ', gloss: 'he broke → he shattered (intensive)' },
+        { form: 'State or quality', example: 'كَبُرَ → كَبَّرَ', gloss: 'he was great → he declared greatness' }
+      ]
+    },
+    examples: [
+      { text: 'عَلَّمَ الْإِنسَانَ مَا لَمْ يَعْلَمْ', romanization: 'ʿallama l-insāna mā lam yaʿlam',
+        gloss: 'He taught man what he did not know. (96:5)',
+        wordGlosses: [{ word: 'عَلَّمَ', gloss: 'he taught (Form II of علم)' },
+                      { word: 'الْإِنسَانَ', gloss: 'man (object)' },
+                      { word: 'يَعْلَمْ', gloss: 'he knows (Form I)' }] },
+      { text: 'وَكَبِّرْهُ تَكْبِيرًا', romanization: 'wa-kabbirhu takbīrā',
+        gloss: 'and magnify Him with all magnification. (17:111)',
+        wordGlosses: [{ word: 'كَبِّرْ', gloss: 'declare great (Form II of كبر)' }] }
+    ],
+    pitfall: 'English speakers expect Form II to always mean "do it harder". It does not — on a verb that had no object, the extra force goes into making *someone else* do it, which comes out as teaching, causing, or declaring.',
+    drills: [
+      { kind: 'cloze', prompt: 'عَلِمَ means "he knew". Form II ___ means "he taught".',
+        answer: 'عَلَّمَ', options: [], hint: 'Double the middle radical of علم.' },
+      { kind: 'translate', prompt: 'What does نَزَّلَ mean, given نَزَلَ means "it came down"?',
+        answer: 'he sent it down', options: [],
+        hint: 'نزل is intransitive — so Form II makes it causative.' },
+      { kind: 'build', prompt: 'Put these in order to say "Allah taught man":',
+        answer: 'عَلَّمَ اللَّهُ الْإِنسَانَ', options: ['الْإِنسَانَ', 'عَلَّمَ', 'اللَّهُ'],
+        hint: 'Verbal sentence: verb, then doer, then object.' },
+      { kind: 'transform', prompt: 'كَسَرَ means "he broke". Give the Form II and say what changes.',
+        answer: 'كَسَّرَ — he shattered', options: [],
+        hint: 'The base verb already takes an object, so the force goes into intensity.' }
+    ]
+  };
+}
+
 function demoRootLesson(entry) {
   return {
     rootMeaning: 'The three letters ر ح م carry the idea of tenderness that acts — not a feeling held privately, but mercy that reaches the one who needs it. Every word built on this root keeps that thread.',
@@ -2305,7 +2346,7 @@ function demoRootLesson(entry) {
   };
 }
 
-async function generateQuranicLesson(lang) {
+async function generateQuranicLesson(lang, unit) {
   const entry = nextQuranRoot(lang.rootsLearned || []);
   if (!entry) {
     // Whole curriculum finished — a review-only session
@@ -2317,9 +2358,21 @@ async function generateQuranicLesson(lang) {
     .map(id => QURAN_ROOTS.find(r => r.id === id)?.translit)
     .filter(Boolean);
 
-  const core = AppState.mode === 'demo'
-    ? demoRootLesson(entry)
-    : await callRootLessonGenerator(entry, learnedTranslits);
+  // The root lesson and the grammar unit are built in parallel: one gives the
+  // meaning of a word family, the other the machinery to decode any word.
+  const [core, grammar] = await Promise.all([
+    AppState.mode === 'demo'
+      ? Promise.resolve(demoRootLesson(entry))
+      : callRootLessonGenerator(entry, learnedTranslits),
+    unit
+      ? (AppState.mode === 'demo'
+          ? Promise.resolve(demoQuranGrammarUnit(unit))
+          : callGrammarUnitGenerator(lang, unit, lang.knownWords || []).catch(err => {
+              console.warn('Quranic grammar unit failed:', err.message);
+              return null;
+            }))
+      : Promise.resolve(null)
+  ]);
 
   return {
     kind: 'quranic',
@@ -2329,6 +2382,9 @@ async function generateQuranicLesson(lang) {
     rootGloss: entry.gloss,
     rootKind: entry.kind,
     rootCount: entry.count,
+    unit,
+    grammar,
+    formMarkers: QURAN_FORM_MARKERS,
     rootMeaning: core.rootMeaning || '',
     formTable: core.formTable || [],
     waznExplanation: core.waznExplanation,
@@ -3364,6 +3420,12 @@ const LangSession = {
   // The grammar ladder for this language. One generation, cached forever —
   // every later session reads it back rather than paying for it again.
   async loadSyllabus(lang) {
+    // Quranic Arabic's syllabus is hand-written rather than generated: its
+    // topics are settled and ordered the same way in every serious curriculum,
+    // so a fixed ladder beats asking the model to invent one each time.
+    const staticId = this.recipe?.ui?.staticSyllabus;
+    if (staticId === 'QURAN_GRAMMAR') return quranGrammarUnits();
+
     const cached = await dbGetSyllabus(lang.id);
     if (cached?.units?.length) return cached.units;
 
@@ -3610,11 +3672,31 @@ const LangSession = {
       </div>
     `).join('');
 
+    // Quranic Arabic keeps the form-marker table on hand through every pattern
+    // unit — identifying a form on sight is the skill being built, and it is
+    // learned by repeated reference, not by being shown once.
+    const markersHtml = (lesson.formMarkers && /Patterns/.test(unit.stage || '')) ? `
+      <details class="form-markers">
+        <summary class="form-markers-head">How to spot each form on sight</summary>
+        <div class="root-forms-wrap">
+          <table class="root-forms">
+            <thead><tr><th>Form</th><th>What marks it</th><th>What it does</th></tr></thead>
+            <tbody>
+              ${lesson.formMarkers.map(m => `
+                <tr><td class="rf-num">${escapeAttr(m.form)}</td>
+                    <td class="rf-mean">${escapeAttr(m.marker)}</td>
+                    <td class="rf-mean">${escapeAttr(m.sense)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </details>` : '';
+
     body.innerHTML = `
-      <div class="prime-kicker">Rule ${this.unitIndex + 1} · ${lang.name}</div>
+      <div class="prime-kicker">${unit.stage ? escapeAttr(unit.stage) : `Rule ${this.unitIndex + 1}`} · ${lang.name}</div>
       ${this.dotsHtml()}
       <h3 class="consolidate-title grammar-title">${unit.title}</h3>
       <p class="grammar-structure">${unit.structure}</p>
+      ${markersHtml}
       ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
       <div class="grammar-explanation">${renderMarkdown(g.explanation || '')}</div>
       ${tableHtml}

@@ -5651,3 +5651,27 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .scope-toggle { margin-left: 0; width: 100%; justify-content: center; }
   .scope-btn { flex: 1; min-height: 34px; font-size: 0.72rem; }
 }
+
+/* The form-marker reference, kept to hand through every pattern unit —
+   spotting a form on sight is learned by repeated reference, not one look. */
+.form-markers {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  margin: 0.9rem 0 1.2rem;
+  overflow: hidden;
+}
+.form-markers-head {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--indigo);
+}
+.form-markers-head::-webkit-details-marker { display: none; }
+.form-markers-head::before { content: '📖 '; }
+.form-markers-head:hover { background: var(--bg-elevated); }
+.form-markers .root-forms-wrap { margin: 0; padding: 0 0.6rem 0.6rem; }
+.form-markers .root-forms { border: none; }
