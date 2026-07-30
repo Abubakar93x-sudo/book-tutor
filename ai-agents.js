@@ -2069,6 +2069,56 @@ function secondsToStamp(total) {
     : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+// ── SCRIPT GUARD ─────────────────────────────────────────────────────────────
+// Asked for Urdu, a model will still hand back English words some of the time —
+// no amount of prompt insistence removes this entirely. For a language with its
+// own script the check is objective, so it is done in code rather than argued
+// about in the prompt: an Urdu word is written in Arabic script, full stop.
+const SCRIPT_RANGES = {
+  latin: 'A-Za-z\\u00C0-\\u024F',
+  cyrillic: '\\u0400-\\u04FF',
+  greek: '\\u0370-\\u03FF\\u1F00-\\u1FFF',
+  arabic: '\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF',
+  hebrew: '\\u0590-\\u05FF\\uFB1D-\\uFB4F',
+  devanagari: '\\u0900-\\u097F\\uA8E0-\\uA8FF',
+  cjk: '\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uF900-\\uFAFF',
+  hangul: '\\uAC00-\\uD7AF\\u1100-\\u11FF\\u3130-\\u318F',
+  'kana-kanji': '\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF\\u3400-\\u4DBF',
+  thai: '\\u0E00-\\u0E7F'
+};
+
+// An unrecognized script ("other", or nothing recorded) has no range to test,
+// and returns null — the caller then lets everything through rather than
+// hiding words it cannot judge.
+function scriptRegex(script, flags = '') {
+  const range = SCRIPT_RANGES[script];
+  return range ? new RegExp(`[${range}]`, flags) : null;
+}
+
+// Does this text contain any of the language's own letters at all?
+function textHasScript(text, script) {
+  const re = scriptRegex(script);
+  if (!re || !text) return true;
+  return re.test(String(text));
+}
+
+// Is this WORD actually written in the language's script? Stricter than
+// textHasScript: a word that is mostly Latin letters with one stray mark is
+// still an English word wearing a hat.
+function wordMatchesScript(word, script) {
+  const re = scriptRegex(script);
+  if (!re) return true;
+  const s = String(word || '').trim();
+  if (!s) return false;
+  if (!re.test(s)) return false;
+  if (script !== 'latin' && /[A-Za-z]/.test(s)) {
+    const own = (s.match(scriptRegex(script, 'g')) || []).length;
+    const latin = (s.match(/[A-Za-z]/g) || []).length;
+    if (latin >= own) return false;
+  }
+  return true;
+}
+
 // ── AGENT: VOCAB BUILDER ─────────────────────────────────────────────────────
 // The vocabulary builder proper. Unlike callPrecisionWords, which walks a
 // frequency frontier, this picks for ARTICULACY: words that let you say a
@@ -2091,7 +2141,7 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
   const nonLatin = langProfile.script && langProfile.script !== 'latin';
   const romanName = langProfile.romanizationName || 'Roman letters';
 
-  const prompt = `
+  const buildPrompt = (need, banList, wrongScript) => `
     You are building a vocabulary set in ${langProfile.name.toUpperCase()}.
 
     EVERY WORD YOU RETURN MUST BE A ${langProfile.name.toUpperCase()} WORD,
@@ -2100,6 +2150,16 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
     English and wants to expand their ${langProfile.name}. If you cannot think of
     a suitable ${langProfile.name} word, choose a different ${langProfile.name}
     word — never substitute an English one.`}
+    ${nonLatin ? `The "word", "example" and "cloze" fields must be in
+    ${langProfile.scriptName} characters. A word typed in Roman letters is WRONG
+    here however correct the underlying ${langProfile.name} word is — the
+    romanization belongs in "pronunciation" and "exampleRomanization", nowhere
+    else.` : ''}
+    ${wrongScript && wrongScript.length ? `
+    YOUR LAST ANSWER WAS REJECTED for these — they were not ${langProfile.name}
+    words in ${nonLatin ? langProfile.scriptName : 'the language'}:
+    ${wrongScript.join(', ')}
+    Do not return them, or anything in that form, again.` : ''}
 
     The goal is ARTICULACY: words that let the learner say precisely what they
     mean in ${langProfile.name}, instead of reaching for a vague general term.
@@ -2109,9 +2169,9 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
 
     ALREADY LEARNED — these are BANNED. Do not return any of them, and do not
     return a trivial inflection of one either:
-    ${knownWords.slice(-300).join(', ') || '(none yet)'}
+    ${banList.slice(-300).join(', ') || '(none yet)'}
 
-    Choose ${count} words, all different from each other. Avoid words that are
+    Choose ${need} words, all different from each other. Avoid words that are
     merely long or obscure — every one must earn its place by expressing
     something its common synonym cannot.
 
@@ -2140,34 +2200,61 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
       ]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
-  const words = (Array.isArray(result.words) ? result.words : [])
-    .filter(w => w.word && w.meaning && w.example);
-  if (!words.length) throw new Error('Vocabulary generation returned nothing usable.');
 
   // Belt and braces on the "never repeat" instruction: models drift back to
   // favourites across calls, so anything already learned is dropped here too.
   const banned = new Set(knownWords.map(w => String(w).trim().toLowerCase()));
   const seen = new Set();
-  const fresh = words.filter(w => {
-    const key = String(w.word).trim().toLowerCase();
-    if (!key || banned.has(key) || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const kept = [];
+  let wrongScript = [];
 
-  return fresh.slice(0, count).map(w => ({
-    word: w.word,
-    partOfSpeech: w.partOfSpeech || '',
-    pronunciation: w.pronunciation || '',
-    meaning: w.meaning,
-    example: w.example,
-    exampleRomanization: w.exampleRomanization || '',
-    exampleTranslation: w.exampleTranslation || '',
-    // A cloze is only useful if the blank is actually there
-    cloze: (w.cloze && w.cloze.includes('_____')) ? w.cloze : blankOut(w.example, w.word),
-    contrast: w.contrast || ''
-  }));
+  // Two attempts at most. The second one only happens when the first was
+  // rejected on script grounds, and it names the offending words back to the
+  // model — being shown the mistake is what actually stops it repeating.
+  for (let attempt = 0; attempt < 2 && kept.length < count; attempt++) {
+    const banList = [...knownWords, ...kept.map(w => w.word)];
+    const result = await queryGemini(
+      buildPrompt(count - kept.length, banList, wrongScript), true, null, 'quick');
+    const words = (Array.isArray(result.words) ? result.words : [])
+      .filter(w => w.word && w.meaning && w.example);
+
+    wrongScript = [];
+    for (const w of words) {
+      const key = String(w.word).trim().toLowerCase();
+      if (!key || banned.has(key) || seen.has(key)) continue;
+      // The objective test: an Urdu word is in Arabic script, and so is the
+      // sentence it lives in. Anything else is the model answering in English.
+      if (!wordMatchesScript(w.word, langProfile.script) ||
+          !textHasScript(w.example, langProfile.script)) {
+        wrongScript.push(String(w.word).trim());
+        continue;
+      }
+      seen.add(key);
+      kept.push({
+        word: w.word,
+        partOfSpeech: w.partOfSpeech || '',
+        pronunciation: w.pronunciation || '',
+        meaning: w.meaning,
+        example: w.example,
+        exampleRomanization: w.exampleRomanization || '',
+        exampleTranslation: w.exampleTranslation || '',
+        // A cloze is only useful if the blank is actually there
+        cloze: (w.cloze && w.cloze.includes('_____')) ? w.cloze : blankOut(w.example, w.word),
+        contrast: w.contrast || ''
+      });
+      if (kept.length >= count) break;
+    }
+    // A short set with nothing rejected is the caller's top-up problem, not a
+    // script failure — re-asking here would just burn a call.
+    if (!wrongScript.length) break;
+  }
+
+  if (!kept.length) {
+    throw new Error(wrongScript.length
+      ? `The model kept answering in the wrong script for ${langProfile.name}. Try again.`
+      : 'Vocabulary generation returned nothing usable.');
+  }
+  return kept.slice(0, count);
 }
 
 // Falls back to blanking the word out of its own example when the model

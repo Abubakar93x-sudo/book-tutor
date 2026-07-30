@@ -769,6 +769,17 @@ async function dbPutVocabSet(langId, setNumber, words, meta = {}) {
   );
 }
 
+// Rewrites a stored set with only the words that belong to the language's own
+// script. The repair for sets written before the generator checked — a set of
+// English words filed under Urdu is corrected in place rather than merely
+// hidden, so the deck, the quiz and the count all agree with the view.
+async function dbScrubVocabSet(langId, setNumber, words) {
+  const col = userCol('vocabSets');
+  if (!col) return;
+  await col.doc(`${langId}_set_${setNumber}`).set(
+    { words, updatedAt: Date.now(), scriptScrubbed: true }, { merge: true });
+}
+
 // Every set ever generated, newest first — the Saved tab reads back through
 // them so nothing a learner has studied is ever out of reach.
 async function dbGetAllVocabSets(langId) {
@@ -2518,6 +2529,52 @@ const ENGLISH_PROFILE = {
   notes: 'Vocabulary building for expression, not comprehension.'
 };
 
+// Checked before its own script, so kanji doesn't get read as Chinese and
+// Hangul doesn't get read as CJK.
+const SCRIPT_DETECT_ORDER = ['arabic', 'hebrew', 'devanagari', 'cyrillic', 'greek',
+  'thai', 'hangul', 'kana-kanji', 'cjk'];
+
+// The whole script guard rests on the language knowing what it is written in.
+// A profile saved before that field existed — or one that fell back to 'latin'
+// — would wave English through under Urdu, which is exactly the bug. The
+// language's own name, written in itself, settles it for free.
+function ensureLangScript(lang) {
+  if (!lang || (lang.script && lang.script !== 'latin' && SCRIPT_RANGES[lang.script])) return lang;
+  const native = lang?.nativeName || '';
+  if (!native) return lang;
+  for (const script of SCRIPT_DETECT_ORDER) {
+    if (!new RegExp(`[${SCRIPT_RANGES[script]}]`).test(native)) continue;
+    lang.script = script;
+    dbPutLanguage(lang).catch(err => console.warn('Script backfill failed:', err.message));
+    break;
+  }
+  return lang;
+}
+
+// A set that came back in the wrong script is corrected wherever it was
+// recorded — the set itself, and the learned-words list that feeds the
+// generator's BANNED list. Deliberately fire-and-forget: tidying history must
+// never block or break the view being drawn.
+function repairVocabSet(lang, set, good) {
+  const keep = new Set(good);
+  const dropped = (set.words || []).filter(w => !keep.has(w)).map(w => String(w.word || '').trim());
+  if (!dropped.length) return;
+  console.warn(`Vocab: dropping ${dropped.length} word(s) not in ${lang.scriptName || lang.script} from ${lang.name} set ${set.setNumber}: ${dropped.join(', ')}`);
+
+  if (set.setNumber != null) {
+    dbScrubVocabSet(lang.id, set.setNumber, good)
+      .catch(err => console.warn('Vocab set scrub failed:', err.message));
+  }
+
+  const bad = new Set(dropped.map(w => w.toLowerCase()));
+  const known = lang.knownWords || [];
+  const kept = known.filter(w => !bad.has(String(w).trim().toLowerCase()));
+  if (kept.length !== known.length) {
+    lang.knownWords = kept;
+    dbPutLanguage(lang).catch(err => console.warn('Language scrub failed:', err.message));
+  }
+}
+
 const VocabBuilder = {
   lang: null,
   langs: [],
@@ -2528,7 +2585,7 @@ const VocabBuilder = {
 
   async open() {
     const all = await dbGetAllLanguages().catch(() => []);
-    this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder');
+    this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
     if (!this.langs.length) {
@@ -2589,11 +2646,18 @@ const VocabBuilder = {
       } catch (err) {
         console.warn(`Saved vocab read failed for ${lang.id}:`, err.message);
       }
-      // Newest first, and never the same word twice however often it appeared
+      // Newest first, and never the same word twice however often it appeared.
+      // Sets written before the script guard existed can hold English words
+      // under a non-Latin language — those are dropped from the view and
+      // scrubbed from storage so the count and the quiz agree with it.
       const seen = new Set();
       const words = [];
       for (const set of sets) {
-        for (const w of (set.words || [])) {
+        const good = (set.words || []).filter(w => wordMatchesScript(w.word, lang.script));
+        if (good.length !== (set.words || []).length) {
+          repairVocabSet(lang, set, good);
+        }
+        for (const w of good) {
           const key = String(w.word).trim().toLowerCase();
           if (!key || seen.has(key)) continue;
           seen.add(key);
@@ -2742,10 +2806,21 @@ const VocabBuilder = {
         const excludeNow = [...known, ...words.map(w => w.word)];
         try {
           const more = await callVocabWords(this.lang, tier, excludeNow, theme, 6 - words.length);
-          words = [...words, ...more];
+          // The top-up is told what it already issued, but being told is not the
+          // same as obeying — a repeat here would put the same word on screen twice.
+          const have = new Set(words.map(w => String(w.word).trim().toLowerCase()));
+          words = [...words, ...more.filter(w => !have.has(String(w.word).trim().toLowerCase()))];
         } catch (err) {
           console.warn('Vocab top-up failed, continuing with a short set:', err.message);
         }
+      }
+
+      // Last line of defence before anything is stored: a word that isn't in
+      // the language's own script never reaches the set, the deck or the quiz.
+      const offScript = words.filter(w => !wordMatchesScript(w.word, this.lang.script));
+      if (offScript.length) {
+        console.warn(`Vocab: rejected ${offScript.length} off-script word(s) for ${this.lang.name}: ${offScript.map(w => w.word).join(', ')}`);
+        words = words.filter(w => wordMatchesScript(w.word, this.lang.script));
       }
 
       if (!words.length) throw new Error('No new words came back — try a different theme or tier.');
@@ -8154,6 +8229,10 @@ async function collectCards({ dueOnly = true } = {}) {
     dbGetAll('books')
   ]);
 
+  // Backfills `script` on any profile saved before that field existed, so the
+  // off-script card check below has something to test against.
+  languages.forEach(ensureLangScript);
+
   const [langBatchSets, pdfChapterSets] = await Promise.all([
     Promise.all(languages.map(lang =>
       dbGetLangCardBatches(lang.id).then(batches => ({ lang, batches })).catch(() => ({ lang, batches: [] }))
@@ -8173,6 +8252,12 @@ async function collectCards({ dueOnly = true } = {}) {
           AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
         }
         cards.forEach((card, idx) => {
+          // Vocabulary-builder cards from before the script guard can be
+          // English filed under a non-Latin language. Only `precision` cards
+          // are tested — a correction or grammar card is meant to have an
+          // English front.
+          if (card.type === 'precision' && card.word &&
+              !wordMatchesScript(card.word, lang.script)) return;
           if (!dueOnly || isCardDue(card)) {
             out.push({
               ...card,
@@ -8687,11 +8772,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const profile = AppState.mode === 'demo'
         ? demoLanguageProfile(name.trim())
         : await callLanguageProfiler(name.trim());
-      const lang = {
+      const lang = ensureLangScript({
         ...profile, id: profile.code, recipeId: 'vocabBuilder',
         tier: 'articulate', level: 'B2', knownWords: [], vocabSet: 0,
         wordsLearned: 0, quizStats: { asked: 0, correct: 0 }, createdAt: Date.now()
-      };
+      });
       await dbPutLanguage(lang);
       VocabBuilder.langs.push(lang);
       VocabBuilder.lang = lang;
