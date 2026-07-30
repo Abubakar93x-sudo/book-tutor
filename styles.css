@@ -5427,3 +5427,176 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .trash-btn { min-height: 44px; flex: 1; }
   .confirm-actions .btn { flex: 1; }
 }
+
+/* ── Quranic root lessons ──────────────────────────────────────────────────
+   A root lesson should answer "why does this word mean that" rather than
+   asserting it: the shared sense of the three letters, the table of forms
+   with the Qur'anic ones marked, the derivation worked through stage by
+   stage, and the one rule worth carrying to the next root. */
+
+.root-meaning {
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  text-align: center;
+  max-width: 34rem;
+  margin: 0 auto 1.1rem;
+}
+
+.root-forms-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0.6rem 0 1.4rem;
+}
+.root-forms {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+}
+.root-forms th {
+  font-family: var(--font-body);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.root-forms td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.root-forms tr:last-child td { border-bottom: none; }
+/* Forms the Qur'an never uses are shown but visibly recede — a learner
+   should not spend memory on words that aren't in the text */
+.root-forms tr.not-quran { opacity: 0.55; }
+.root-forms tr.in-quran { background: var(--purple-dim); }
+.rf-num {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.root-forms tr.in-quran .rf-num { color: var(--purple); }
+.rf-ar {
+  font-family: var(--font-reading);
+  font-size: 1.1rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  direction: rtl;
+  text-align: right;
+}
+.rf-ar em {
+  display: block;
+  direction: ltr;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.rf-mean { font-family: var(--font-body); color: var(--text-secondary); }
+.rf-note {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+.rf-q { text-align: center; color: var(--teal); font-weight: 700; }
+
+.root-derivation {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem;
+  margin-bottom: 1.4rem;
+}
+.root-derivation-head {
+  font-family: var(--font-body);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+}
+.root-derivation-head span { color: var(--indigo); letter-spacing: 0; text-transform: none; font-size: 0.72rem; }
+.root-derivation-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.root-step {
+  font-family: var(--font-reading);
+  font-size: 1.05rem;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.6rem;
+  direction: rtl;
+}
+.root-step-arrow { color: var(--text-muted); font-size: 0.85rem; }
+.root-derivation-why {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0.7rem 0 0;
+}
+
+.root-word-note {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+  line-height: 1.45;
+}
+
+.root-principle {
+  background: var(--gold-dim);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem;
+  margin: 1.4rem 0 0;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+.root-principle-label {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.3rem;
+}
+
+.wrap-summary {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 34rem;
+  margin: 0 auto 1rem;
+}
+
+@media (max-width: 768px) {
+  .root-forms { font-size: 0.8rem; }
+  .root-forms th, .root-forms td { padding: 0.45rem 0.5rem; }
+  .rf-ar { font-size: 1rem; }
+}

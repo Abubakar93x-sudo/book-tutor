@@ -2185,11 +2185,28 @@ function demoLangLesson(lang) {
 
 function demoRootLesson(entry) {
   return {
+    rootMeaning: 'The three letters ر ح م carry the idea of tenderness that acts — not a feeling held privately, but mercy that reaches the one who needs it. Every word built on this root keeps that thread.',
+    formTable: [
+      { form: 'I', arabic: 'رَحِمَ', romanization: 'raḥima', meaning: 'he had mercy on', inQuran: true, note: 'the base action itself' },
+      { form: 'II', arabic: 'رَحَّمَ', romanization: 'raḥḥama', meaning: 'he asked mercy for', inQuran: false, note: 'intensive — the root is already transitive' },
+      { form: 'IV', arabic: 'أَرْحَمَ', romanization: 'arḥama', meaning: 'he caused mercy', inQuran: false, note: 'causative' },
+      { form: 'V', arabic: 'تَرَحَّمَ', romanization: 'taraḥḥama', meaning: 'he sought mercy for himself', inQuran: false, note: 'reflexive of Form II' },
+      { form: 'X', arabic: 'اِسْتَرْحَمَ', romanization: 'istarḥama', meaning: 'he begged for mercy', inQuran: false, note: 'the "seeking" form' }
+    ],
     waznExplanation: 'The pattern faʿīl turns a root into an intensive "doer" word — raḥīm (ever-merciful) grows from r-ḥ-m the way karīm (ever-generous) grows from k-r-m.',
+    principle: 'faʿīl describes a settled quality, not a single act. When you meet an unfamiliar faʿīl word, read it as "one who is characteristically X" rather than "one who did X once".',
+    derivation: {
+      steps: ['ر ح م + فَعِيل', 'رَحِيم'],
+      rule: 'القياس (regular pattern-fitting)',
+      why: 'The three root letters drop into the three slots of the pattern in order, and the pattern\'s own long vowel supplies the ī. Nothing is dropped or changed, because none of the root letters is weak.'
+    },
     derivedWords: [
-      { word: 'رَحْمَة', romanization: 'raḥmah', meaning: 'mercy', pattern: 'faʿlah' },
-      { word: 'رَحِيم', romanization: 'raḥīm', meaning: 'most merciful', pattern: 'faʿīl' },
-      { word: 'رَحْمَٰن', romanization: 'raḥmān', meaning: 'the Most Gracious', pattern: 'faʿlān' }
+      { word: 'رَحْمَة', romanization: 'raḥmah', meaning: 'mercy', pattern: 'faʿlah',
+        note: 'faʿlah names the thing itself — mercy as a noun' },
+      { word: 'رَحِيم', romanization: 'raḥīm', meaning: 'most merciful', pattern: 'faʿīl',
+        note: 'faʿīl makes it a settled quality of the one described' },
+      { word: 'رَحْمَٰن', romanization: 'raḥmān', meaning: 'the Most Gracious', pattern: 'faʿlān',
+        note: 'faʿlān is fuller still — mercy overflowing, not merely present' }
     ],
     verses: [
       { arabic: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', reference: 'Al-Fātiḥah 1:1',
@@ -2203,7 +2220,8 @@ function demoRootLesson(entry) {
     checkpoints: [
       { question: 'Which two words in this verse come from the same root family?' },
       { question: 'What is the core meaning shared by the whole r-ḥ-m family?' }
-    ]
+    ],
+    summary: 'One root, three of the most-repeated words in the Qur\'an. You met the pattern faʿīl and saw it turn an action into a permanent quality — you will meet that same pattern in dozens of other roots.'
   };
 }
 
@@ -2231,7 +2249,12 @@ async function generateQuranicLesson(lang) {
     rootGloss: entry.gloss,
     rootKind: entry.kind,
     rootCount: entry.count,
+    rootMeaning: core.rootMeaning || '',
+    formTable: core.formTable || [],
     waznExplanation: core.waznExplanation,
+    principle: core.principle || '',
+    derivation: core.derivation || null,
+    summary: core.summary || '',
     derivedWords: core.derivedWords,
     verses: core.verses,
     checkpoints: core.checkpoints,
@@ -4082,10 +4105,57 @@ const LangSession = {
         <span class="root-word-body">
           <span class="root-word-rom">${w.romanization || ''}</span>
           <span class="root-word-meaning">${w.meaning}</span>
+          ${w.note ? `<span class="root-word-note">${escapeAttr(w.note)}</span>` : ''}
         </span>
         ${w.pattern && !isParticles ? `<span class="root-word-pattern">${w.pattern}</span>` : ''}
       </div>
     `).join('');
+
+    // The forms table: which أوزان this root actually takes, and which of
+    // those the Quran uses — the difference matters, and glossing over it
+    // teaches a learner to expect words that are never in the text.
+    const formsHtml = (lesson.formTable || []).length ? `
+      <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>The forms of this root</div>
+      <div class="root-forms-wrap">
+        <table class="root-forms">
+          <thead>
+            <tr><th>Form</th><th>Arabic</th><th>Meaning</th><th>In the Qur'an</th></tr>
+          </thead>
+          <tbody>
+            ${lesson.formTable.map(f => `
+              <tr class="${f.inQuran ? 'in-quran' : 'not-quran'}">
+                <td class="rf-num">${escapeAttr(f.form)}</td>
+                <td class="rf-ar">${escapeAttr(f.arabic)}${f.romanization
+                  ? `<em>${escapeAttr(f.romanization)}</em>` : ''}</td>
+                <td class="rf-mean">${escapeAttr(f.meaning)}${f.note
+                  ? `<span class="rf-note">${escapeAttr(f.note)}</span>` : ''}</td>
+                <td class="rf-q">${f.inQuran ? '✓' : ''}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : '';
+
+    // How the pattern and the root actually combine, stage by stage. This is
+    // the part that turns "the word is قَالَ" into "I can see why it is".
+    const derivationHtml = lesson.derivation ? `
+      <div class="root-derivation">
+        <div class="root-derivation-head">How it's built${lesson.derivation.rule
+          ? ` · <span>${escapeAttr(lesson.derivation.rule)}</span>` : ''}</div>
+        <div class="root-derivation-steps">
+          ${lesson.derivation.steps.map((st, i) => `
+            <span class="root-step">${escapeAttr(st)}</span>
+            ${i < lesson.derivation.steps.length - 1 ? '<span class="root-step-arrow">→</span>' : ''}
+          `).join('')}
+        </div>
+        ${lesson.derivation.why ? `<p class="root-derivation-why">${escapeAttr(lesson.derivation.why)}</p>` : ''}
+      </div>` : '';
+
+    // The transferable rule — the thing worth carrying to the next root
+    const principleHtml = lesson.principle ? `
+      <div class="root-principle">
+        <span class="root-principle-label">The rule worth keeping</span>
+        ${escapeAttr(lesson.principle)}
+      </div>` : '';
 
     body.innerHTML = `
       <div class="prime-kicker">${isParticles ? 'Function words' : 'Root family'} · ${lang.name}</div>
@@ -4096,8 +4166,13 @@ const LangSession = {
         <span class="root-hero-gloss">${lesson.rootGloss}</span>
       </div>
       <p class="story-title-gloss">~${lesson.rootCount.toLocaleString()} appearances in the Quran — ${isParticles ? 'these words are the connective tissue of every verse.' : 'every word below grows from this one root.'}</p>
+      ${lesson.rootMeaning ? `<p class="root-meaning">${escapeAttr(lesson.rootMeaning)}</p>` : ''}
       <div class="root-wazn">${lesson.waznExplanation}</div>
+      ${formsHtml}
+      ${derivationHtml}
+      <div class="recall-col-head" style="color:var(--gold)"><i style="background:var(--gold)"></i>${isParticles ? 'The words' : 'Most frequent in the Qur\'an'}</div>
       <div class="root-family">${familyHtml}</div>
+      ${principleHtml}
       <div class="consolidate-actions">
         <button class="btn btn-primary" id="btn-root-continue">See it in the verses →</button>
       </div>
@@ -4363,6 +4438,7 @@ const LangSession = {
       ${this.dotsHtml()}
       <h3 class="consolidate-title">${words.length ? `${words.length} new word${words.length === 1 ? '' : 's'} joined your deck` : 'Nice work'}</h3>
       ${masteryHtml}
+      ${lesson.summary ? `<p class="wrap-summary">${escapeAttr(lesson.summary)}</p>` : ''}
       <div class="new-words-list">${wordsHtml}</div>
       <div class="consolidate-calibration">${this.checkpointsPassed}/${(lesson.checkpoints || []).length} comprehension checks passed · they'll come due for review tomorrow</div>
       ${this.recipe?.ui?.coverageMeter ? (() => {
