@@ -2184,6 +2184,11 @@ img { max-width: 100%; }
   /* Pad content above the fixed bottom nav + iPhone home bar */
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 
+  /* Focus mode hides that nav, so the space reserved for it must go too —
+     otherwise a full-height pane (the reader, a lesson, the tutor) sits in a
+     page 64px taller than the screen and drifts under a scroll it never needed. */
+  body.focus-mode { padding-bottom: 0; }
+
   /* ── Library — Hero ── */
   .hero-section {
     padding: 36px 20px 28px;
@@ -3823,6 +3828,13 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
    A course lesson wears the reader's clothes on purpose — same topbar, same
    column, same feel — so a book chapter and a course lesson are recognisably
    the same kind of thing. Only what is specific to a lesson lives here. */
+/* A lesson takes the whole view. Without this the courses grid and the page
+   header stay stacked underneath, so scrolling off the end of a lesson drops
+   you onto the card you opened it from. */
+#view-languages.lesson-open > .page-header,
+#view-languages.lesson-open > .lang-grid,
+#view-languages.lesson-open > .trash-section { display: none; }
+
 .lesson-pane { z-index: 5; }
 .lesson-column { padding-bottom: 3rem; }
 .lesson-kicker {
@@ -3876,20 +3888,36 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   position: relative;
   z-index: 5;
 }
+/* The conversation fills the pane and the composer sits at the bottom of it,
+   the way a chat should — rather than a short box of messages floating in the
+   middle with dead space under it. The chat scrolls itself; the pane doesn't. */
+/* The tutor's topbar holds only a back button and the lesson name, so the name
+   gets the room. The reader's 18ch cap is for a topbar with five things in it. */
+#lesson-tutor-pane .reader-title { max-width: none; flex: 1; min-width: 0; }
+
 .lesson-tutor-scroll {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  display: flex;
+  overflow: hidden;
 }
 .lesson-tutor-body {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   max-width: 46rem;
   margin: 0 auto;
-  padding: 1.5rem 1.5rem 3rem;
+  padding: 1.5rem 1.5rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+#lesson-tutor-pane .qtutor-chat {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 @media (max-width: 560px) {
-  .lesson-tutor-body { padding: 1rem 1rem 2.5rem; }
+  .lesson-tutor-body { padding: 1rem 1rem 0.9rem; }
   .lesson-foot { flex-direction: column-reverse; align-items: stretch; }
   .lesson-foot .btn { width: 100%; }
   .lesson-foot span { display: none; }
@@ -4193,14 +4221,91 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   color: var(--text-primary);
   line-height: 1.35;
 }
-.qtutor-tabs {
+/* The control bar. Two jobs, and they are not peers: WHAT the tutor is doing
+   (teach or quiz) is the decision, and HOW MUCH it covers is a modifier. So
+   the modes get a solid segmented control and the scope gets a quieter,
+   smaller one — a pill inside a pill, which is what this was, read as two
+   competing controls of the same rank. */
+.qtutor-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.8rem;
+  margin: 0 0 1.1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
 }
-.qtutor-scope { margin-left: auto; }
+
+.qtutor-modes {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+}
+.qtutor-mode {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  padding: 0.45rem 1.05rem;
+  border-radius: 100px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.qtutor-mode:hover { color: var(--text-primary); }
+.qtutor-mode.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(36,26,16,0.12);
+}
+
+.qtutor-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.qtutor-scope-label {
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: 0.1rem;
+}
+.qtutor-scope-btn {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  padding: 0.3rem 0.7rem;
+  border-radius: 100px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease-out;
+}
+.qtutor-scope-btn:hover { color: var(--text-secondary); }
+.qtutor-scope-btn.active {
+  color: var(--purple);
+  font-weight: 600;
+  border-color: var(--border-light);
+  background: var(--bg-elevated);
+}
+
+@media (max-width: 620px) {
+  .qtutor-bar { flex-direction: column; align-items: stretch; gap: 0.7rem; }
+  .qtutor-modes { justify-content: center; }
+  .qtutor-mode { flex: 1; text-align: center; }
+  .qtutor-scope { justify-content: center; }
+}
+
 .qtutor-chat { min-height: 12rem; }
 .qtutor-empty {
   margin: auto;
@@ -4469,6 +4574,10 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 
   /* Keep it clear of the docked selection bar while text is selected */
   body.sel-active .nav-reveal-btn { display: none; }
+
+  /* The tutor's composer owns the bottom-right corner while it is open, so the
+     floating menu button steps up out of the Send button's way. */
+  body.tutor-open .nav-reveal-btn { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* ============================================================

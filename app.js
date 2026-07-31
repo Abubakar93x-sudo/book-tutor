@@ -4958,6 +4958,10 @@ const LessonView = {
     this.lang = lang;
     this.unitIndex = unitIndex ?? (lang.unitIndex || 0);
 
+    // The lesson takes over the whole view. Without this the courses grid and
+    // the page header stay stacked underneath it, so you scroll off the bottom
+    // of a lesson straight into the card you opened it from.
+    document.getElementById('view-languages').classList.add('lesson-open');
     document.getElementById('lesson-pane').style.display = 'flex';
     document.getElementById('lesson-tutor-pane').style.display = 'none';
     setFocusMode(true);
@@ -4987,6 +4991,8 @@ const LessonView = {
   },
 
   close() {
+    document.getElementById('view-languages').classList.remove('lesson-open');
+    document.body.classList.remove('tutor-open');
     document.getElementById('lesson-pane').style.display = 'none';
     document.getElementById('lesson-tutor-pane').style.display = 'none';
     this.closeLessonJump();
@@ -5153,8 +5159,14 @@ const LessonView = {
   // ── The tutor, on the lesson you are reading ──
   showTutor() {
     document.getElementById('lesson-pane').style.display = 'none';
+    // Lifts the floating menu button clear of the composer — on a phone they
+    // share the bottom-right corner, and it sits on top of Send.
+    document.body.classList.add('tutor-open');
     const pane = document.getElementById('lesson-tutor-pane');
     pane.style.display = 'flex';
+    // The topbar names the lesson, so the tutor body doesn't have to repeat it
+    document.getElementById('lesson-tutor-title').textContent =
+      `Lesson ${this.unitIndex + 1} · ${this.unit?.title || ''}`;
     QuranTutor.mount(document.getElementById('lesson-tutor-body'), {
       lang: this.lang,
       syllabus: this.syllabus,
@@ -5164,6 +5176,7 @@ const LessonView = {
   },
 
   showLesson() {
+    document.body.classList.remove('tutor-open');
     document.getElementById('lesson-tutor-pane').style.display = 'none';
     document.getElementById('lesson-pane').style.display = 'flex';
     // Mastery reached in the tutor should show on the progress bar straight away
@@ -5218,18 +5231,22 @@ const QuranTutor = {
     if (!el) return;
 
     el.innerHTML = `
-      <div class="qtutor-unit">
-        <span class="qtutor-unit-n">Lesson ${this.unitIndex + 1} of ${this.syllabus.length || 1}</span>
-        <span class="qtutor-unit-title">${escapeAttr(unit?.title || 'Getting started')}</span>
-      </div>
-      <div class="chat-tabs qtutor-tabs">
-        <button class="chat-tab active" data-tmode="teach">Teach Me</button>
-        <button class="chat-tab" data-tmode="quiz">Quiz</button>
-        <div class="scope-toggle qtutor-scope">
-          <button class="scope-btn active" data-tscope="unit"
+      ${this.embedded ? `
+        <div class="qtutor-unit">
+          <span class="qtutor-unit-n">Lesson ${this.unitIndex + 1} of ${this.syllabus.length || 1}</span>
+          <span class="qtutor-unit-title">${escapeAttr(unit?.title || 'Getting started')}</span>
+        </div>` : ''}
+      <div class="qtutor-bar">
+        <div class="qtutor-modes">
+          <button class="qtutor-mode active" data-tmode="teach">Teach me</button>
+          <button class="qtutor-mode" data-tmode="quiz">Quiz me</button>
+        </div>
+        <div class="qtutor-scope">
+          <span class="qtutor-scope-label">Covering</span>
+          <button class="qtutor-scope-btn active" data-tscope="unit"
                   title="Only the lesson you are on">This lesson</button>
-          <button class="scope-btn" data-tscope="cumulative"
-                  title="Everything you have covered up to and including this lesson">Everything so far</button>
+          <button class="qtutor-scope-btn" data-tscope="cumulative"
+                  title="Everything you have covered up to and including this lesson">Everything</button>
         </div>
       </div>
       <div class="lang-chat qtutor-chat"></div>
