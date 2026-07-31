@@ -3818,98 +3818,82 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .assess-opt.assess-wrong { background: rgba(109,37,48,0.14); border-color: var(--rose); color: var(--rose); }
 .assess-opt:disabled { cursor: default; opacity: 0.9; }
 
-/* ── Quranic root lessons ── */
-.root-hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  margin-bottom: 0.6rem;
-}
-.root-hero-ar {
-  font-size: 2.6rem;
-  color: var(--text-primary);
-  direction: rtl;
-  letter-spacing: 0.15em;
-}
-.root-hero-translit {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--purple);
-}
-.root-hero-gloss {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
 
-.root-wazn {
-  max-width: 52ch;
-  margin: 0 auto 1.1rem;
-  padding: 0.8rem 1rem;
+/* ── The lesson pane ───────────────────────────────────────────────────────
+   A course lesson wears the reader's clothes on purpose — same topbar, same
+   column, same feel — so a book chapter and a course lesson are recognisably
+   the same kind of thing. Only what is specific to a lesson lives here. */
+.lesson-pane { z-index: 5; }
+.lesson-column { padding-bottom: 3rem; }
+.lesson-kicker {
+  font-family: var(--font-body);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--purple);
+  margin-bottom: 0.5rem;
+}
+/* The handoff to the tutor, where the practice lives */
+.lesson-handoff {
+  margin: 2rem 0 0;
+  padding: 1rem 1.1rem;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
-  border-left: 3px solid var(--purple);
-  border-radius: 0 8px 8px 0;
+  font-family: var(--font-body);
   font-size: 0.86rem;
   line-height: 1.6;
   color: var(--text-secondary);
 }
-
-.root-family {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  width: 100%;
-  max-width: 480px;
-  margin: 0 auto 0.4rem;
+.lesson-handoff-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--purple);
+  cursor: pointer;
 }
-.root-word-row {
+.lesson-handoff-link:hover { text-decoration: underline; }
+
+.lesson-foot {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.6rem 0.8rem;
-}
-.root-word-ar {
-  font-size: 1.35rem;
-  color: var(--text-primary);
-  direction: rtl;
-  min-width: 4.5rem;
-  text-align: center;
-}
-.root-word-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  flex: 1;
-  min-width: 0;
-}
-.root-word-rom { font-size: 0.75rem; color: var(--text-muted); font-style: italic; }
-.root-word-meaning { font-size: 0.88rem; color: var(--text-primary); }
-.root-word-pattern {
-  flex-shrink: 0;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--purple);
-  background: var(--purple-dim);
-  padding: 0.25rem 0.55rem;
-  border-radius: 99px;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 2rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border);
 }
 
-.verse-ar { font-size: 1.25rem; line-height: 2; direction: rtl; display: block; text-align: right; }
-.verse-ref { display: block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--purple); margin-top: 0.15rem; }
-.verse-word-glosses { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
-.verse-wg {
-  font-size: 0.72rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 0.2rem 0.55rem;
-  color: var(--text-secondary);
+/* The tutor, swapped in where the lesson was */
+.lesson-tutor-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-surface);
+  position: relative;
+  z-index: 5;
 }
-.verse-wg b { color: var(--text-primary); direction: rtl; }
+.lesson-tutor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.lesson-tutor-body {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 3rem;
+}
+@media (max-width: 560px) {
+  .lesson-tutor-body { padding: 1rem 1rem 2.5rem; }
+  .lesson-foot { flex-direction: column-reverse; align-items: stretch; }
+  .lesson-foot .btn { width: 100%; }
+  .lesson-foot span { display: none; }
+}
 
 /* ── Quran coverage meter ── */
 .lang-coverage {
@@ -4362,8 +4346,7 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .cp-chip.sel { background: var(--text-primary); color: var(--bg-surface); border-color: var(--text-primary); }
 
 /* Script bootcamp button on non-Latin language cards */
-.lang-script-btn,
-.lang-tutor-btn {
+.lang-script-btn {
   margin-top: 0.6rem;
   font-size: 0.8rem;
   padding: 0.55rem 0.9rem;
@@ -4749,18 +4732,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.lang-intensity {
-  font-family: var(--font-body);
-  font-size: 0.74rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border-light);
-  border-radius: 100px;
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
 /* ============================================================
    TAP ANY WORD — the gloss popover
    Floats by the word on desktop; bottom-docks on touch for the
@@ -5640,163 +5611,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .confirm-actions .btn { flex: 1; }
 }
 
-/* ── Quranic root lessons ──────────────────────────────────────────────────
-   A root lesson should answer "why does this word mean that" rather than
-   asserting it: the shared sense of the three letters, the table of forms
-   with the Qur'anic ones marked, the derivation worked through stage by
-   stage, and the one rule worth carrying to the next root. */
-
-.root-meaning {
-  font-family: var(--font-body);
-  font-size: 0.92rem;
-  line-height: 1.65;
-  color: var(--text-primary);
-  text-align: center;
-  max-width: 34rem;
-  margin: 0 auto 1.1rem;
-}
-
-.root-forms-wrap {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  margin: 0.6rem 0 1.4rem;
-}
-.root-forms {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 0.86rem;
-}
-.root-forms th {
-  font-family: var(--font-body);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  text-align: left;
-  padding: 0.5rem 0.7rem;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-.root-forms td {
-  padding: 0.55rem 0.7rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-.root-forms tr:last-child td { border-bottom: none; }
-/* Forms the Qur'an never uses are shown but visibly recede — a learner
-   should not spend memory on words that aren't in the text */
-.root-forms tr.not-quran { opacity: 0.55; }
-.root-forms tr.in-quran { background: var(--purple-dim); }
-.rf-num {
-  font-family: var(--font-body);
-  font-size: 0.74rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.root-forms tr.in-quran .rf-num { color: var(--purple); }
-.rf-ar {
-  font-family: var(--font-reading);
-  font-size: 1.1rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  direction: rtl;
-  text-align: right;
-}
-.rf-ar em {
-  display: block;
-  direction: ltr;
-  text-align: left;
-  font-family: var(--font-body);
-  font-size: 0.7rem;
-  font-style: italic;
-  color: var(--text-muted);
-}
-.rf-mean { font-family: var(--font-body); color: var(--text-secondary); }
-.rf-note {
-  display: block;
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  margin-top: 0.15rem;
-}
-.rf-q { text-align: center; color: var(--teal); font-weight: 700; }
-
-.root-derivation {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  padding: 0.9rem 1rem;
-  margin-bottom: 1.4rem;
-}
-.root-derivation-head {
-  font-family: var(--font-body);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 0.6rem;
-}
-.root-derivation-head span { color: var(--indigo); letter-spacing: 0; text-transform: none; font-size: 0.72rem; }
-.root-derivation-steps {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.root-step {
-  font-family: var(--font-reading);
-  font-size: 1.05rem;
-  color: var(--text-primary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.25rem 0.6rem;
-  direction: rtl;
-}
-.root-step-arrow { color: var(--text-muted); font-size: 0.85rem; }
-.root-derivation-why {
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  margin: 0.7rem 0 0;
-}
-
-.root-word-note {
-  display: block;
-  font-family: var(--font-body);
-  font-size: 0.76rem;
-  color: var(--text-muted);
-  margin-top: 0.15rem;
-  line-height: 1.45;
-}
-
-.root-principle {
-  background: var(--gold-dim);
-  border: 1px solid var(--gold);
-  border-radius: var(--radius-sm);
-  padding: 0.9rem 1rem;
-  margin: 1.4rem 0 0;
-  font-family: var(--font-body);
-  font-size: 0.9rem;
-  line-height: 1.6;
-  color: var(--text-primary);
-}
-.root-principle-label {
-  display: block;
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--gold);
-  margin-bottom: 0.3rem;
-}
-
 .wrap-summary {
   font-family: var(--font-body);
   font-size: 0.9rem;
@@ -5805,12 +5619,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   text-align: center;
   max-width: 34rem;
   margin: 0 auto 1rem;
-}
-
-@media (max-width: 768px) {
-  .root-forms { font-size: 0.8rem; }
-  .root-forms th, .root-forms td { padding: 0.45rem 0.5rem; }
-  .rf-ar { font-size: 1rem; }
 }
 
 /* ── Tutor scope ───────────────────────────────────────────────────────────
@@ -5855,7 +5663,7 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .scope-btn { flex: 1; min-height: 34px; font-size: 0.72rem; }
 }
 
-/* The form-marker reference, kept to hand through every pattern unit —
+/* The form-marker reference, folded away beside the verb-forms lesson —
    spotting a form on sight is learned by repeated reference, not one look. */
 .form-markers {
   border: 1px solid var(--border);
@@ -5874,7 +5682,29 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   color: var(--indigo);
 }
 .form-markers-head::-webkit-details-marker { display: none; }
-.form-markers-head::before { content: '📖 '; }
 .form-markers-head:hover { background: var(--bg-elevated); }
-.form-markers .root-forms-wrap { margin: 0; padding: 0 0.6rem 0.6rem; }
-.form-markers .root-forms { border: none; }
+.form-markers-wrap { padding: 0 0.6rem 0.6rem; overflow-x: auto; }
+.form-markers-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+}
+.form-markers-table th {
+  text-align: left;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.form-markers-table td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.form-markers-table tr:last-child td { border-bottom: none; }
+.fm-num { font-weight: 700; color: var(--purple); white-space: nowrap; }
+.fm-cell { color: var(--text-secondary); line-height: 1.5; }

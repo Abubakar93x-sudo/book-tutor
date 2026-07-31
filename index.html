@@ -731,7 +731,43 @@
       <section id="view-languages" class="view">
         <div class="page-header">
           <h2 class="page-title">Languages</h2>
-          <p class="page-subtitle">A ~25-minute daily loop: review your cards, read a story at your level, converse, then shadow out loud.</p>
+          <p class="page-subtitle">One lesson at a time, taught in plain English. Read it, then take it to your tutor.</p>
+        </div>
+
+        <!-- ============================================================
+          LESSON PANE — a course lesson in the shape of a book chapter:
+          the whole unit on one page, the title opens every lesson, and
+          the Tutor button top-right swaps to a tutor scoped to it.
+        ============================================================ -->
+        <div id="lesson-pane" class="reader-pane lesson-pane" style="display:none;">
+          <div class="reader-topbar">
+            <button class="reader-top-btn" id="btn-lesson-exit" title="Back to your courses">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l-5 5 5 5"/></svg>
+            </button>
+            <button class="reader-title reader-title-btn" id="lesson-title-btn" title="Jump to another lesson"></button>
+            <div class="reader-progress-track"><div class="reader-progress-fill" id="lesson-progress-fill" style="width:0%"></div></div>
+            <button class="reader-top-btn reader-top-btn-labelled" id="btn-lesson-tutor" title="Ask your tutor about this lesson">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-3.5 3v-3H5a2 2 0 01-2-2v-6z"/></svg>
+              Tutor
+            </button>
+          </div>
+          <div class="reader-scroll" id="lesson-scroll">
+            <div class="reader-column lesson-column" id="lesson-column"></div>
+          </div>
+        </div>
+
+        <!-- The tutor for the lesson being read. Swaps with the pane above,
+             the same way the book reader swaps to its Tutor Arena. -->
+        <div id="lesson-tutor-pane" class="lesson-tutor-pane" style="display:none;">
+          <div class="reader-topbar">
+            <button class="reader-top-btn" id="btn-lesson-back" title="Back to the lesson">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l-5 5 5 5"/></svg>
+            </button>
+            <span class="reader-title" id="lesson-tutor-title">Your tutor</span>
+          </div>
+          <div class="lesson-tutor-scroll">
+            <div class="lesson-tutor-body" id="lesson-tutor-body"></div>
+          </div>
         </div>
 
         <div class="lang-grid" id="lang-grid">
@@ -757,12 +793,6 @@
           <div class="consolidate-body" id="lang-session-body"></div>
         </div>
 
-        <!-- The tutor on its own, opened from a language card. Same tutor as the
-             one inside a session, just reachable without running one. -->
-        <div id="lang-tutor-overlay" class="consolidate-overlay" style="display:none;">
-          <button class="prime-close" id="btn-lang-tutor-close" title="Close the tutor">✕</button>
-          <div class="consolidate-body" id="lang-tutor-body"></div>
-        </div>
 
         <!-- Language onboarding — reuses the Prime overlay pattern -->
         <div id="lang-onboard-overlay" class="prime-overlay" style="display:none;">
@@ -1057,6 +1087,19 @@
         <button class="chapter-jump-close" id="btn-chapter-jump-close" title="Close">✕</button>
       </div>
       <div class="chapter-jump-list" id="chapter-jump-list"></div>
+    </div>
+  </div>
+
+  <!-- Every lesson in the course, off the lesson title. Kept at body level on
+       purpose: a fixed overlay nested inside a hidden pane inherits the pane's
+       hidden-ness and renders at zero height. -->
+  <div class="chapter-jump" id="lesson-jump" style="display:none;">
+    <div class="chapter-jump-sheet">
+      <div class="chapter-jump-head">
+        <span>Lessons</span>
+        <button class="chapter-jump-close" id="btn-lesson-jump-close" title="Close">✕</button>
+      </div>
+      <div class="chapter-jump-list" id="lesson-jump-list"></div>
     </div>
   </div>
 

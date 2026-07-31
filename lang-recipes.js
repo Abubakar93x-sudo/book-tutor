@@ -77,11 +77,11 @@ const RECIPES = {
     id: 'quranic',
     label: 'Quranic Arabic',
     unitType: 'root',
-    // Eight units, taught by a tutor. `tutor` comes first among the teaching
-    // strands because a person explaining something plainly is the course —
-    // grammar and drill are the written notes and the practice around it.
-    // Roots are learned separately, in the Vocabulary Builder.
-    strands: ['review', 'tutor', 'grammar', 'drill', 'rootLesson', 'verses', 'recite', 'wrap'],
+    // No strands: this course is not a session player. It is a lesson you read
+    // on one page (LessonView) with a tutor one tap away for the practice, and
+    // a vocabulary track of its own in the Vocabulary Builder. `ui.syllabus` is
+    // what routes it there.
+    strands: [],
     assessment: 'verse-ladder',
     loadingCopy: () => `Preparing today's root family and its verses…`,
     ui: { coverageMeter: true, syllabus: true, staticSyllabus: 'QURAN_GRAMMAR' },
@@ -93,6 +93,14 @@ const RECIPES = {
 // the migration for language docs created before recipes existed.
 function getRecipe(lang) {
   return RECIPES[lang?.recipeId] || RECIPES.fresh;
+}
+
+// A recipe with no strands is not a daily session at all: it is a course you
+// read one lesson at a time (LessonView), with a tutor for the practice. The
+// absence of strands is the honest test — a recipe that lists activities has a
+// session to run, and one that lists none does not.
+function isLessonCourse(recipe) {
+  return !!recipe && !(recipe.strands || []).length && recipe.id !== 'vocabBuilder';
 }
 
 // ── LESSON GENERATORS ────────────────────────────────────────────────────────
@@ -136,8 +144,5 @@ const RECIPE_ACTIVITY_RENDERERS = {
   grammar: 'renderGrammar',
   drill: 'renderDrill',
   decode: 'renderDecode',
-  rootLesson: 'renderRootLesson',
-  verses: 'renderVerses',
-  recite: 'renderRecite',
   precision: 'renderPrecision'
 };

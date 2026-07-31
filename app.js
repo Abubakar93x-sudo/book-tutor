@@ -2079,7 +2079,9 @@ async function renderLanguages() {
   if (!grid) return;
 
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
-  const all = await dbGetAllLanguages();
+  // Runs here too, not only in the Vocabulary Builder: a course hidden by the
+  // old shared id should come back the moment you look at your courses.
+  const all = await migrateQuranVocabId(await dbGetAllLanguages());
 
   // Vocabulary-builder entries are not courses — they have no session to start
   // and live in their own view, so they stay off this grid.
@@ -2099,11 +2101,17 @@ async function renderLanguages() {
     } catch (_) { return 0; /* card count is decorative — never block the view */ }
   }));
 
+  // Roots are learned in the Vocabulary Builder now, on its own document — so
+  // the course card's coverage meter reads them from there rather than from
+  // itself, and studying roots still visibly moves the course forward.
+  const rootTrack = all.find(l => l.id === QURAN_VOCAB_ID);
+
   languages.forEach((lang, li) => {
     const due = dueCounts[li];
     const recipe = getRecipe(lang);
     const coverageHtml = recipe.ui?.coverageMeter ? (() => {
-      const pct = (quranCoverage(lang.rootsLearned || []) * 100).toFixed(1);
+      const roots = [...new Set([...(lang.rootsLearned || []), ...(rootTrack?.rootsLearned || [])])];
+      const pct = (quranCoverage(roots) * 100).toFixed(1);
       return `<div class="lang-coverage">
         <div class="lang-coverage-track"><div class="lang-coverage-fill" style="width:${pct}%"></div></div>
         <span class="lang-coverage-label">${pct}% of the Quran readable</span>
@@ -2127,30 +2135,16 @@ async function renderLanguages() {
       ${coverageHtml}
       ${recipe.ui?.syllabus ? `
         <div class="lang-unit-line">
-          <span class="lang-unit-label">Unit ${(lang.unitIndex || 0) + 1}${(lang.unitsMastered || []).length ? ` · ${(lang.unitsMastered || []).length} mastered` : ''}</span>
-          <select class="lang-intensity" title="How hard the conversation pushes you">
-            <option value="gentle"${lang.intensity === 'gentle' ? ' selected' : ''}>Gentle</option>
-            <option value="normal"${(lang.intensity || 'normal') === 'normal' ? ' selected' : ''}>Normal</option>
-            <option value="push"${lang.intensity === 'push' ? ' selected' : ''}>Push me</option>
-          </select>
+          <span class="lang-unit-label">Lesson ${(lang.unitIndex || 0) + 1}${(lang.unitsMastered || []).length ? ` · ${(lang.unitsMastered || []).length} done` : ''}</span>
         </div>` : ''}
-      <button class="btn btn-primary lang-card-cta">${recipe.ui?.syllabus ? 'Continue the course →' : "Start today's session →"}</button>
+      <button class="btn btn-primary lang-card-cta">${isLessonCourse(recipe) ? 'Continue course →' : "Start today's session →"}</button>
     `;
-    card.querySelector('.lang-card-cta').addEventListener('click', () => LangSession.start(lang));
-
-    // The complexity dial — the learner's own call on how hard the Companion
-    // pushes, applied to the very next reply rather than drifting with level.
-    const intensityEl = card.querySelector('.lang-intensity');
-    if (intensityEl) {
-      intensityEl.addEventListener('click', e => e.stopPropagation());
-      intensityEl.addEventListener('change', async () => {
-        lang.intensity = intensityEl.value;
-        try {
-          await dbPatchLanguage(lang.id, { intensity: lang.intensity });
-          showToast(`Conversation set to "${intensityEl.selectedOptions[0].textContent}".`, 'success', 2500);
-        } catch (err) { console.warn('Intensity save failed:', err.message); }
-      });
-    }
+    // A recipe with no strands is not a session — it is a lesson you read, and
+    // it opens the lesson page. One button: a course you are part-way through
+    // has exactly one obvious next action, and it is to carry on from where you
+    // stopped. The tutor and the lessons list live inside the lesson itself.
+    card.querySelector('.lang-card-cta').addEventListener('click', () =>
+      isLessonCourse(recipe) ? LessonView.open(lang) : LangSession.start(lang));
 
     // Foundation deck: pull the next held frequency band forward on demand.
     if (recipe.id === 'fresh' && (lang.bandsReleased || 0) > 0 && lang.bandsReleased < FOUNDATION_BANDS) {
@@ -2173,24 +2167,11 @@ async function renderLanguages() {
       card.appendChild(moreBtn);
     }
 
-    // The tutor, reachable without running a session. A learner who wants to
-    // ask a question shouldn't have to start a lesson to find someone to ask.
-    if (recipe.ui?.syllabus) {
-      const tutorBtn = document.createElement('button');
-      tutorBtn.className = 'btn btn-ghost lang-tutor-btn';
-      tutorBtn.textContent = 'Ask your tutor →';
-      tutorBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        QuranTutor.openStandalone(lang);
-      });
-      card.appendChild(tutorBtn);
-    }
-
-    // Script bootcamp: non-Latin languages can pull the next unit of their
-    // writing system into the deck (kana rows, letter groups, hanzi by
-    // frequency). Fades out once the learner is past A1 — except for the
-    // literacy recipe, where the script IS the course and it always shows.
-    if (lang.script && lang.script !== 'latin'
+    // Script bootcamp: pulls the next unit of a writing system into the deck
+    // (kana rows, letter groups, hanzi by frequency). Fades out past A1 — except
+    // for `literacy`, where the script IS the course. A lesson-page course keeps
+    // one button, so its script work belongs inside its lessons instead.
+    if (lang.script && lang.script !== 'latin' && !isLessonCourse(recipe)
         && (['A0', 'A1'].includes(lang.level) || recipe.id === 'literacy')) {
       const scriptBtn = document.createElement('button');
       scriptBtn.className = 'btn btn-ghost lang-script-btn';
@@ -2435,17 +2416,30 @@ function demoQuranGrammarUnit(unit) {
   if (!unit) return null;
   if (DEMO_QURAN_UNITS[unit.id]) return DEMO_QURAN_UNITS[unit.id];
 
-  // Shaped from the unit itself, so demo mode is always about the right topic
+  // Shaped from the unit itself, so demo mode is always about the right topic.
+  // The verses are al-Fātiḥah, which every unit of this course can be pointed at
+  // — so even a unit with no hand-written demo content still gets a real table
+  // and real examples rather than a single lonely row.
   return {
     explanation: unit.structure,
     patternTable: {
       caption: unit.title,
-      rows: [{ form: 'Example', example: 'بِسْمِ اللَّهِ', gloss: 'in the name of Allah (1:1)' }]
+      rows: [
+        { form: 'In the opening', example: 'بِسْمِ اللَّهِ', gloss: 'in the name of Allah (1:1)' },
+        { form: 'In the praise', example: 'الْحَمْدُ لِلَّهِ', gloss: 'all praise is for Allah (1:2)' },
+        { form: 'In the request', example: 'اهْدِنَا الصِّرَاطَ', gloss: 'guide us to the path (1:6)' }
+      ]
     },
     examples: [
       { text: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', romanization: 'bismi llāhi r-raḥmāni r-raḥīm',
         gloss: 'In the name of Allah, the Most Merciful, the Especially Merciful. (1:1)',
-        wordGlosses: [{ word: 'بِسْمِ', gloss: 'in the name of' }, { word: 'اللَّهِ', gloss: 'Allah' }] }
+        wordGlosses: [{ word: 'بِسْمِ', gloss: 'in the name of' }, { word: 'اللَّهِ', gloss: 'Allah' }] },
+      { text: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ', romanization: 'al-ḥamdu lillāhi rabbi l-ʿālamīn',
+        gloss: 'All praise is for Allah, Lord of the worlds. (1:2)',
+        wordGlosses: [{ word: 'الْحَمْدُ', gloss: 'the praise' }, { word: 'رَبِّ', gloss: 'Lord of' }] },
+      { text: 'إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ', romanization: 'iyyāka naʿbudu wa-iyyāka nastaʿīn',
+        gloss: 'You alone we worship, and You alone we ask for help. (1:5)',
+        wordGlosses: [{ word: 'إِيَّاكَ', gloss: 'You alone' }, { word: 'نَعْبُدُ', gloss: 'we worship' }] }
     ],
     pitfall: unit.whyItMatters,
     drills: [
@@ -2454,109 +2448,6 @@ function demoQuranGrammarUnit(unit) {
     ]
   };
 }
-
-function demoRootLesson(entry) {
-  return {
-    rootMeaning: 'The three letters ر ح م carry the idea of tenderness that acts — not a feeling held privately, but mercy that reaches the one who needs it. Every word built on this root keeps that thread.',
-    formTable: [
-      { form: 'I', arabic: 'رَحِمَ', romanization: 'raḥima', meaning: 'he had mercy on', inQuran: true, note: 'the base action itself' },
-      { form: 'II', arabic: 'رَحَّمَ', romanization: 'raḥḥama', meaning: 'he asked mercy for', inQuran: false, note: 'intensive — the root is already transitive' },
-      { form: 'IV', arabic: 'أَرْحَمَ', romanization: 'arḥama', meaning: 'he caused mercy', inQuran: false, note: 'causative' },
-      { form: 'V', arabic: 'تَرَحَّمَ', romanization: 'taraḥḥama', meaning: 'he sought mercy for himself', inQuran: false, note: 'reflexive of Form II' },
-      { form: 'X', arabic: 'اِسْتَرْحَمَ', romanization: 'istarḥama', meaning: 'he begged for mercy', inQuran: false, note: 'the "seeking" form' }
-    ],
-    waznExplanation: 'The pattern faʿīl turns a root into an intensive "doer" word — raḥīm (ever-merciful) grows from r-ḥ-m the way karīm (ever-generous) grows from k-r-m.',
-    principle: 'faʿīl describes a settled quality, not a single act. When you meet an unfamiliar faʿīl word, read it as "one who is characteristically X" rather than "one who did X once".',
-    derivation: {
-      steps: ['ر ح م + فَعِيل', 'رَحِيم'],
-      rule: 'القياس (regular pattern-fitting)',
-      why: 'The three root letters drop into the three slots of the pattern in order, and the pattern\'s own long vowel supplies the ī. Nothing is dropped or changed, because none of the root letters is weak.'
-    },
-    derivedWords: [
-      { word: 'رَحْمَة', romanization: 'raḥmah', meaning: 'mercy', pattern: 'faʿlah',
-        note: 'faʿlah names the thing itself — mercy as a noun' },
-      { word: 'رَحِيم', romanization: 'raḥīm', meaning: 'most merciful', pattern: 'faʿīl',
-        note: 'faʿīl makes it a settled quality of the one described' },
-      { word: 'رَحْمَٰن', romanization: 'raḥmān', meaning: 'the Most Gracious', pattern: 'faʿlān',
-        note: 'faʿlān is fuller still — mercy overflowing, not merely present' }
-    ],
-    verses: [
-      { arabic: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', reference: 'Al-Fātiḥah 1:1',
-        romanization: 'bismi llāhi r-raḥmāni r-raḥīm',
-        gloss: 'In the name of Allah, the Most Gracious, the Most Merciful.',
-        wordGlosses: [
-          { word: 'بِسْمِ', gloss: 'in the name of' }, { word: 'اللَّهِ', gloss: 'Allah' },
-          { word: 'الرَّحْمَٰنِ', gloss: 'the Most Gracious' }, { word: 'الرَّحِيمِ', gloss: 'the Most Merciful' }
-        ] }
-    ],
-    checkpoints: [
-      { question: 'Which two words in this verse come from the same root family?' },
-      { question: 'What is the core meaning shared by the whole r-ḥ-m family?' }
-    ],
-    summary: 'One root, three of the most-repeated words in the Qur\'an. You met the pattern faʿīl and saw it turn an action into a permanent quality — you will meet that same pattern in dozens of other roots.'
-  };
-}
-
-async function generateQuranicLesson(lang, unit) {
-  const entry = nextQuranRoot(lang.rootsLearned || []);
-  if (!entry) {
-    // Whole curriculum finished — a review-only session
-    return { kind: 'quranic', complete: true, rootId: null, derivedWords: [], verses: [],
-             checkpoints: [], shadowSentences: [], newWords: [], chatTopic: '' };
-  }
-
-  const learnedTranslits = (lang.rootsLearned || [])
-    .map(id => QURAN_ROOTS.find(r => r.id === id)?.translit)
-    .filter(Boolean);
-
-  // The root lesson and the grammar unit are built in parallel: one gives the
-  // meaning of a word family, the other the machinery to decode any word.
-  const [core, grammar] = await Promise.all([
-    AppState.mode === 'demo'
-      ? Promise.resolve(demoRootLesson(entry))
-      : callRootLessonGenerator(entry, learnedTranslits),
-    unit
-      ? (AppState.mode === 'demo'
-          ? Promise.resolve(demoQuranGrammarUnit(unit))
-          : callGrammarUnitGenerator(lang, unit, lang.knownWords || []).catch(err => {
-              console.warn('Quranic grammar unit failed:', err.message);
-              return null;
-            }))
-      : Promise.resolve(null)
-  ]);
-
-  return {
-    kind: 'quranic',
-    rootId: entry.id,
-    root: entry.root,
-    translit: entry.translit,
-    rootGloss: entry.gloss,
-    rootKind: entry.kind,
-    rootCount: entry.count,
-    unit,
-    grammar,
-    formMarkers: QURAN_FORM_MARKERS,
-    rootMeaning: core.rootMeaning || '',
-    formTable: core.formTable || [],
-    waznExplanation: core.waznExplanation,
-    principle: core.principle || '',
-    derivation: core.derivation || null,
-    summary: core.summary || '',
-    derivedWords: core.derivedWords,
-    verses: core.verses,
-    checkpoints: core.checkpoints,
-    shadowSentences: core.verses.map(v => v.arabic).slice(0, 3),
-    newWords: core.derivedWords.map(w => ({
-      word: w.word,
-      romanization: w.romanization || null,
-      meaning: w.meaning,
-      exampleSentence: core.verses[0]?.arabic || ''
-    })),
-    chatTopic: ''
-  };
-}
-
-registerRecipeLessonGenerator('quranic', generateQuranicLesson);
 
 // ── LITERACY LESSONS (heritage speakers: script is the course) ───────────────
 
@@ -2678,10 +2569,15 @@ const URDU_PROFILE = {
 };
 
 // The vocabulary side of Quranic Arabic. Item one of the syllabus: 300 root
-// words with their commonest Quranic forms. Its `id` matches the course's, so a
-// learner doing both shares one profile and one deck.
+// words with their commonest Quranic forms.
+//
+// Its id is deliberately NOT the course's. dbPutLanguage merges, so sharing
+// `ar-quran` meant adding this merged `recipeId: 'vocabBuilder'` onto the
+// COURSE document — and renderLanguages filters vocabBuilder entries out, so
+// the course silently vanished from the grid with its progress stranded.
+const QURAN_VOCAB_ID = 'ar-quran-roots';
 const QURAN_VOCAB_PROFILE = {
-  id: 'ar-quran', name: 'Quranic Arabic', nativeName: 'العربية الفصحى',
+  id: QURAN_VOCAB_ID, name: 'Quranic Arabic', nativeName: 'العربية الفصحى',
   code: 'ar-quran', ttsLangCode: 'ar-SA',
   script: 'arabic', scriptName: 'Arabic script', romanizationName: 'transliteration',
   notes: 'The 300 root words the Qur\'an is built from, each with the five forms you will meet most often.'
@@ -2696,8 +2592,30 @@ const VOCAB_CATALOGUE = [
 ];
 
 // The root-vocabulary track is driven by curated data rather than the model.
-const QURAN_VOCAB_ID = 'ar-quran';
 const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
+
+// Anyone who added Quranic vocabulary before the ids were separated has it
+// filed under 'ar-quran' — the course's id — with `recipeId: 'vocabBuilder'`
+// merged on top, which hid their course. Move it to its own document and hand
+// the course id back, keeping every root they have already studied.
+async function migrateQuranVocabId(languages) {
+  const stray = languages.find(l => l.id === 'ar-quran' && l.recipeId === 'vocabBuilder');
+  if (!stray) return languages;
+
+  console.log('Moving Quranic vocabulary off the course id — see QURAN_VOCAB_ID.');
+  const moved = { ...stray, ...QURAN_VOCAB_PROFILE, recipeId: 'vocabBuilder' };
+  try {
+    await dbPutLanguage(moved);
+    // The course document is whatever is left once the vocabulary fields are
+    // taken off it. It keeps its own progress; only the recipe has to go back.
+    await dbPatchLanguage('ar-quran', { recipeId: 'quranic' });
+  } catch (err) {
+    console.warn('Quranic vocabulary migration failed:', err.message);
+    return languages;
+  }
+  return [...languages.filter(l => l.id !== 'ar-quran'), moved,
+          { ...stray, recipeId: 'quranic' }];
+}
 
 // Checked before its own script, so kanji doesn't get read as Chinese and
 // Hangul doesn't get read as CJK.
@@ -2754,7 +2672,8 @@ const VocabBuilder = {
   quiz: null,
 
   async open() {
-    const all = await dbGetAllLanguages().catch(() => []);
+    let all = await dbGetAllLanguages().catch(() => []);
+    all = await migrateQuranVocabId(all);
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
@@ -3140,6 +3059,13 @@ const VocabBuilder = {
     lang.knownWords = [...new Set([...(lang.knownWords || []), ...words.map(w => w.word)])].slice(-400);
     lang.vocabSet = (lang.vocabSet || 0) + 1;
     lang.wordsLearned = (lang.wordsLearned || 0) + words.length;
+
+    // Roots are tracked by id as well as by their letters — the coverage meter
+    // on the course card counts corpus frequency, which needs the id.
+    const rootIds = words.map(w => w.rootId).filter(Boolean);
+    if (rootIds.length) {
+      lang.rootsLearned = [...new Set([...(lang.rootsLearned || []), ...rootIds])];
+    }
 
     try {
       // The WORD goes on the front — recall runs word → meaning, which is what
@@ -4138,85 +4064,16 @@ const LangSession = {
 
     if (!g || !unit) { this.next(); return; }   // recipe without a syllabus
 
-    const tableHtml = g.patternTable?.rows?.length ? `
-      <div class="grammar-table-wrap">
-        ${g.patternTable.caption ? `<div class="grammar-table-caption">${g.patternTable.caption}</div>` : ''}
-        <table class="grammar-table">
-          ${g.patternTable.rows.map(r => `
-            <tr>
-              <th>${r.form || ''}</th>
-              <td class="grammar-table-ex">${glossify(r.example || '', lang)}</td>
-              <td class="grammar-table-gloss">${r.gloss || ''}</td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>` : '';
-
-    const examplesHtml = (g.examples || []).map((ex, i) => `
-      <div class="story-sentence" data-idx="${i}">
-        <button class="grammar-play" data-idx="${i}" title="Hear it">
-          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
-        </button>
-        <div class="story-sentence-text">
-          <span class="story-target">${glossify(ex.text, lang)}</span>
-          ${ex.romanization && ['A0', 'A1'].includes(lang.level) ? `<span class="story-rom">${ex.romanization}</span>` : ''}
-          <span class="grammar-ex-gloss">${ex.gloss || ''}</span>
-        </div>
-      </div>
-    `).join('');
-
-    // Quranic Arabic keeps the form-marker table on hand through every pattern
-    // unit — identifying a form on sight is the skill being built, and it is
-    // learned by repeated reference, not by being shown once.
-    const markersHtml = (lesson.formMarkers && /Patterns/.test(unit.stage || '')) ? `
-      <details class="form-markers">
-        <summary class="form-markers-head">How to spot each form on sight</summary>
-        <div class="root-forms-wrap">
-          <table class="root-forms">
-            <thead><tr><th>Form</th><th>What marks it</th><th>What it does</th></tr></thead>
-            <tbody>
-              ${lesson.formMarkers.map(m => `
-                <tr><td class="rf-num">${escapeAttr(m.form)}</td>
-                    <td class="rf-mean">${escapeAttr(m.marker)}</td>
-                    <td class="rf-mean">${escapeAttr(m.sense)}</td></tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </details>` : '';
-
     body.innerHTML = `
       <div class="prime-kicker">${unit.stage ? escapeAttr(unit.stage) : `Rule ${this.unitIndex + 1}`} · ${lang.name}</div>
       ${this.dotsHtml()}
-      <h3 class="consolidate-title grammar-title">${unit.title}</h3>
-      <p class="grammar-structure">${unit.structure}</p>
-      ${markersHtml}
-      ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
-      <div class="grammar-explanation">${renderMarkdown(g.explanation || '')}</div>
-      ${tableHtml}
-      ${examplesHtml ? `
-        <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>See it working</div>
-        <div class="story-body">${examplesHtml}</div>` : ''}
-      ${g.pitfall ? `
-        <div class="grammar-pitfall">
-          <span class="grammar-pitfall-label">Watch out</span>
-          ${g.pitfall}
-        </div>` : ''}
+      ${grammarUnitHtml(unit, g, lang, lesson.formMarkers)}
       <div class="consolidate-actions">
         <button class="btn btn-primary" id="btn-grammar-continue">Practise it →</button>
       </div>
     `;
 
-    body.querySelectorAll('.grammar-play').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const ex = g.examples[parseInt(btn.dataset.idx)];
-        if (!NarrationEngine.speakLang(ex.text, lang.ttsLangCode || lang.code, 0.85)) {
-          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3500);
-        }
-      });
-    });
-
-    this.bindWordTaps(body);
+    bindGrammarUnit(body, g, lang, (el, shipped) => this.bindWordTaps(el, shipped));
     document.getElementById('btn-grammar-continue').addEventListener('click', () => this.next());
   },
 
@@ -4519,7 +4376,7 @@ const LangSession = {
       syllabus: this.syllabus || [],
       unitIndex: this.unitIndex,
       unit: this.unit,
-      standalone: false
+      embedded: true
     });
   },
 
@@ -4756,233 +4613,6 @@ const LangSession = {
       dbPutLanguage(this.lang).catch(() => {});
       this.next();
     });
-  },
-
-  // ── ROOT LESSON (quranic input strand): one root family per session ──
-  renderRootLesson() {
-    const { lang, lesson } = this;
-    const body = document.getElementById('lang-session-body');
-
-    if (lesson.complete) {
-      body.innerHTML = `
-        <div class="prime-kicker">Quranic Arabic</div>
-        ${this.dotsHtml()}
-        <h3 class="consolidate-title">Every root in the curriculum is yours.</h3>
-        <p class="story-title-gloss">Keep the review deck warm — your cards still come due on schedule.</p>
-        <div class="consolidate-actions"><button class="btn btn-primary" id="btn-roots-done">Close →</button></div>
-      `;
-      document.getElementById('btn-roots-done').addEventListener('click', () => this.close());
-      return;
-    }
-
-    const isParticles = lesson.rootKind === 'particles';
-    const familyHtml = lesson.derivedWords.map((w, i) => `
-      <div class="root-word-row">
-        <button class="story-play root-word-play" data-idx="${i}" title="Hear it">
-          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
-        </button>
-        <span class="root-word-ar">${w.word}</span>
-        <span class="root-word-body">
-          <span class="root-word-rom">${w.romanization || ''}</span>
-          <span class="root-word-meaning">${w.meaning}</span>
-          ${w.note ? `<span class="root-word-note">${escapeAttr(w.note)}</span>` : ''}
-        </span>
-        ${w.pattern && !isParticles ? `<span class="root-word-pattern">${w.pattern}</span>` : ''}
-      </div>
-    `).join('');
-
-    // The forms table: which أوزان this root actually takes, and which of
-    // those the Quran uses — the difference matters, and glossing over it
-    // teaches a learner to expect words that are never in the text.
-    const formsHtml = (lesson.formTable || []).length ? `
-      <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>The forms of this root</div>
-      <div class="root-forms-wrap">
-        <table class="root-forms">
-          <thead>
-            <tr><th>Form</th><th>Arabic</th><th>Meaning</th><th>In the Qur'an</th></tr>
-          </thead>
-          <tbody>
-            ${lesson.formTable.map(f => `
-              <tr class="${f.inQuran ? 'in-quran' : 'not-quran'}">
-                <td class="rf-num">${escapeAttr(f.form)}</td>
-                <td class="rf-ar">${escapeAttr(f.arabic)}${f.romanization
-                  ? `<em>${escapeAttr(f.romanization)}</em>` : ''}</td>
-                <td class="rf-mean">${escapeAttr(f.meaning)}${f.note
-                  ? `<span class="rf-note">${escapeAttr(f.note)}</span>` : ''}</td>
-                <td class="rf-q">${f.inQuran ? '✓' : ''}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>` : '';
-
-    // How the pattern and the root actually combine, stage by stage. This is
-    // the part that turns "the word is قَالَ" into "I can see why it is".
-    const derivationHtml = lesson.derivation ? `
-      <div class="root-derivation">
-        <div class="root-derivation-head">How it's built${lesson.derivation.rule
-          ? ` · <span>${escapeAttr(lesson.derivation.rule)}</span>` : ''}</div>
-        <div class="root-derivation-steps">
-          ${lesson.derivation.steps.map((st, i) => `
-            <span class="root-step">${escapeAttr(st)}</span>
-            ${i < lesson.derivation.steps.length - 1 ? '<span class="root-step-arrow">→</span>' : ''}
-          `).join('')}
-        </div>
-        ${lesson.derivation.why ? `<p class="root-derivation-why">${escapeAttr(lesson.derivation.why)}</p>` : ''}
-      </div>` : '';
-
-    // The transferable rule — the thing worth carrying to the next root
-    const principleHtml = lesson.principle ? `
-      <div class="root-principle">
-        <span class="root-principle-label">The rule worth keeping</span>
-        ${escapeAttr(lesson.principle)}
-      </div>` : '';
-
-    body.innerHTML = `
-      <div class="prime-kicker">${isParticles ? 'Function words' : 'Root family'} · ${lang.name}</div>
-      ${this.dotsHtml()}
-      <div class="root-hero">
-        <span class="root-hero-ar">${lesson.root}</span>
-        <span class="root-hero-translit">${lesson.translit}</span>
-        <span class="root-hero-gloss">${lesson.rootGloss}</span>
-      </div>
-      <p class="story-title-gloss">~${lesson.rootCount.toLocaleString()} appearances in the Quran — ${isParticles ? 'these words are the connective tissue of every verse.' : 'every word below grows from this one root.'}</p>
-      ${lesson.rootMeaning ? `<p class="root-meaning">${escapeAttr(lesson.rootMeaning)}</p>` : ''}
-      <div class="root-wazn">${lesson.waznExplanation}</div>
-      ${formsHtml}
-      ${derivationHtml}
-      <div class="recall-col-head" style="color:var(--gold)"><i style="background:var(--gold)"></i>${isParticles ? 'The words' : 'Most frequent in the Qur\'an'}</div>
-      <div class="root-family">${familyHtml}</div>
-      ${principleHtml}
-      <div class="consolidate-actions">
-        <button class="btn btn-primary" id="btn-root-continue">See it in the verses →</button>
-      </div>
-    `;
-
-    body.querySelectorAll('.root-word-play').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const w = lesson.derivedWords[parseInt(btn.dataset.idx)];
-        if (!NarrationEngine.speakLang(w.word, lang.ttsLangCode || 'ar', 0.8)) {
-          showToast('No Arabic voice on this device.', 'info', 3000);
-        }
-      });
-    });
-    document.getElementById('btn-root-continue').addEventListener('click', () => this.next());
-  },
-
-  // ── VERSES (quranic comprehension strand): the family in its real context ──
-  renderVerses() {
-    const { lang, lesson } = this;
-    const body = document.getElementById('lang-session-body');
-
-    if (!lesson.verses?.length) { this.next(); return; }
-
-    const versesHtml = lesson.verses.map((v, i) => `
-      <div class="story-sentence verse-block" data-idx="${i}">
-        <button class="story-play" data-idx="${i}" title="Hear it">
-          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
-        </button>
-        <div class="story-sentence-text">
-          <span class="story-target verse-ar">${v.arabic}</span>
-          <span class="verse-ref">${v.reference}</span>
-          ${v.romanization ? `<span class="story-rom">${v.romanization}</span>` : ''}
-          <span class="story-gloss" style="display:none;">
-            ${v.gloss}
-            ${v.wordGlosses?.length ? `<span class="verse-word-glosses">${v.wordGlosses.map(g => `<span class="verse-wg"><b>${g.word}</b> ${g.gloss}</span>`).join('')}</span>` : ''}
-          </span>
-        </div>
-      </div>
-    `).join('');
-
-    const checkpointsHtml = (lesson.checkpoints || []).map((c, i) => `
-      <div class="lang-checkpoint" data-idx="${i}">
-        <div class="cp-question">${c.question}</div>
-        <textarea class="cp-answer" rows="2" placeholder="Answer in English — show you followed the verses…"></textarea>
-        <div class="cp-actions">
-          <button class="btn btn-primary lang-cp-check" data-idx="${i}">Check</button>
-        </div>
-        <div class="lang-cp-verdict"></div>
-      </div>
-    `).join('');
-
-    body.innerHTML = `
-      <div class="prime-kicker">In the Quran · ${lang.name}</div>
-      ${this.dotsHtml()}
-      <h3 class="consolidate-title">The family, in its own verses.</h3>
-      <p class="story-title-gloss">Tap a verse for its meaning — today's words are working inside real revelation, not example sentences.</p>
-      <div class="story-body">${versesHtml}</div>
-      <div class="story-checkpoints">
-        <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>Did you follow them?</div>
-        ${checkpointsHtml}
-      </div>
-      <div class="consolidate-actions">
-        <button class="btn btn-primary" id="btn-verses-continue">Continue →</button>
-      </div>
-    `;
-
-    body.querySelectorAll('.story-sentence-text').forEach(el => {
-      el.addEventListener('click', () => {
-        const gloss = el.querySelector('.story-gloss');
-        gloss.style.display = gloss.style.display === 'none' ? 'block' : 'none';
-      });
-    });
-
-    body.querySelectorAll('.story-play').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const v = lesson.verses[parseInt(btn.dataset.idx)];
-        if (!NarrationEngine.speakLang(v.arabic, lang.ttsLangCode || 'ar', 0.75)) {
-          showToast('No Arabic voice on this device — audio unavailable.', 'info', 3500);
-        }
-      });
-    });
-
-    // Comprehension checks graded against the verses + glosses
-    const groundTruth = lesson.verses
-      .map(v => `${v.arabic} (${v.reference}: ${v.gloss})`).join('\n');
-    body.querySelectorAll('.lang-cp-check').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const wrap = btn.closest('.lang-checkpoint');
-        const answerEl = wrap.querySelector('.cp-answer');
-        const verdictEl = wrap.querySelector('.lang-cp-verdict');
-        const answer = answerEl.value.trim();
-        if (!answer) { answerEl.focus(); return; }
-
-        btn.disabled = true;
-        btn.textContent = 'Checking…';
-        try {
-          const q = lesson.checkpoints[parseInt(wrap.dataset.idx)].question;
-          const result = AppState.mode === 'demo'
-            ? (answer.length >= 10
-                ? { verdict: 'pass', feedback: 'Right — you followed the verses.', sourceQuote: '' }
-                : { verdict: 'gap', feedback: 'Look at the glosses again — which words share the root?', sourceQuote: '' })
-            : await callCheckpointGrader(groundTruth, q, answer, 0);
-
-          verdictEl.innerHTML = result.verdict === 'pass'
-            ? `<div class="cp-verdict cp-pass">✓ ${result.feedback}</div>`
-            : `<div class="cp-verdict cp-gap">${result.feedback}</div>`;
-          if (result.verdict === 'pass') {
-            this.checkpointsPassed += 1;
-            updateLevelEstimate(lang.id, 1.5);
-            btn.style.display = 'none';
-            answerEl.disabled = true;
-          } else {
-            updateLevelEstimate(lang.id, -1.5);
-            btn.disabled = false;
-            btn.textContent = 'Check again';
-          }
-        } catch (err) {
-          verdictEl.innerHTML = `<div class="cp-fallback">Check unavailable — keep going.</div>`;
-          btn.style.display = 'none';
-        }
-      });
-    });
-
-    document.getElementById('btn-verses-continue').addEventListener('click', () => this.next());
-  },
-
-  // ── RECITE (quranic fluency strand): shadowing, but with the verses ──
-  renderRecite() {
-    this.renderShadow(); // copy adapts via the active strand kind
   },
 
   // ── DECODE (literacy strand): sound out a word you already know orally ──
@@ -5224,58 +4854,358 @@ const LangSession = {
   }
 };
 
+// ── ONE UNIT, ON A PAGE ───────────────────────────────────────────────────────
+// The written teaching for a syllabus unit: what it is, the pattern laid out,
+// worked examples you can hear and tap, and the trap at the end. Two callers —
+// the lesson page and the old session's grammar strand — so there is one
+// renderer for a unit rather than two that drift apart.
+function grammarUnitHtml(unit, g, lang, formMarkers = null) {
+  if (!unit || !g) return '';
+
+  const tableHtml = g.patternTable?.rows?.length ? `
+    <div class="grammar-table-wrap">
+      ${g.patternTable.caption ? `<div class="grammar-table-caption">${g.patternTable.caption}</div>` : ''}
+      <table class="grammar-table">
+        ${g.patternTable.rows.map(r => `
+          <tr>
+            <th>${r.form || ''}</th>
+            <td class="grammar-table-ex">${glossify(r.example || '', lang)}</td>
+            <td class="grammar-table-gloss">${r.gloss || ''}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>` : '';
+
+  const examplesHtml = (g.examples || []).map((ex, i) => `
+    <div class="story-sentence" data-idx="${i}">
+      <button class="grammar-play" data-idx="${i}" title="Hear it">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+      </button>
+      <div class="story-sentence-text">
+        <span class="story-target">${glossify(ex.text, lang)}</span>
+        ${ex.romanization && ['A0', 'A1'].includes(lang.level) ? `<span class="story-rom">${ex.romanization}</span>` : ''}
+        <span class="grammar-ex-gloss">${ex.gloss || ''}</span>
+      </div>
+    </div>
+  `).join('');
+
+  // The form-marker table stays on hand through the verb-form unit —
+  // identifying a form on sight is learned by repeated reference, not by being
+  // shown once. Folded away by default so it never crowds the teaching.
+  const markersHtml = (formMarkers?.length && /forms/i.test(unit.title || '')) ? `
+    <details class="form-markers">
+      <summary class="form-markers-head">How to spot each form on sight</summary>
+      <div class="form-markers-wrap">
+        <table class="form-markers-table">
+          <thead><tr><th>Form</th><th>What marks it</th><th>What it does</th></tr></thead>
+          <tbody>
+            ${formMarkers.map(m => `
+              <tr><td class="fm-num">${escapeAttr(m.form)}</td>
+                  <td class="fm-cell">${escapeAttr(m.marker)}</td>
+                  <td class="fm-cell">${escapeAttr(m.sense)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </details>` : '';
+
+  return `
+    <h3 class="consolidate-title grammar-title">${escapeAttr(unit.title)}</h3>
+    <p class="grammar-structure">${unit.structure}</p>
+    ${markersHtml}
+    ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
+    <div class="grammar-explanation">${renderMarkdown(g.explanation || '')}</div>
+    ${tableHtml}
+    ${examplesHtml ? `
+      <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>See it working</div>
+      <div class="story-body">${examplesHtml}</div>` : ''}
+    ${g.pitfall ? `
+      <div class="grammar-pitfall">
+        <span class="grammar-pitfall-label">Watch out</span>
+        ${g.pitfall}
+      </div>` : ''}
+  `;
+}
+
+// ▶ speaks the example; tapping a word looks it up. Shipped per-example glosses
+// mean most taps cost nothing.
+function bindGrammarUnit(scopeEl, g, lang, bindTaps) {
+  scopeEl.querySelectorAll('.grammar-play').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ex = (g.examples || [])[parseInt(btn.dataset.idx)];
+      if (!ex) return;
+      if (!NarrationEngine.speakLang(ex.text, lang.ttsLangCode || lang.code, 0.85)) {
+        showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3500);
+      }
+    });
+  });
+  if (bindTaps) bindTaps(scopeEl, null);
+}
+
+// ── THE LESSON ────────────────────────────────────────────────────────────────
+// A course lesson, in the shape of a book chapter: the whole thing on one
+// scrolling page, a topbar whose title opens every lesson, and a Tutor button
+// top-right that swaps to a tutor scoped to what you are reading. No Continue
+// buttons — you read, and when you are done you take the next lesson.
+const LessonView = {
+  lang: null,
+  syllabus: [],
+  unitIndex: 0,
+  unit: null,
+  lesson: null,
+
+  async open(lang, unitIndex = null) {
+    this.lang = lang;
+    this.unitIndex = unitIndex ?? (lang.unitIndex || 0);
+
+    document.getElementById('lesson-pane').style.display = 'flex';
+    document.getElementById('lesson-tutor-pane').style.display = 'none';
+    setFocusMode(true);
+    this.showLoading();
+
+    try {
+      this.syllabus = await this.loadSyllabus(lang);
+      // A syllabus can get shorter — clamp rather than index off the end.
+      if (this.syllabus.length) {
+        this.unitIndex = Math.max(0, Math.min(this.unitIndex, this.syllabus.length - 1));
+      }
+      this.unit = this.syllabus[this.unitIndex] || null;
+      this.lesson = await this.loadLesson();
+      this.render();
+    } catch (err) {
+      console.warn('Lesson failed to load:', err.message);
+      document.getElementById('lesson-column').innerHTML = `
+        <div class="cp-fallback" style="text-align:center; padding:2rem 0;">
+          Couldn't build this lesson: ${escapeAttr(err.message)}
+        </div>
+        <div class="consolidate-actions">
+          <button class="btn btn-ghost" id="btn-lesson-retry">Try again</button>
+        </div>`;
+      document.getElementById('btn-lesson-retry')
+        ?.addEventListener('click', () => this.open(this.lang, this.unitIndex));
+    }
+  },
+
+  close() {
+    document.getElementById('lesson-pane').style.display = 'none';
+    document.getElementById('lesson-tutor-pane').style.display = 'none';
+    this.closeLessonJump();
+    setFocusMode(false);
+    this.lang = null;
+    this.lesson = null;
+    renderLanguages();
+  },
+
+  showLoading() {
+    document.getElementById('lesson-column').innerHTML = `
+      <div class="cp-loading" style="justify-content:center; padding:4rem 0;">
+        <span class="cp-spinner"></span> Opening your lesson…
+      </div>`;
+    document.getElementById('lesson-title-btn').textContent = 'Loading…';
+  },
+
+  // Hand-written for Quranic Arabic, generated-and-cached for anything else.
+  async loadSyllabus(lang) {
+    const recipe = getRecipe(lang);
+    if (recipe.ui?.staticSyllabus === 'QURAN_GRAMMAR') return quranGrammarUnits();
+    const cached = await dbGetSyllabus(lang.id);
+    if (cached?.units?.length) return cached.units;
+    const units = AppState.mode === 'demo'
+      ? demoSyllabus(lang)
+      : await callSyllabusArchitect(lang, lang.level || 'A0');
+    await dbPutSyllabus(lang.id, units);
+    return units;
+  },
+
+  // Cached per unit, and regenerated when the lesson shape changes underneath it.
+  async loadLesson() {
+    const key = unitKey(this.unitIndex);
+    let lesson = await dbGetLangLesson(this.lang.id, key).catch(() => null);
+    if (lesson && (lesson.schemaVersion || 0) < LESSON_SCHEMA_VERSION) lesson = null;
+    if (lesson?.grammar) return lesson;
+
+    const grammar = AppState.mode === 'demo'
+      ? demoQuranGrammarUnit(this.unit)
+      : await callGrammarUnitGenerator(this.lang, this.unit, this.lang.knownWords || []);
+
+    lesson = { grammar, unit: this.unit, formMarkers: QURAN_FORM_MARKERS,
+               schemaVersion: LESSON_SCHEMA_VERSION };
+    dbPutLangLesson(this.lang.id, key, lesson)
+      .catch(err => console.warn('Lesson cache write failed:', err.message));
+    return lesson;
+  },
+
+  render() {
+    const { lang, unit, lesson } = this;
+    const total = this.syllabus.length;
+    const done = (lang.unitsMastered || []).length;
+    const hasNext = this.unitIndex < total - 1;
+    const hasPrev = this.unitIndex > 0;
+
+    document.getElementById('lesson-title-btn').textContent =
+      `Lesson ${this.unitIndex + 1} of ${total} · ${unit?.title || ''}`;
+    document.getElementById('lesson-progress-fill').style.width =
+      `${total ? Math.round((done / total) * 100) : 0}%`;
+
+    const column = document.getElementById('lesson-column');
+    column.innerHTML = `
+      <div class="lesson-kicker">${escapeAttr(unit?.stage || lang.name)}</div>
+      ${grammarUnitHtml(unit, lesson.grammar, lang, lesson.formMarkers)}
+      <div class="lesson-handoff">
+        Questions, examples and practice live with your tutor —
+        <button class="lesson-handoff-link" id="btn-lesson-ask">ask about this lesson →</button>
+      </div>
+      <div class="lesson-foot">
+        ${hasPrev ? `<button class="btn btn-ghost" id="btn-lesson-prev">← Previous lesson</button>` : '<span></span>'}
+        ${hasNext
+          ? `<button class="btn btn-primary" id="btn-lesson-next">Next lesson →</button>`
+          : `<button class="btn btn-primary" id="btn-lesson-done">Finish the course →</button>`}
+      </div>
+    `;
+
+    bindGrammarUnit(column, lesson.grammar, lang, (el) => this.bindWordTaps(el));
+    document.getElementById('lesson-scroll').scrollTop = 0;
+
+    document.getElementById('btn-lesson-ask').addEventListener('click', () => this.showTutor());
+    document.getElementById('btn-lesson-prev')
+      ?.addEventListener('click', () => this.goTo(this.unitIndex - 1, false));
+    document.getElementById('btn-lesson-next')
+      ?.addEventListener('click', () => this.goTo(this.unitIndex + 1, true));
+    document.getElementById('btn-lesson-done')?.addEventListener('click', async () => {
+      await this.markRead();
+      showToast('That\'s the whole course. Keep the review deck warm.', 'success', 4000);
+      this.close();
+    });
+  },
+
+  // Word taps reuse the session's popover — same three gloss sources, same cache.
+  bindWordTaps(scopeEl) {
+    scopeEl.querySelectorAll('.w').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sentence = el.closest('.story-target, .grammar-table-ex')?.textContent || '';
+        LangSession.lang = this.lang;   // the popover reads the language off it
+        LangSession.showWordPopover(el, el.dataset.word, sentence, null);
+      });
+    });
+  },
+
+  // Moving forward counts as having read it; moving back does not un-read it.
+  async goTo(index, markCurrentRead) {
+    if (index < 0 || index >= this.syllabus.length) return;
+    if (markCurrentRead) await this.markRead();
+    await this.open(this.lang, index);
+  },
+
+  async markRead() {
+    const { lang, unit } = this;
+    if (!unit) return;
+    const patch = {};
+    const mastered = lang.unitsMastered || [];
+    if (!mastered.includes(unit.id)) {
+      lang.unitsMastered = [...mastered, unit.id];
+      patch.unitsMastered = lang.unitsMastered;
+    }
+    // The pointer only ever moves forward — revisiting lesson 2 having reached
+    // lesson 6 must not send you back to 3.
+    const next = Math.min(this.unitIndex + 1, this.syllabus.length - 1);
+    if (next > (lang.unitIndex || 0)) {
+      lang.unitIndex = next;
+      patch.unitIndex = next;
+    }
+    if (Object.keys(patch).length) {
+      try { await dbPatchLanguage(lang.id, patch); }
+      catch (err) { console.warn('Lesson progress save failed:', err.message); }
+    }
+  },
+
+  // ── The lessons list, off the title ──
+  openLessonJump() {
+    const wrap = document.getElementById('lesson-jump');
+    const list = document.getElementById('lesson-jump-list');
+    if (!wrap || !list || !this.syllabus.length) return;
+
+    const done = new Set(this.lang?.unitsMastered || []);
+    list.innerHTML = this.syllabus.map((u, i) => `
+      <button class="chapter-jump-item${i === this.unitIndex ? ' current' : ''}" data-unit="${i}">
+        <span class="chapter-jump-num">${i + 1}</span>
+        <span class="chapter-jump-title">${escapeAttr(u.title)}</span>
+        ${done.has(u.id) ? '<span class="chapter-jump-mark">✓</span>' : ''}
+      </button>`).join('');
+
+    list.querySelectorAll('.chapter-jump-item').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const i = parseInt(btn.dataset.unit);
+        this.closeLessonJump();
+        if (i !== this.unitIndex) await this.open(this.lang, i);
+      });
+    });
+
+    wrap.style.display = 'flex';
+    list.querySelector('.chapter-jump-item.current')?.scrollIntoView({ block: 'center' });
+  },
+
+  closeLessonJump() {
+    const wrap = document.getElementById('lesson-jump');
+    if (wrap) wrap.style.display = 'none';
+  },
+
+  // ── The tutor, on the lesson you are reading ──
+  showTutor() {
+    document.getElementById('lesson-pane').style.display = 'none';
+    const pane = document.getElementById('lesson-tutor-pane');
+    pane.style.display = 'flex';
+    QuranTutor.mount(document.getElementById('lesson-tutor-body'), {
+      lang: this.lang,
+      syllabus: this.syllabus,
+      unitIndex: this.unitIndex,
+      unit: this.unit
+    });
+  },
+
+  showLesson() {
+    document.getElementById('lesson-tutor-pane').style.display = 'none';
+    document.getElementById('lesson-pane').style.display = 'flex';
+    // Mastery reached in the tutor should show on the progress bar straight away
+    if (this.lesson) this.render();
+  }
+};
+
 // ── THE TUTOR ─────────────────────────────────────────────────────────────────
-// A tutor bound to one unit, the way the book tutor is bound to one chapter.
-// Two modes (Teach Me / Quiz), two scopes (everything so far / this unit only),
-// and one implementation mounted in two places: inside the daily session as a
-// strand, and on its own from the language card. The transcript is per unit and
-// per mode, so coming back picks up where you left off.
+// A tutor bound to one lesson, the way the book tutor is bound to one chapter.
+// This is where the practice lives: the examples you want more of, the questions
+// you have, and the quizzing. The lesson page teaches; the tutor works you.
+//
+// Two modes (Teach Me / Quiz) and two scopes (this lesson, which is the default,
+// or everything so far). Reached from the Tutor button in the lesson topbar, and
+// still mountable inside the old session player for the other recipes. The
+// transcript is per lesson and per mode, so coming back picks up where you left
+// off and quizzing never bleeds into teaching.
 const QuranTutor = {
   lang: null,
   unit: null,
   unitIndex: 0,
   syllabus: [],
   mode: 'teach',
-  scope: 'cumulative',
+  // Scoped to the lesson you are reading. You open the tutor from inside a
+  // lesson, so that lesson is what you want asked about — "everything so far"
+  // is still one tap away for anyone who wants the wider view.
+  scope: 'unit',
   history: { teach: [], quiz: [] },
   root: null,          // the container it is mounted in
-  standalone: false,
+  embedded: false,     // true inside the session player, which owns its own nav
   busy: false,
 
-  // ── Standalone: its own overlay, no session required ──
-  async openStandalone(lang) {
-    const overlay = document.getElementById('lang-tutor-overlay');
-    const body = document.getElementById('lang-tutor-body');
-    overlay.style.display = 'flex';
-    overlay.scrollTop = 0;
-    body.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:3rem 0;">
-      <span class="cp-spinner"></span> Opening your tutor…</div>`;
-
-    const syllabus = getRecipe(lang).ui?.staticSyllabus === 'QURAN_GRAMMAR'
-      ? quranGrammarUnits()
-      : (await dbGetSyllabus(lang.id).catch(() => null))?.units || [];
-    const idx = Math.min(lang.unitIndex || 0, Math.max(0, syllabus.length - 1));
-
-    await this.mount(body, {
-      lang, syllabus, unitIndex: idx, unit: syllabus[idx] || null, standalone: true
-    });
-  },
-
-  closeStandalone() {
-    document.getElementById('lang-tutor-overlay').style.display = 'none';
-    this.root = null;
-  },
-
   // ── Mount into any container ──
-  async mount(containerEl, { lang, syllabus, unitIndex, unit, standalone = false }) {
+  async mount(containerEl, { lang, syllabus, unitIndex, unit, embedded = false }) {
     this.lang = lang;
     this.syllabus = syllabus || [];
     this.unitIndex = unitIndex || 0;
     this.unit = unit || this.syllabus[this.unitIndex] || null;
     this.root = containerEl;
-    this.standalone = standalone;
+    this.embedded = embedded;
     this.mode = 'teach';
-    this.scope = 'cumulative';
+    this.scope = 'unit';
     this.history = { teach: [], quiz: [] };
 
     this.render();
@@ -5288,18 +5218,18 @@ const QuranTutor = {
     if (!el) return;
 
     el.innerHTML = `
-      <div class="prime-kicker">Your tutor · ${escapeAttr(lang.name)}</div>
       <div class="qtutor-unit">
-        <span class="qtutor-unit-n">Unit ${this.unitIndex + 1} of ${this.syllabus.length || 1}</span>
+        <span class="qtutor-unit-n">Lesson ${this.unitIndex + 1} of ${this.syllabus.length || 1}</span>
         <span class="qtutor-unit-title">${escapeAttr(unit?.title || 'Getting started')}</span>
       </div>
       <div class="chat-tabs qtutor-tabs">
         <button class="chat-tab active" data-tmode="teach">Teach Me</button>
         <button class="chat-tab" data-tmode="quiz">Quiz</button>
         <div class="scope-toggle qtutor-scope">
-          <button class="scope-btn active" data-tscope="cumulative"
-                  title="Everything you have covered up to and including this unit">Everything so far</button>
-          <button class="scope-btn" data-tscope="unit" title="Only this unit">This unit only</button>
+          <button class="scope-btn active" data-tscope="unit"
+                  title="Only the lesson you are on">This lesson</button>
+          <button class="scope-btn" data-tscope="cumulative"
+                  title="Everything you have covered up to and including this lesson">Everything so far</button>
         </div>
       </div>
       <div class="lang-chat qtutor-chat"></div>
@@ -5308,11 +5238,9 @@ const QuranTutor = {
                   placeholder="Ask anything, or say &quot;start&quot;…"></textarea>
         <button class="btn btn-primary qtutor-send">Send</button>
       </div>
-      <div class="consolidate-actions">
-        ${this.standalone
-          ? `<button class="btn btn-ghost qtutor-done">Close →</button>`
-          : `<button class="btn btn-ghost qtutor-done">Continue →</button>`}
-      </div>
+      ${this.embedded ? `<div class="consolidate-actions">
+        <button class="btn btn-ghost qtutor-done">Continue →</button>
+      </div>` : ''}
     `;
 
     el.querySelectorAll('[data-tmode]').forEach(btn => {
@@ -5331,10 +5259,9 @@ const QuranTutor = {
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
     });
-    el.querySelector('.qtutor-done').addEventListener('click', () => {
-      if (this.standalone) { this.closeStandalone(); renderLanguages(); }
-      else LangSession.next();
-    });
+    // Only the session player has a "next activity" to continue to; the lesson
+    // pane has its own topbar and footer for getting anywhere.
+    el.querySelector('.qtutor-done')?.addEventListener('click', () => LangSession.next());
   },
 
   switchMode(mode) {
@@ -5478,8 +5405,16 @@ const QuranTutor = {
     if (!chat || !next) return;
     const row = document.createElement('div');
     row.className = 'qtutor-next';
-    row.innerHTML = `<button class="btn btn-primary btn-sm">Next: ${escapeAttr(next.title)} →</button>`;
+    row.innerHTML = `<button class="btn btn-primary btn-sm">Next lesson: ${escapeAttr(next.title)} →</button>`;
     row.querySelector('button').addEventListener('click', async () => {
+      // Opened from a lesson: the next lesson means the lesson PAGE, so you read
+      // it before being taught it. Inside the session player there is no page to
+      // go back to, so the tutor just moves itself on.
+      if (!this.embedded && LessonView.lang?.id === this.lang.id) {
+        LessonView.showLesson();
+        await LessonView.open(this.lang, this.unitIndex + 1);
+        return;
+      }
       this.unitIndex += 1;
       this.unit = this.syllabus[this.unitIndex];
       this.history = { teach: [], quiz: [] };
@@ -6095,9 +6030,15 @@ function initLanguages() {
   document.getElementById('btn-lang-onboard-next').addEventListener('click', () => LangOnboard.next());
   document.getElementById('btn-lang-onboard-close').addEventListener('click', () => LangOnboard.close());
   document.getElementById('btn-lang-session-close').addEventListener('click', () => LangSession.close());
-  document.getElementById('btn-lang-tutor-close').addEventListener('click', async () => {
-    QuranTutor.closeStandalone();
-    await renderLanguages();      // mastery reached in the tutor shows on the card
+
+  // ── The lesson pane ──
+  document.getElementById('btn-lesson-exit').addEventListener('click', () => LessonView.close());
+  document.getElementById('lesson-title-btn').addEventListener('click', () => LessonView.openLessonJump());
+  document.getElementById('btn-lesson-tutor').addEventListener('click', () => LessonView.showTutor());
+  document.getElementById('btn-lesson-back').addEventListener('click', () => LessonView.showLesson());
+  document.getElementById('btn-lesson-jump-close').addEventListener('click', () => LessonView.closeLessonJump());
+  document.getElementById('lesson-jump').addEventListener('click', (e) => {
+    if (e.target.id === 'lesson-jump') LessonView.closeLessonJump();   // tap the backdrop
   });
 }
 
