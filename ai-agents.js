@@ -795,6 +795,25 @@ async function callTransferProblem(chapterText, concepts, chapterTitle, bookTitl
 // "teach" mode: Page-by-page 80/20 teaching with mastery tag detection.
 // "quiz" mode:  Comprehensive chapter review and retention testing.
 // chapterText: raw PDF text for the chapter (optional) — enables direct quoting.
+// A tutor that can only ever hint is a dead end: the student who genuinely does
+// not know has no way out of the question. "I don't know" is not a wrong answer
+// — it is the absence of one — and the Socratic rules on their own never covered
+// it, so the tutor would hint at a learner who had nothing left to guess with.
+// Shared verbatim by every tutor prompt: an escape hatch that exists in teach
+// mode but not quiz mode is not an escape hatch.
+const NO_DEAD_END_RULE = `
+      WHEN THE STUDENT DOESN'T KNOW — this overrides every "hint, don't tell" rule above:
+      - "I don't know", "no idea", "not sure", "tell me", "what's the answer",
+        "just tell me", "skip", a shrug, or silence are NOT wrong answers. They are
+        a request for help. Never score them as a failed attempt.
+      - FIRST time on a question: one short hint, then invite a guess.
+      - SECOND time on the same question, or ANY time they ask outright for the
+        answer: GIVE THE ANSWER IN FULL, plainly, with a worked example. Then move
+        on. Do not hint again, and do not ask them to try once more.
+      - Never hint more than twice on the same question, whatever they say.
+      - A question you asked must never be left unanswered. The student can always
+        get the answer out of you simply by asking for it.`;
+
 async function callLiveTutorAgent(userMessage, mode = 'teach', masteredConcepts = [], chapterText = '', onChunk = null, opts = {}) {
   const bookTitle = AppState.selectedBook.title;
   const chapter = AppState.selectedChapter;
@@ -889,6 +908,7 @@ ${priorBlock}
       5. If all concepts are mastered:
          - Warmly congratulate the student.
          - Tell them to switch to the "Quiz & Review" tab to test their retention.
+${NO_DEAD_END_RULE}
     `;
   } else {
     prompt = `
@@ -913,10 +933,12 @@ ${priorBlock}
          current chapter, and favour questions that join two chapters together —
          those are the ones that reveal whether the argument has actually landed.` : ''}
       2. If they answer correctly, praise them and move to the next concept or ask a deeper follow-up.
-      3. If they answer incorrectly, guide them with a Socratic hint — don't give the answer directly.
+      3. If they answer incorrectly, guide them with a Socratic hint — don't give the answer
+         directly. This holds for a WRONG answer only; see the rule below for no answer at all.
       4. The student may also ask clarifying questions. Answer them clearly with analogies.
       5. NEVER output any "[MASTERED: ...]" tags in this mode.
       6. After covering all concepts, give a brief performance summary.
+${NO_DEAD_END_RULE}
     `;
   }
 
@@ -1485,6 +1507,183 @@ async function callFrontierItems(langProfile, band) {
     { "items": [{ "prompt": "Which is the closest meaning of «word»?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
   return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
+}
+
+// ── AGENT: QURANIC TUTOR ─────────────────────────────────────────────────────
+// The book tutor's counterpart for the language side, and the same two modes:
+// `teach` works through the unit and emits [MASTERED: …] when the learner shows
+// they have it; `quiz` probes. What is different is the voice. The brief is
+// "simple and simplistic": this tutor is talking to someone who wants to read
+// the Qur'an, not someone taking an exam in Arabic grammar.
+//
+//   opts.scope     'cumulative' (default) — everything up to and including this
+//                  unit, or 'unit' — this unit alone.
+//   opts.history   [{ role, content }] for this mode only, so teach and quiz
+//                  never bleed into each other.
+//   opts.roots     roots the learner already knows, so examples use words they
+//                  can actually decode.
+//   opts.priorUnits the units already covered, for the cumulative view.
+async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}) {
+  const { scope = 'cumulative', history = [], roots = [], priorUnits = [], onChunk = null } = opts;
+
+  const historyText = history
+    .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
+    .join('\n');
+
+  const priorBlock = (scope === 'cumulative' && priorUnits.length) ? `
+      ALREADY COVERED — build on these, never re-teach them from scratch:
+      ${priorUnits.map((u, i) => `${i + 1}. ${u.title} — ${u.structure}`).join('\n      ')}
+` : '';
+
+  const rootsBlock = roots.length ? `
+      ROOTS THE STUDENT ALREADY KNOWS — reach for these first when choosing an
+      example, so they can decode it instead of just being shown it:
+      ${roots.slice(-60).join(' · ')}
+` : '';
+
+  // The house style. Identical in both modes — a tutor who explains simply and
+  // then quizzes in jargon is two different teachers.
+  const voice = `
+      HOW YOU TALK — this matters as much as what you teach:
+      - Plain English, short sentences, ONE idea per message. If a message is
+        getting long, stop and ask something instead.
+      - Never use a grammatical term without its meaning in the same breath:
+        "idafah (two nouns stuck together to mean 'the X of the Y')". Not once
+        the first time and bare thereafter — every time.
+      - EVERY example must be REAL QUR'AN. An actual verse or an actual Quranic
+        word. Give the Arabic, then the transliteration, then the English, then
+        the surah:ayah reference. Never invent an Arabic sentence to illustrate
+        a point, and never quote a verse you are not sure of — pick one you are.
+      - Prefer short, famous verses the student is likely to have heard. Al-Fātiḥah,
+        al-Ikhlāṣ, Āyat al-Kursī and the short surahs are worth more than an
+        obscure verse that happens to fit better.
+      - Answer any question they ask, however far off topic, and then come back
+        to the unit. A question is never an interruption.
+      - Never make them feel behind. They are learning eight things, not eighty.`;
+
+  const prompt = mode === 'teach' ? `
+      You are teaching ONE unit of a short Quranic Arabic course to an adult
+      beginner who speaks English and wants to understand the Qur'an as they read it.
+
+      THIS UNIT — this is your brief, stay on it:
+      Title: ${unit?.title || 'Getting started'}
+      What it is: ${unit?.structure || ''}
+      Why it matters: ${unit?.whyItMatters || ''}
+      ${scope === 'cumulative'
+        ? 'Teach it as part of what they have already learned.'
+        : 'They have asked to focus on THIS UNIT ONLY — do not reach back to earlier ones.'}
+${priorBlock}${rootsBlock}${voice}
+
+      CONVERSATION SO FAR:
+      ${historyText || '(this is the start)'}
+
+      Student's message: "${userMessage}"
+
+      HOW THE LESSON RUNS:
+      1. If they are just starting or saying they're ready ("yes", "start", "ok"):
+         teach the FIRST piece of this unit. Explain it in plain English, show ONE
+         real Quranic example broken down word by word, then ask if it makes sense
+         or if they want to see another.
+      2. If they say they're ready to move on: ask ONE short question that makes
+         them USE what you just taught on a real Quranic word or phrase. Never a
+         yes/no question.
+      3. If they answer it and they have the idea — wording doesn't matter —
+         output the tag [MASTERED: ${unit?.title || 'this unit'}] and teach the
+         next piece of the unit the same way.
+      4. If they answer and they have it wrong: show them where their reasoning
+         went, on the same example, and let them try again. No tag.
+      5. When the whole unit is covered and they can use it, say so plainly and
+         tell them the next unit is waiting.
+${NO_DEAD_END_RULE}
+  ` : `
+      You are testing an adult beginner on a short Quranic Arabic course.
+
+      ${scope === 'cumulative'
+        ? `TEST EVERYTHING THEY HAVE COVERED, up to and including "${unit?.title || ''}".
+      Favour questions that need two units at once — those are the ones that show
+      whether it has actually landed.`
+        : `TEST ONLY THIS UNIT: "${unit?.title || ''}" — ${unit?.structure || ''}.`}
+${priorBlock}${rootsBlock}${voice}
+
+      QUIZ CONVERSATION SO FAR:
+      ${historyText || '(this is the start)'}
+
+      Student's message: "${userMessage}"
+
+      HOW THE QUIZ RUNS:
+      1. Ask ONE question at a time, always about a REAL Quranic word, phrase or
+         verse — "in بِسْمِ اللَّهِ, which two words are the possession pair, and how
+         do you know?" — never an abstract grammar question with no text attached.
+      2. Right answer: say what they got right, then go one step deeper.
+      3. Wrong answer: point at the part of the word or verse that gives it away
+         and let them look again. Don't hand it over on the first miss.
+      4. They may ask questions mid-quiz. Answer them, then carry on.
+      5. NEVER output a "[MASTERED: ...]" tag in this mode.
+      6. When you've covered the ground, give them a short, honest summary of
+         what is solid and what needs another look.
+${NO_DEAD_END_RULE}
+  `;
+
+  try {
+    return onChunk
+      ? await queryGeminiStream(prompt, onChunk)
+      : await queryGemini(prompt, false);
+  } catch (error) {
+    console.error('Quran tutor call failed:', error);
+    return `[Tutor] Couldn't reach the API. ${error.message}`;
+  }
+}
+
+// ── AGENT: QURANIC LEMMAS ────────────────────────────────────────────────────
+// Item one of the syllabus: 300 roots, "along with some lemmas". The root, its
+// transliteration, its meaning and its frequency all come from the static
+// corpus file — this agent supplies only the five actual words the Qur'an
+// builds from that root, which is the part no static file can hold for 300
+// entries. Cached per root forever, so a root costs one call in its lifetime.
+async function callQuranLemmas(entry, count = 5) {
+  const isParticles = entry.kind === 'particles';
+  const prompt = `
+    You are a Quranic Arabic lexicographer.
+
+    ${isParticles
+      ? `THE GROUP: the function words ${entry.words.join(' · ')} (${entry.gloss}).`
+      : `THE ROOT: ${entry.root} (${entry.translit}) — its core meaning is "${entry.gloss}".`}
+
+    Give the ${count} words built from ${isParticles ? 'this group' : 'this root'}
+    that occur MOST OFTEN in the Qur'an. Frequency in the Qur'an decides the list —
+    not how interesting or how classical a word is. If a form barely appears, leave
+    it out in favour of one that appears constantly.
+
+    For each word:
+    - "word": the word in Arabic script, fully vowelled, in the form the Qur'an
+      actually uses it (a verb in its 3rd-person masculine singular past, a noun
+      in its singular indefinite, unless another form is the common one)
+    - "romanization": how an English speaker would say it
+    - "meaning": what it means, in plain English, in a few words
+    - "form": what kind of word it is, in plain English — "verb (Form I)",
+      "verb (Form II)", "doer noun", "passive participle", "plural noun",
+      "adjective". Never use an Arabic grammatical term without an English gloss.
+    - "note": ONE short line on how this word relates to the root's core meaning,
+      so the connection is visible rather than asserted. Omit if it adds nothing.
+
+    Return ONLY valid JSON, no markdown fences:
+    { "lemmas": [ { "word": "…", "romanization": "…", "meaning": "…", "form": "…", "note": "…" } ] }
+  `;
+  const result = await queryGemini(prompt, true, null, 'quick');
+  const lemmas = (Array.isArray(result.lemmas) ? result.lemmas : [])
+    // An Arabic lemma is written in Arabic. Same guard as the vocabulary
+    // builder: a model asked for Arabic will occasionally answer in English.
+    .filter(l => l && l.word && l.meaning && wordMatchesScript(l.word, 'arabic'))
+    .slice(0, count)
+    .map(l => ({
+      word: l.word,
+      romanization: l.romanization || '',
+      meaning: l.meaning,
+      form: l.form || '',
+      note: l.note || ''
+    }));
+  if (!lemmas.length) throw new Error(`No Quranic words came back for ${entry.root}.`);
+  return lemmas;
 }
 
 // ── AGENT: QURANIC ROOT LESSON GENERATOR ─────────────────────────────────────
@@ -2269,6 +2468,31 @@ function blankOut(sentence, word) {
 // The quiz's one open question: use the word yourself. Multiple choice proves
 // recognition; only producing a sentence proves you own it.
 async function callVocabUsageGrader(langProfile, wordEntry, sentence) {
+  // A root can't be used in a sentence — ك ت ب isn't a word, كَتَبَ is. What
+  // proves you own a root is naming something that grew from it.
+  if (wordEntry.lemmas?.length) {
+    const prompt = `
+      A learner is proving they own the Arabic root ${wordEntry.word}
+      (${wordEntry.pronunciation || ''}), whose core meaning is "${wordEntry.meaning}".
+
+      They were asked to name a word built from this root and say what it means.
+      THEIR ANSWER: ${sentence}
+
+      Words the Qur'an actually builds from this root include:
+      ${wordEntry.lemmas.map(l => `${l.word} (${l.romanization || ''}) — ${l.meaning}`).join('; ')}
+
+      Pass them if they named a real Arabic word from THIS root and gave a
+      meaning that fits, whether or not it is on the list above, and whether they
+      wrote it in Arabic script or in Roman letters. Fail them only if the word
+      is from a different root, is not a word, or the meaning is unrelated.
+
+      Return ONLY valid JSON, no markdown fences:
+      { "verdict": "pass" | "gap", "feedback": "one encouraging sentence — if they were wrong, name a word from this root and what it means" }
+    `;
+    const result = await queryGemini(prompt, true, null, 'quick');
+    return { verdict: result.verdict === 'pass' ? 'pass' : 'gap', feedback: result.feedback || '' };
+  }
+
   const prompt = `
     A ${langProfile.name} learner is proving they can USE a word they just studied.
 

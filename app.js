@@ -769,6 +769,45 @@ async function dbPutVocabSet(langId, setNumber, words, meta = {}) {
   );
 }
 
+// ── QURANIC LEMMA CACHE ──────────────────────────────────────────────────────
+// A root's five commonest Quranic words never change, so they are generated
+// once and read back forever. Same shape as the syllabus cache: curated data
+// picks the root, the model writes what goes with it, Firestore keeps it.
+async function dbGetQuranLemmas(rootId) {
+  const col = userCol('quranLemmas');
+  if (!col) return null;
+  const snap = await col.doc(rootId).get();
+  const data = snap.exists ? snap.data() : null;
+  return data?.lemmas?.length ? data.lemmas : null;
+}
+
+async function dbPutQuranLemmas(rootId, lemmas) {
+  const col = userCol('quranLemmas');
+  if (!col) return;
+  await col.doc(rootId).set({ rootId, lemmas, createdAt: Date.now() }, { merge: true });
+}
+
+// The tutor's transcript, one per language + unit + mode. Kept apart from the
+// lesson doc because the tutor is reachable without running a session, and
+// apart per mode so teaching and quizzing never bleed into each other.
+const tutorChatId = (langId, unitIndex, mode) => `${langId}_u${unitIndex}_${mode}`;
+
+async function dbGetTutorChat(langId, unitIndex, mode) {
+  const col = userCol('langTutorChat');
+  if (!col) return [];
+  const snap = await col.doc(tutorChatId(langId, unitIndex, mode)).get();
+  return snap.exists ? (snap.data().messages || []) : [];
+}
+
+async function dbPutTutorChat(langId, unitIndex, mode, messages) {
+  const col = userCol('langTutorChat');
+  if (!col) return;
+  await col.doc(tutorChatId(langId, unitIndex, mode)).set(
+    { langId, unitIndex, mode, messages: messages.slice(-60), updatedAt: Date.now() },
+    { merge: true }
+  );
+}
+
 // Rewrites a stored set with only the words that belong to the language's own
 // script. The repair for sets written before the generator checked — a set of
 // English words filed under Urdu is corrected in place rather than merely
@@ -877,7 +916,9 @@ function unitKey(unitIndex) {
 //   1 — original lesson shape
 //   2 — Quranic root lessons gain rootMeaning, formTable, principle,
 //       derivation and summary
-const LESSON_SCHEMA_VERSION = 2;
+//   3 — Quranic Arabic rebuilt on the eight-unit syllabus: the old 20-unit
+//       ladder is gone, so every lesson cached against it must be regenerated
+const LESSON_SCHEMA_VERSION = 3;
 
 async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
@@ -1969,6 +2010,9 @@ function initConsolidate() {
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── DEMO MOCKS (keyless path) ─────────────────────────────────────────────────
+// Demo twin of callLanguageProfiler. Neither is wired to the UI any more — the
+// catalogue supplies hand-written profiles — but both are kept for the day a
+// language needs profiling that nobody has written a profile for yet.
 function demoLanguageProfile(name) {
   const n = name.toLowerCase();
   if (n.includes('japan') || n.includes('日本')) {
@@ -2129,6 +2173,19 @@ async function renderLanguages() {
       card.appendChild(moreBtn);
     }
 
+    // The tutor, reachable without running a session. A learner who wants to
+    // ask a question shouldn't have to start a lesson to find someone to ask.
+    if (recipe.ui?.syllabus) {
+      const tutorBtn = document.createElement('button');
+      tutorBtn.className = 'btn btn-ghost lang-tutor-btn';
+      tutorBtn.textContent = 'Ask your tutor →';
+      tutorBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        QuranTutor.openStandalone(lang);
+      });
+      card.appendChild(tutorBtn);
+    }
+
     // Script bootcamp: non-Latin languages can pull the next unit of their
     // writing system into the deck (kana rows, letter groups, hanzi by
     // frequency). Fades out once the learner is past A1 — except for the
@@ -2276,41 +2333,124 @@ function demoLangLesson(lang) {
 
 // Demo content for a Quranic grammar unit — Form II, the unit that most
 // repays being taught properly, since it looks inconsistent until it isn't.
-function demoQuranGrammarUnit(unit) {
-  if (!unit) return null;
-  return {
-    explanation: `Doubling the middle radical is the whole of Form II — **فَعَّلَ**. It always *strengthens* the verb, but what strengthening looks like depends entirely on what the base verb already was. That is why the same pattern can seem to mean three different things.`,
+// Demo grammar units. Hand-written for the units a demo learner meets first;
+// everything else is shaped from the unit's OWN `structure` so demo mode never
+// shows one unit's content under another unit's heading — which is exactly what
+// this function used to do, being pinned to Form II whatever was open.
+const DEMO_QURAN_UNITS = {
+  'q-find-root': {
+    explanation: `Nearly every word in the Qur'an is **three letters** with extras stuck on the front and the back. Learn to peel the extras off and the word tells you what it means. The extras come from a short, fixed list — الْ ، وَ ، فَ ، بِ ، لِ on the front, and ـهُ ، ـهُمْ ، ـِينَ ، ـُونَ on the back — so once you know them you stop being surprised.`,
     patternTable: {
-      caption: 'What Form II does, by type of base verb',
+      caption: 'Peel it back to three letters',
       rows: [
-        { form: 'Intransitive base', example: 'عَلِمَ → عَلَّمَ', gloss: 'he knew → he taught (causative)' },
-        { form: 'Transitive base', example: 'كَسَرَ → كَسَّرَ', gloss: 'he broke → he shattered (intensive)' },
-        { form: 'State or quality', example: 'كَبُرَ → كَبَّرَ', gloss: 'he was great → he declared greatness' }
+        { form: 'الْمُسْلِمُونَ', example: 'الْ + مُ + سلم + ونَ', gloss: 'root س ل م — "those who submit"' },
+        { form: 'وَالْكِتَابِ', example: 'وَ + الْ + كتب + ِ', gloss: 'root ك ت ب — "and the Book"' },
+        { form: 'يَعْلَمُونَ', example: 'يَ + علم + ونَ', gloss: 'root ع ل م — "they know"' }
       ]
     },
     examples: [
-      { text: 'عَلَّمَ الْإِنسَانَ مَا لَمْ يَعْلَمْ', romanization: 'ʿallama l-insāna mā lam yaʿlam',
-        gloss: 'He taught man what he did not know. (96:5)',
-        wordGlosses: [{ word: 'عَلَّمَ', gloss: 'he taught (Form II of علم)' },
-                      { word: 'الْإِنسَانَ', gloss: 'man (object)' },
-                      { word: 'يَعْلَمْ', gloss: 'he knows (Form I)' }] },
-      { text: 'وَكَبِّرْهُ تَكْبِيرًا', romanization: 'wa-kabbirhu takbīrā',
-        gloss: 'and magnify Him with all magnification. (17:111)',
-        wordGlosses: [{ word: 'كَبِّرْ', gloss: 'declare great (Form II of كبر)' }] }
+      { text: 'إِنَّ الْمُسْلِمِينَ وَالْمُسْلِمَاتِ', romanization: 'inna l-muslimīna wa-l-muslimāt',
+        gloss: 'Indeed the submitting men and the submitting women (33:35)',
+        wordGlosses: [{ word: 'الْمُسْلِمِينَ', gloss: 'strip الْ and ـِينَ → س ل م' },
+                      { word: 'الْمُسْلِمَاتِ', gloss: 'same root, feminine plural ـَاتِ' }] },
+      { text: 'وَاللَّهُ يَعْلَمُ وَأَنتُمْ لَا تَعْلَمُونَ', romanization: 'wa-llāhu yaʿlamu wa-antum lā taʿlamūn',
+        gloss: 'Allah knows, and you do not know. (2:216)',
+        wordGlosses: [{ word: 'يَعْلَمُ', gloss: 'يَ is a prefix → ع ل م' },
+                      { word: 'تَعْلَمُونَ', gloss: 'تَ and ـُونَ are extras → ع ل م' }] }
     ],
-    pitfall: 'English speakers expect Form II to always mean "do it harder". It does not — on a verb that had no object, the extra force goes into making *someone else* do it, which comes out as teaching, causing, or declaring.',
+    pitfall: 'The commonest mistake is treating a long word as a new word. It almost never is — it is a root you already know, wearing three or four extras.',
     drills: [
-      { kind: 'cloze', prompt: 'عَلِمَ means "he knew". Form II ___ means "he taught".',
-        answer: 'عَلَّمَ', options: [], hint: 'Double the middle radical of علم.' },
-      { kind: 'translate', prompt: 'What does نَزَّلَ mean, given نَزَلَ means "it came down"?',
-        answer: 'he sent it down', options: [],
-        hint: 'نزل is intransitive — so Form II makes it causative.' },
-      { kind: 'build', prompt: 'Put these in order to say "Allah taught man":',
-        answer: 'عَلَّمَ اللَّهُ الْإِنسَانَ', options: ['الْإِنسَانَ', 'عَلَّمَ', 'اللَّهُ'],
-        hint: 'Verbal sentence: verb, then doer, then object.' },
-      { kind: 'transform', prompt: 'كَسَرَ means "he broke". Give the Form II and say what changes.',
-        answer: 'كَسَّرَ — he shattered', options: [],
-        hint: 'The base verb already takes an object, so the force goes into intensity.' }
+      { kind: 'cloze', prompt: 'Strip الْمَكْتُوب back to its three letters: ___',
+        answer: 'ك ت ب', options: [], hint: 'الْ and مَ are both extras.' },
+      { kind: 'translate', prompt: 'الْعَالَمِينَ — what are the three letters, and what do they mean?',
+        answer: 'ع ل م — knowing', options: [], hint: 'Take off الْ at the front and ـِينَ at the back.' },
+      { kind: 'transform', prompt: 'Find the root of وَيَنصُرُونَ.',
+        answer: 'ن ص ر — helping', options: [], hint: 'وَ and يَ on the front, ـُونَ on the back.' }
+    ]
+  },
+  'q-attached-pronouns': {
+    explanation: `A word that ends in **ـهُ ، ـهُمْ ، ـكَ ، ـنَا ، ـِي** has a pronoun glued to it. On a noun it means "his / their / your / our / my"; on a verb it means "him / them / you / us / me". Eight endings, and they are everywhere.`,
+    patternTable: {
+      caption: 'The whole set',
+      rows: [
+        { form: 'ـهُ / ـهَا', example: 'رَبُّهُ · رَبُّهَا', gloss: 'his Lord · her Lord' },
+        { form: 'ـهُمْ', example: 'رَبُّهُمْ', gloss: 'their Lord' },
+        { form: 'ـكَ / ـكُمْ', example: 'رَبُّكَ · رَبُّكُمْ', gloss: 'your Lord (one · many)' },
+        { form: 'ـنَا / ـِي', example: 'رَبُّنَا · رَبِّي', gloss: 'our Lord · my Lord' }
+      ]
+    },
+    examples: [
+      { text: 'إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ', romanization: 'iyyāka naʿbudu wa-iyyāka nastaʿīn',
+        gloss: 'You alone we worship, and You alone we ask for help. (1:5)',
+        wordGlosses: [{ word: 'إِيَّاكَ', gloss: 'ـكَ = You (the one being worshipped)' }] },
+      { text: 'رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً', romanization: 'rabbanā ātinā fī d-dunyā ḥasana',
+        gloss: 'Our Lord, give us good in this world (2:201)',
+        wordGlosses: [{ word: 'رَبَّنَا', gloss: 'ـنَا on a noun = our' },
+                      { word: 'آتِنَا', gloss: 'ـنَا on a verb = us' }] }
+    ],
+    pitfall: 'The same ـنَا means "our" on a noun and "us" on a verb. Look at what it is attached to, not at the ending alone.',
+    drills: [
+      { kind: 'cloze', prompt: 'رَبُّ means "Lord". "Their Lord" is رَبُّ___',
+        answer: 'هُمْ', options: [], hint: 'The ending for "their".' },
+      { kind: 'translate', prompt: 'What does كِتَابُهُ mean?',
+        answer: 'his book', options: [], hint: 'كتاب = book; ـهُ = his.' },
+      { kind: 'transform', prompt: 'نَصَرَ means "he helped". What does نَصَرَهُمْ mean?',
+        answer: 'he helped them', options: [], hint: 'On a verb the ending is the object.' }
+    ]
+  },
+  'q-idafa': {
+    explanation: `Two nouns next to each other, with nothing between them, means **"the X of the Y"**. The first noun loses its الْ; the second takes a kasrah (ـِ). That is the whole rule, and some of the most repeated phrases in the Qur'an are built on it.`,
+    patternTable: {
+      caption: 'Two nouns, one idea',
+      rows: [
+        { form: 'رَبُّ + الْعَالَمِينَ', example: 'رَبُّ الْعَالَمِينَ', gloss: 'Lord of the worlds' },
+        { form: 'يَوْمُ + الدِّينُ', example: 'يَوْمِ الدِّينِ', gloss: 'the Day of Judgement' },
+        { form: 'كِتَابُ + اللَّهُ', example: 'كِتَابِ اللَّهِ', gloss: 'the Book of Allah' }
+      ]
+    },
+    examples: [
+      { text: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ', romanization: 'al-ḥamdu lillāhi rabbi l-ʿālamīn',
+        gloss: 'All praise is for Allah, Lord of the worlds. (1:2)',
+        wordGlosses: [{ word: 'رَبِّ', gloss: 'first noun — no الْ' },
+                      { word: 'الْعَالَمِينَ', gloss: 'second noun — "of the worlds"' }] },
+      { text: 'مَالِكِ يَوْمِ الدِّينِ', romanization: 'māliki yawmi d-dīn',
+        gloss: 'Master of the Day of Judgement (1:4)',
+        wordGlosses: [{ word: 'مَالِكِ', gloss: 'Master OF…' },
+                      { word: 'يَوْمِ', gloss: '…the Day OF… (a second pair inside the first)' }] }
+    ],
+    pitfall: 'If the first noun still has الْ on it, it is not a possession pair — it is a noun and its description. The missing الْ is the tell.',
+    drills: [
+      { kind: 'translate', prompt: 'What does بَيْتُ اللَّهِ mean?',
+        answer: 'the House of Allah', options: [], hint: 'Two nouns side by side.' },
+      { kind: 'cloze', prompt: 'In رَسُولُ اللَّهِ, which word carries the kasrah? ___',
+        answer: 'اللَّهِ', options: [], hint: 'Always the second one.' },
+      { kind: 'transform', prompt: 'Is الْكِتَابُ الْكَرِيمُ a possession pair? Why or why not?',
+        answer: 'No — both have الْ, so it is a noun and its description', options: [],
+        hint: 'Check the first word for الْ.' }
+    ]
+  }
+};
+
+function demoQuranGrammarUnit(unit) {
+  if (!unit) return null;
+  if (DEMO_QURAN_UNITS[unit.id]) return DEMO_QURAN_UNITS[unit.id];
+
+  // Shaped from the unit itself, so demo mode is always about the right topic
+  return {
+    explanation: unit.structure,
+    patternTable: {
+      caption: unit.title,
+      rows: [{ form: 'Example', example: 'بِسْمِ اللَّهِ', gloss: 'in the name of Allah (1:1)' }]
+    },
+    examples: [
+      { text: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', romanization: 'bismi llāhi r-raḥmāni r-raḥīm',
+        gloss: 'In the name of Allah, the Most Merciful, the Especially Merciful. (1:1)',
+        wordGlosses: [{ word: 'بِسْمِ', gloss: 'in the name of' }, { word: 'اللَّهِ', gloss: 'Allah' }] }
+    ],
+    pitfall: unit.whyItMatters,
+    drills: [
+      { kind: 'translate', prompt: `In one line: what is "${unit.title}" about?`,
+        answer: unit.structure, options: [], hint: unit.whyItMatters }
     ]
   };
 }
@@ -2516,18 +2656,48 @@ registerRecipeLessonGenerator('vocabExpand', generateVocabExpandLesson);
 // make you more articulate, meet each one inside the sentence that makes its
 // meaning felt, then prove you own them in the Quiz tab.
 //
-// English is offered first and needs no profiler call — for most users this is
+// English is offered first and needs no setup at all — for most users this is
 // their own language, where the goal is expression rather than comprehension.
-// Every other language goes through the same profiler the courses use.
+// The others are chosen from a fixed list, never typed: see VOCAB_CATALOGUE.
 //
 // Words become `precision` cards in the shared SM-2 deck, so the Flashcards tab
-// keeps reviewing them long after the set is closed.
+// keeps reviewing them long after the set is closed. Quranic Arabic is the
+// exception — its words are ROOTS drawn from curated data rather than picked by
+// the model, and they become `root` cards.
 
 const ENGLISH_PROFILE = {
   id: 'en', name: 'English', nativeName: 'English', code: 'en', ttsLangCode: 'en-GB',
   script: 'latin', scriptName: 'Latin alphabet', romanizationName: null,
   notes: 'Vocabulary building for expression, not comprehension.'
 };
+
+const URDU_PROFILE = {
+  id: 'ur', name: 'Urdu', nativeName: 'اردو', code: 'ur', ttsLangCode: 'ur-PK',
+  script: 'arabic', scriptName: 'Nastaliq (Perso-Arabic)', romanizationName: 'Roman Urdu',
+  notes: 'Precise Urdu words, in Nastaliq, with the pronunciation written out for you.'
+};
+
+// The vocabulary side of Quranic Arabic. Item one of the syllabus: 300 root
+// words with their commonest Quranic forms. Its `id` matches the course's, so a
+// learner doing both shares one profile and one deck.
+const QURAN_VOCAB_PROFILE = {
+  id: 'ar-quran', name: 'Quranic Arabic', nativeName: 'العربية الفصحى',
+  code: 'ar-quran', ttsLangCode: 'ar-SA',
+  script: 'arabic', scriptName: 'Arabic script', romanizationName: 'transliteration',
+  notes: 'The 300 root words the Qur\'an is built from, each with the five forms you will meet most often.'
+};
+
+// Chosen from, never typed. Same reasoning as LANGUAGE_CATALOGUE: a language is
+// here because something was actually built for it.
+const VOCAB_CATALOGUE = [
+  { profile: ENGLISH_PROFILE,     blurb: 'Words that make you precise — the ones an articulate speaker reaches for.' },
+  { profile: URDU_PROFILE,        blurb: 'Precise Urdu, in script, with pronunciation and an example sentence.' },
+  { profile: QURAN_VOCAB_PROFILE, blurb: '300 roots in order of how often they appear, each with five real Quranic words built from it.' }
+];
+
+// The root-vocabulary track is driven by curated data rather than the model.
+const QURAN_VOCAB_ID = 'ar-quran';
+const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
 
 // Checked before its own script, so kanji doesn't get read as Chinese and
 // Hangul doesn't get read as CJK.
@@ -2607,6 +2777,69 @@ const VocabBuilder = {
       `<option value="${l.id}"${l.id === this.lang.id ? ' selected' : ''}>${l.name}</option>`).join('');
     const tier = document.getElementById('vocab-tier-select');
     if (tier) tier.value = this.lang.tier || 'articulate';
+
+    // Tier and theme steer the model's choice of word. Quranic roots come from
+    // a fixed frequency list instead, so neither control means anything there.
+    const quranic = isQuranVocab(this.lang);
+    const theme = document.getElementById('vocab-theme');
+    if (tier) tier.style.display = quranic ? 'none' : '';
+    if (theme) theme.style.display = quranic ? 'none' : '';
+
+    // Nothing left to add once every catalogue language is in
+    const addBtn = document.getElementById('btn-vocab-add-lang');
+    if (addBtn) addBtn.style.display = this.availableToAdd().length ? '' : 'none';
+  },
+
+  // Catalogue entries not already in the learner's list
+  availableToAdd() {
+    return VOCAB_CATALOGUE.filter(e => !this.langs.some(l => l.id === e.profile.id));
+  },
+
+  togglePicker() {
+    const picker = document.getElementById('vocab-picker');
+    if (!picker) return;
+    if (picker.style.display !== 'none') { picker.style.display = 'none'; return; }
+
+    const available = this.availableToAdd();
+    if (!available.length) {
+      showToast('Every language we build vocabulary for is already in your list.', 'info', 3500);
+      return;
+    }
+
+    picker.innerHTML = available.map((e, i) => `
+      <button class="vocab-picker-card" data-vocab-cat="${i}" type="button">
+        <span class="vocab-picker-native">${escapeAttr(e.profile.nativeName)}</span>
+        <span class="vocab-picker-name">${escapeAttr(e.profile.name)}</span>
+        <span class="vocab-picker-desc">${escapeAttr(e.blurb)}</span>
+      </button>`).join('');
+    picker.style.display = 'flex';
+
+    picker.querySelectorAll('[data-vocab-cat]').forEach(btn => {
+      btn.addEventListener('click', () => this.addFromCatalogue(available[parseInt(btn.dataset.vocabCat)]));
+    });
+  },
+
+  async addFromCatalogue(entry) {
+    const picker = document.getElementById('vocab-picker');
+    if (picker) picker.style.display = 'none';
+
+    const lang = {
+      ...entry.profile, recipeId: 'vocabBuilder', tier: 'articulate', level: 'B2',
+      knownWords: [], vocabSet: 0, wordsLearned: 0,
+      quizStats: { asked: 0, correct: 0 }, createdAt: Date.now()
+    };
+    try {
+      await dbPutLanguage(lang);
+      this.langs.push(lang);
+      this.lang = lang;
+      this.words = [];
+      this.quiz = null;
+      this.renderControls();
+      this.renderTab();
+      showToast(`${lang.name} added to your vocabulary.`, 'success');
+    } catch (err) {
+      showToast('Could not add that language: ' + err.message, 'error', 6000);
+    }
   },
 
   switchTab(tab) {
@@ -2779,6 +3012,50 @@ const VocabBuilder = {
     document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
   },
 
+  // The 300 roots, six at a time, in the order the corpus file lays down.
+  // `known` holds the roots already issued — the entries themselves are picked
+  // here, so the only thing that can vary between two learners is which lemmas
+  // came back, and even those are cached per root rather than per person.
+  async loadQuranRoots(known = [], count = 6) {
+    const seen = new Set(known.map(w => String(w).trim()));
+    const entries = QURAN_SEQUENCE.filter(e => !seen.has(e.root)).slice(0, count);
+    if (!entries.length) return [];
+
+    // Lemmas resolve in parallel; a root whose lemmas fail is still worth
+    // teaching, so it goes out with an empty list rather than sinking the set.
+    return Promise.all(entries.map(async (entry) => {
+      let lemmas = [];
+      try {
+        lemmas = await dbGetQuranLemmas(entry.id)
+          || (AppState.mode === 'demo'
+                ? demoQuranLemmas(entry)
+                : await callQuranLemmas(entry));
+        if (AppState.mode !== 'demo') {
+          dbPutQuranLemmas(entry.id, lemmas)
+            .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
+        }
+      } catch (err) {
+        console.warn(`Lemmas unavailable for ${entry.root}:`, err.message);
+      }
+      return {
+        word: entry.root,
+        rootId: entry.id,
+        partOfSpeech: entry.kind === 'particles' ? 'function words' : 'root',
+        pronunciation: entry.translit,
+        meaning: entry.gloss,
+        // The example is the commonest real word built from it — for a root,
+        // the word IS the example, which is the whole point of learning roots.
+        example: lemmas[0]?.word || '',
+        exampleRomanization: lemmas[0]?.romanization || '',
+        exampleTranslation: lemmas[0]?.meaning || '',
+        cloze: '',
+        contrast: '',
+        quranCount: entry.count,
+        lemmas
+      };
+    }));
+  },
+
   async loadWords() {
     const panel = document.getElementById('vocab-panel-learn');
     const tier = document.getElementById('vocab-tier-select')?.value || 'articulate';
@@ -2792,17 +3069,25 @@ const VocabBuilder = {
       const setNumber = this.lang.vocabSet || 0;
       const known = this.lang.knownWords || [];
 
-      // Always a genuinely new set. The old code replayed a cached set for the
-      // same number, which is how previously-seen words kept reappearing.
-      let words = AppState.mode === 'demo'
-        ? demoVocabBuilderWords(this.lang, tier)
-            .filter(w => !known.some(k => k.toLowerCase() === w.word.toLowerCase()))
-            .slice(0, 6)
-        : await callVocabWords(this.lang, tier, known, theme);
+      // Quranic Arabic doesn't ask the model which words to teach. The roots
+      // come from the corpus file in frequency order, so the set is decided
+      // before any call is made — the model only supplies each root's lemmas.
+      let words;
+      if (isQuranVocab(this.lang)) {
+        words = await this.loadQuranRoots(known);
+      } else {
+        // Always a genuinely new set. The old code replayed a cached set for the
+        // same number, which is how previously-seen words kept reappearing.
+        words = AppState.mode === 'demo'
+          ? demoVocabBuilderWords(this.lang, tier)
+              .filter(w => !known.some(k => k.toLowerCase() === w.word.toLowerCase()))
+              .slice(0, 6)
+          : await callVocabWords(this.lang, tier, known, theme);
+      }
 
       // The agent drops repeats itself, which can leave the set short. One
       // top-up call, told about the words just issued as well, fills the gap.
-      if (words.length < 6 && AppState.mode !== 'demo') {
+      if (words.length < 6 && AppState.mode !== 'demo' && !isQuranVocab(this.lang)) {
         const excludeNow = [...known, ...words.map(w => w.word)];
         try {
           const more = await callVocabWords(this.lang, tier, excludeNow, theme, 6 - words.length);
@@ -2823,7 +3108,11 @@ const VocabBuilder = {
         words = words.filter(w => wordMatchesScript(w.word, this.lang.script));
       }
 
-      if (!words.length) throw new Error('No new words came back — try a different theme or tier.');
+      if (!words.length) {
+        throw new Error(isQuranVocab(this.lang)
+          ? 'Every root in the list is already yours — there are no new ones left.'
+          : 'No new words came back — try a different theme or tier.');
+      }
 
       await dbPutVocabSet(this.lang.id, setNumber, words, {
         tier, theme, langName: this.lang.name, script: this.lang.script
@@ -2858,6 +3147,23 @@ const VocabBuilder = {
       // sentence that makes it stick, plus the translation for a non-Latin
       // script where the sentence itself needs one.
       await dbAppendLangCards(lang.id, words.map(w => {
+        // A root card is the root alone on the front. The back carries the root
+        // again with its meaning, then the five words the Qur'an builds from it
+        // — structured, because the renderer lays it out rather than printing a
+        // paragraph. See showNextCard's `#card-back-lemmas`.
+        if (w.lemmas?.length) {
+          return {
+            front: w.word,
+            back: w.meaning,
+            word: w.word,
+            romanization: w.pronunciation || null,
+            type: 'root',
+            rootId: w.rootId || null,
+            quranCount: w.quranCount || null,
+            lemmas: w.lemmas
+          };
+        }
+
         const back = [
           w.meaning,
           w.example ? `\n\n"${w.example}"` : '',
@@ -3016,6 +3322,11 @@ const VocabBuilder = {
 // speaker needs to actually read, say and understand it.
 function vocabCardHtml(w, i, lang) {
   const nonLatin = lang?.script && lang.script !== 'latin';
+
+  // A root card is a different animal: instead of one word in one sentence, it
+  // is a family — the three letters, and the real Quranic words grown from them.
+  if (w.lemmas?.length) return rootCardHtml(w, i);
+
   return `
     <article class="vocab-card${nonLatin ? ' vocab-card-script' : ''}" data-idx="${i}">
       <div class="vocab-card-head">
@@ -3036,6 +3347,37 @@ function vocabCardHtml(w, i, lang) {
     </article>`;
 }
 
+// A root and the words the Qur'an actually builds from it. Same card frame as
+// every other vocabulary card, so the Saved tab and the quiz need no special
+// case — only the body differs.
+function rootCardHtml(w, i) {
+  return `
+    <article class="vocab-card vocab-card-script vocab-card-root" data-idx="${i}">
+      <div class="vocab-card-head">
+        <h3 class="vocab-word vocab-root-word">${escapeAttr(w.word)}</h3>
+        <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+      </div>
+      <div class="vocab-meta">
+        ${w.pronunciation ? `<span class="vocab-pron">(${escapeAttr(w.pronunciation)})</span>` : ''}
+        ${w.quranCount ? `<span class="vocab-pos">${w.quranCount.toLocaleString()}× in the Qur'an</span>` : ''}
+      </div>
+      <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
+      <div class="root-lemmas">
+        <div class="root-lemmas-head">Words built from it</div>
+        ${w.lemmas.map(l => `
+          <div class="root-lemma">
+            <span class="root-lemma-ar">${escapeAttr(l.word)}</span>
+            <span class="root-lemma-body">
+              ${l.romanization ? `<span class="root-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
+              <span class="root-lemma-meaning">${escapeAttr(l.meaning)}</span>
+              ${l.note ? `<span class="root-lemma-note">${escapeAttr(l.note)}</span>` : ''}
+            </span>
+            ${l.form ? `<span class="root-lemma-form">${escapeAttr(l.form)}</span>` : ''}
+          </div>`).join('')}
+      </div>
+    </article>`;
+}
+
 // Wraps the target word in its example so the eye lands on it immediately.
 function highlightWordIn(sentence, word) {
   const stem = word.length > 4 ? word.slice(0, Math.ceil(word.length * 0.6)) : word;
@@ -3051,10 +3393,16 @@ function buildVocabQuiz(words) {
   const pick = (arr, n, exclude) =>
     shuffleArray(arr.filter(x => x !== exclude)).slice(0, n);
 
+  // Every lemma in the set, so a root question can be given wrong answers that
+  // are real Quranic words from OTHER roots — much harder, and much more useful,
+  // than inventing plausible-looking Arabic.
+  const allLemmas = words.flatMap(x => (x.lemmas || []).map(l => ({ ...l, from: x.word })));
+
   words.forEach(w => {
-    // 1. cloze: the studied sentence, word removed
+    // 1. cloze: the studied sentence, word removed. A root has no sentence of
+    //    its own — the words grown from it are the point — so it skips this.
     const clozeDistractors = pick(words.map(x => x.word), 3, w.word);
-    if (clozeDistractors.length === 3) {
+    if (w.cloze && w.cloze.includes('_____') && clozeDistractors.length === 3) {
       const options = shuffleArray([w.word, ...clozeDistractors]);
       items.push({
         kind: 'cloze', label: 'Which word fits?', word: w,
@@ -3068,22 +3416,82 @@ function buildVocabQuiz(words) {
     if (meaningDistractors.length === 3) {
       const options = shuffleArray([w.word, ...meaningDistractors]);
       items.push({
-        kind: 'meaning', label: 'Which word means this?', word: w,
+        kind: 'meaning', label: w.lemmas?.length ? 'Which root means this?' : 'Which word means this?', word: w,
         promptHtml: escapeAttr(w.meaning),
         options, answerIdx: options.indexOf(w.word)
       });
     }
+
+    // 3. root → one of its own words. The skill the whole course is built on:
+    //    seeing which word grew from which three letters.
+    if (w.lemmas?.length) {
+      const correct = w.lemmas[Math.floor(Math.random() * w.lemmas.length)].word;
+      const others = shuffleArray(allLemmas.filter(l => l.from !== w.word).map(l => l.word));
+      const distractors = [...new Set(others)].slice(0, 3);
+      if (distractors.length === 3) {
+        const options = shuffleArray([correct, ...distractors]);
+        items.push({
+          kind: 'lemma', label: `Which word comes from ${w.word}?`, word: w,
+          promptHtml: `<strong>${escapeAttr(w.word)}</strong> — ${escapeAttr(w.meaning)}`,
+          options, answerIdx: options.indexOf(correct)
+        });
+      }
+    }
   });
 
-  // 3. one production item: use a word yourself
+  // 4. one production item: use a word yourself — or, for a root, name a word
+  //    that grows from it, which is the equivalent act of ownership.
   const target = words[Math.floor(Math.random() * words.length)];
+  const isRoot = !!target.lemmas?.length;
   const quiz = shuffleArray(items).slice(0, 8);
   quiz.push({
-    kind: 'use', label: 'Now use it yourself', word: target,
+    kind: 'use',
+    label: isRoot ? 'Name a word from this root' : 'Now use it yourself',
+    word: target,
     promptHtml: `<strong>${escapeAttr(target.word)}</strong> — ${escapeAttr(target.meaning)}`,
     options: [], answerIdx: -1
   });
   return quiz;
+}
+
+// Demo lemmas. Real words for the roots a demo learner meets first, so the
+// keyless path shows the actual shape of a root card rather than placeholders.
+const DEMO_LEMMAS = {
+  alh: [
+    { word: 'اللَّهُ', romanization: 'Allāh', meaning: 'God', form: 'proper noun' },
+    { word: 'إِلَٰه', romanization: 'ilāh', meaning: 'a god, an object of worship', form: 'noun' },
+    { word: 'آلِهَة', romanization: 'āliha', meaning: 'gods', form: 'plural noun' },
+    { word: 'اللَّهُمَّ', romanization: 'Allāhumma', meaning: 'O God', form: 'call, address' },
+    { word: 'إِلَٰهَيْن', romanization: 'ilāhayn', meaning: 'two gods', form: 'dual noun' }
+  ],
+  qwl: [
+    { word: 'قَالَ', romanization: 'qāla', meaning: 'he said', form: 'verb (Form I), past' },
+    { word: 'يَقُولُ', romanization: 'yaqūlu', meaning: 'he says, he will say', form: 'verb (Form I), present' },
+    { word: 'قَوْل', romanization: 'qawl', meaning: 'a saying, a word', form: 'noun' },
+    { word: 'قُلْ', romanization: 'qul', meaning: 'say! (a command)', form: 'verb, command' },
+    { word: 'مَقَالَة', romanization: 'maqāla', meaning: 'something said', form: 'noun of place/thing' }
+  ],
+  ktb: [
+    { word: 'كَتَبَ', romanization: 'kataba', meaning: 'he wrote, he decreed', form: 'verb (Form I), past' },
+    { word: 'كِتَاب', romanization: 'kitāb', meaning: 'a book, a scripture', form: 'noun' },
+    { word: 'كَاتِب', romanization: 'kātib', meaning: 'a writer, a scribe', form: 'doer noun' },
+    { word: 'مَكْتُوب', romanization: 'maktūb', meaning: 'written, decreed', form: 'passive participle' },
+    { word: 'كُتِبَ', romanization: 'kutiba', meaning: 'it was prescribed', form: 'verb, passive' }
+  ]
+};
+
+function demoQuranLemmas(entry) {
+  if (DEMO_LEMMAS[entry.id]) return DEMO_LEMMAS[entry.id];
+  // Everything else gets a shaped stand-in built from its own data, so demo mode
+  // exercises the real rendering path for any root the tester happens to reach.
+  const r = entry.translit;
+  return [
+    { word: entry.root.replace(/ /g, ''), romanization: r, meaning: entry.gloss, form: 'the bare root' },
+    { word: `${entry.root.replace(/ /g, '')}َة`, romanization: `${r}a`, meaning: `an instance of ${entry.gloss}`, form: 'noun' },
+    { word: `مَ${entry.root.replace(/ /g, '')}`, romanization: `ma-${r}`, meaning: `a place of ${entry.gloss}`, form: 'noun of place' },
+    { word: `${entry.root.replace(/ /g, '')}ِين`, romanization: `${r}īn`, meaning: `those who do ${entry.gloss}`, form: 'plural doer noun' },
+    { word: `يَ${entry.root.replace(/ /g, '')}`, romanization: `ya-${r}`, meaning: `he does ${entry.gloss}`, form: 'verb (Form I), present' }
+  ];
 }
 
 function demoVocabBuilderWords(lang, tier) {
@@ -3445,6 +3853,16 @@ const LangSession = {
       // The Instructor's syllabus: generated once per language, cached forever.
       if (this.recipe.ui?.syllabus) {
         this.syllabus = await this.loadSyllabus(lang);
+        // A syllabus can get SHORTER — Quranic Arabic went from 20 units to 8.
+        // A learner sitting on old unit 14 would otherwise index off the end and
+        // get a unit-less lesson forever, so clamp to the last real unit.
+        if (this.syllabus?.length && this.unitIndex > this.syllabus.length - 1) {
+          console.log(`Unit ${this.unitIndex} is past the end of ${lang.id}'s syllabus — clamping to ${this.syllabus.length - 1}.`);
+          this.unitIndex = this.syllabus.length - 1;
+          dbPatchLanguage(lang.id, { unitIndex: this.unitIndex })
+            .catch(err => console.warn('Unit clamp save failed:', err.message));
+          lang.unitIndex = this.unitIndex;
+        }
         this.unit = this.syllabus?.[this.unitIndex] || null;
       }
 
@@ -4089,6 +4507,20 @@ const LangSession = {
     });
 
     document.getElementById('btn-story-continue').addEventListener('click', () => this.next());
+  },
+
+  // ── TUTOR (the taught strand) ──
+  // The same tutor the language card opens, mounted inside the session so the
+  // teaching happens where the rest of the lesson does.
+  renderTutor() {
+    const body = document.getElementById('lang-session-body');
+    QuranTutor.mount(body, {
+      lang: this.lang,
+      syllabus: this.syllabus || [],
+      unitIndex: this.unitIndex,
+      unit: this.unit,
+      standalone: false
+    });
   },
 
   // ── CONVERSE (output strand) ──
@@ -4792,6 +5224,301 @@ const LangSession = {
   }
 };
 
+// ── THE TUTOR ─────────────────────────────────────────────────────────────────
+// A tutor bound to one unit, the way the book tutor is bound to one chapter.
+// Two modes (Teach Me / Quiz), two scopes (everything so far / this unit only),
+// and one implementation mounted in two places: inside the daily session as a
+// strand, and on its own from the language card. The transcript is per unit and
+// per mode, so coming back picks up where you left off.
+const QuranTutor = {
+  lang: null,
+  unit: null,
+  unitIndex: 0,
+  syllabus: [],
+  mode: 'teach',
+  scope: 'cumulative',
+  history: { teach: [], quiz: [] },
+  root: null,          // the container it is mounted in
+  standalone: false,
+  busy: false,
+
+  // ── Standalone: its own overlay, no session required ──
+  async openStandalone(lang) {
+    const overlay = document.getElementById('lang-tutor-overlay');
+    const body = document.getElementById('lang-tutor-body');
+    overlay.style.display = 'flex';
+    overlay.scrollTop = 0;
+    body.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:3rem 0;">
+      <span class="cp-spinner"></span> Opening your tutor…</div>`;
+
+    const syllabus = getRecipe(lang).ui?.staticSyllabus === 'QURAN_GRAMMAR'
+      ? quranGrammarUnits()
+      : (await dbGetSyllabus(lang.id).catch(() => null))?.units || [];
+    const idx = Math.min(lang.unitIndex || 0, Math.max(0, syllabus.length - 1));
+
+    await this.mount(body, {
+      lang, syllabus, unitIndex: idx, unit: syllabus[idx] || null, standalone: true
+    });
+  },
+
+  closeStandalone() {
+    document.getElementById('lang-tutor-overlay').style.display = 'none';
+    this.root = null;
+  },
+
+  // ── Mount into any container ──
+  async mount(containerEl, { lang, syllabus, unitIndex, unit, standalone = false }) {
+    this.lang = lang;
+    this.syllabus = syllabus || [];
+    this.unitIndex = unitIndex || 0;
+    this.unit = unit || this.syllabus[this.unitIndex] || null;
+    this.root = containerEl;
+    this.standalone = standalone;
+    this.mode = 'teach';
+    this.scope = 'cumulative';
+    this.history = { teach: [], quiz: [] };
+
+    this.render();
+    await this.loadHistory();
+  },
+
+  render() {
+    const { lang, unit } = this;
+    const el = this.root;
+    if (!el) return;
+
+    el.innerHTML = `
+      <div class="prime-kicker">Your tutor · ${escapeAttr(lang.name)}</div>
+      <div class="qtutor-unit">
+        <span class="qtutor-unit-n">Unit ${this.unitIndex + 1} of ${this.syllabus.length || 1}</span>
+        <span class="qtutor-unit-title">${escapeAttr(unit?.title || 'Getting started')}</span>
+      </div>
+      <div class="chat-tabs qtutor-tabs">
+        <button class="chat-tab active" data-tmode="teach">Teach Me</button>
+        <button class="chat-tab" data-tmode="quiz">Quiz</button>
+        <div class="scope-toggle qtutor-scope">
+          <button class="scope-btn active" data-tscope="cumulative"
+                  title="Everything you have covered up to and including this unit">Everything so far</button>
+          <button class="scope-btn" data-tscope="unit" title="Only this unit">This unit only</button>
+        </div>
+      </div>
+      <div class="lang-chat qtutor-chat"></div>
+      <div class="lang-chat-input-row">
+        <textarea class="cp-answer qtutor-input" rows="2"
+                  placeholder="Ask anything, or say &quot;start&quot;…"></textarea>
+        <button class="btn btn-primary qtutor-send">Send</button>
+      </div>
+      <div class="consolidate-actions">
+        ${this.standalone
+          ? `<button class="btn btn-ghost qtutor-done">Close →</button>`
+          : `<button class="btn btn-ghost qtutor-done">Continue →</button>`}
+      </div>
+    `;
+
+    el.querySelectorAll('[data-tmode]').forEach(btn => {
+      btn.addEventListener('click', () => this.switchMode(btn.dataset.tmode));
+    });
+    el.querySelectorAll('[data-tscope]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.scope = btn.dataset.tscope;
+        el.querySelectorAll('[data-tscope]').forEach(b =>
+          b.classList.toggle('active', b.dataset.tscope === this.scope));
+      });
+    });
+
+    const input = el.querySelector('.qtutor-input');
+    el.querySelector('.qtutor-send').addEventListener('click', () => this.send());
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
+    });
+    el.querySelector('.qtutor-done').addEventListener('click', () => {
+      if (this.standalone) { this.closeStandalone(); renderLanguages(); }
+      else LangSession.next();
+    });
+  },
+
+  switchMode(mode) {
+    if (this.busy || mode === this.mode) return;
+    this.mode = mode;
+    this.root.querySelectorAll('[data-tmode]').forEach(b =>
+      b.classList.toggle('active', b.dataset.tmode === mode));
+    this.root.querySelector('.qtutor-input').placeholder = mode === 'quiz'
+      ? 'Answer, or ask for a hint…'
+      : 'Ask anything, or say "start"…';
+    this.paintHistory();
+  },
+
+  async loadHistory() {
+    for (const mode of ['teach', 'quiz']) {
+      try {
+        this.history[mode] = await dbGetTutorChat(this.lang.id, this.unitIndex, mode);
+      } catch (err) {
+        console.warn(`Tutor transcript unavailable (${mode}):`, err.message);
+        this.history[mode] = [];
+      }
+    }
+    this.paintHistory();
+    // Nothing said yet in this unit → the tutor opens rather than waiting
+    if (!this.history.teach.length && this.mode === 'teach') this.turn('(start the lesson)');
+  },
+
+  paintHistory() {
+    const chat = this.root?.querySelector('.qtutor-chat');
+    if (!chat) return;
+    chat.innerHTML = '';
+    const msgs = this.history[this.mode];
+    if (!msgs.length) {
+      chat.innerHTML = `<div class="qtutor-empty">${this.mode === 'quiz'
+        ? 'Say "ready" and I\'ll start asking.'
+        : 'Say "start" whenever you are.'}</div>`;
+      return;
+    }
+    msgs.forEach(m => this.addBubble(m.role, m.content, false));
+    chat.scrollTop = chat.scrollHeight;
+  },
+
+  addBubble(role, content, scroll = true) {
+    const chat = this.root?.querySelector('.qtutor-chat');
+    if (!chat) return null;
+    chat.querySelector('.qtutor-empty')?.remove();
+    const div = document.createElement('div');
+    div.className = `lang-bubble ${role === 'user' ? 'user' : 'partner'}`;
+    // The mastery tag is bookkeeping, not something to read
+    div.textContent = String(content).replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
+    chat.appendChild(div);
+    if (scroll) chat.scrollTop = chat.scrollHeight;
+    return div;
+  },
+
+  send() {
+    if (this.busy) return;
+    const input = this.root?.querySelector('.qtutor-input');
+    const text = input?.value.trim();
+    if (!text) return;
+    input.value = '';
+    this.addBubble('user', text);
+    this.history[this.mode].push({ role: 'user', content: text });
+    this.turn(text);
+  },
+
+  async turn(userMessage) {
+    const { lang, unit } = this;
+    this.busy = true;
+    const sendBtn = this.root?.querySelector('.qtutor-send');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
+
+    const bubble = this.addBubble('tutor', '');
+    let full = '';
+
+    try {
+      if (AppState.mode === 'demo') {
+        // Same slice as the live path: the message being answered is passed
+        // separately, so it must not also appear in the history behind it.
+        full = demoQuranTutor(unit, userMessage, this.mode, this.history[this.mode].slice(0, -1));
+        bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
+      } else {
+        full = await callQuranTutor(lang, unit, userMessage, this.mode, {
+          scope: this.scope,
+          history: this.history[this.mode].slice(0, -1),   // the new message is passed separately
+          roots: (lang.rootsLearned || [])
+            .map(id => QURAN_ROOTS.find(r => r.id === id)?.root)
+            .filter(Boolean),
+          priorUnits: this.syllabus.slice(0, this.unitIndex),
+          onChunk: (chunk) => {
+            full += chunk;
+            bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
+            const chat = this.root?.querySelector('.qtutor-chat');
+            if (chat) chat.scrollTop = chat.scrollHeight;
+          }
+        });
+      }
+
+      this.history[this.mode].push({ role: 'tutor', content: full });
+      dbPutTutorChat(lang.id, this.unitIndex, this.mode, this.history[this.mode])
+        .catch(err => console.warn('Tutor transcript save failed:', err.message));
+
+      // Teach mode only: the tag is how the tutor says they have it
+      if (this.mode === 'teach' && /\[MASTERED:/i.test(full)) await this.markMastered();
+    } catch (err) {
+      console.warn('Tutor turn failed:', err.message);
+      bubble.textContent = '(Connection hiccup — ask me again.)';
+    } finally {
+      this.busy = false;
+      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+    }
+  },
+
+  async markMastered() {
+    const { lang, unit } = this;
+    if (!unit) return;
+    const mastered = lang.unitsMastered || [];
+    if (mastered.includes(unit.id)) return;
+
+    lang.unitsMastered = [...mastered, unit.id];
+    const patch = { unitsMastered: lang.unitsMastered };
+
+    // Advance the pointer only when the tutor is on the unit the learner is
+    // actually up to — revisiting an old unit must not move them forward.
+    const isCurrent = this.unitIndex === (lang.unitIndex || 0);
+    const hasNext = this.unitIndex < this.syllabus.length - 1;
+    if (isCurrent && hasNext) {
+      lang.unitIndex = this.unitIndex + 1;
+      patch.unitIndex = lang.unitIndex;
+    }
+    try { await dbPatchLanguage(lang.id, patch); }
+    catch (err) { console.warn('Mastery save failed:', err.message); }
+
+    showToast(`"${unit.title}" — mastered.`, 'success', 3500);
+    if (isCurrent && hasNext) this.offerNextUnit();
+  },
+
+  offerNextUnit() {
+    const chat = this.root?.querySelector('.qtutor-chat');
+    const next = this.syllabus[this.unitIndex + 1];
+    if (!chat || !next) return;
+    const row = document.createElement('div');
+    row.className = 'qtutor-next';
+    row.innerHTML = `<button class="btn btn-primary btn-sm">Next: ${escapeAttr(next.title)} →</button>`;
+    row.querySelector('button').addEventListener('click', async () => {
+      this.unitIndex += 1;
+      this.unit = this.syllabus[this.unitIndex];
+      this.history = { teach: [], quiz: [] };
+      this.render();
+      await this.loadHistory();
+    });
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
+};
+
+// Demo tutor: enough of the real shape to exercise the UI — it teaches, it
+// asks, it accepts, and it answers "I don't know" the way the prompt demands.
+function demoQuranTutor(unit, userMessage, mode, history) {
+  const msg = String(userMessage).toLowerCase();
+  const dunno = /(i don'?t know|no idea|not sure|tell me|what'?s the answer|just tell me|skip)/i.test(msg);
+  const asked = history.filter(m => m.role === 'tutor').length;
+
+  if (dunno) {
+    // First time a hint, second time the answer — the rule the real prompt carries
+    const priorDunno = history.filter(m =>
+      m.role === 'user' && /(don'?t know|no idea|tell me|skip)/i.test(m.content)).length;
+    return priorDunno >= 1
+      ? `No problem — here it is. In بِسْمِ اللَّهِ (bismillāh, "in the name of Allah", 1:1), the two nouns sit side by side, so it means "the name OF Allah". That is the possession pair. Now you have it — the next one will be easier.`
+      : `Have a look at بِسْمِ اللَّهِ (bismillāh, 1:1). Two nouns, nothing between them. What do you think the second one is doing to the first? If you'd rather I just told you, say so.`;
+  }
+  if (mode === 'quiz') {
+    return asked === 0
+      ? `Let's see what stuck. In الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ (al-ḥamdu lillāhi rabbi'l-ʿālamīn, 1:2) — which two words are the possession pair, and how can you tell?`
+      : `Good. Now a harder one: in مَالِكِ يَوْمِ الدِّينِ (māliki yawmi'd-dīn, 1:4) there are TWO possession pairs stacked. Can you see both?`;
+  }
+  if (asked >= 2) {
+    return `That's exactly it. [MASTERED: ${unit?.title || 'this unit'}] You've got this one — let's carry it into the next.`;
+  }
+  return asked === 0
+    ? `Right — ${unit?.title || 'let\'s begin'}. ${unit?.structure || ''}\n\nHere it is in real Qur'an: بِسْمِ اللَّهِ (bismillāh) — "in the name of Allah", the very first words of the Book (1:1). بِسْمِ is "in the name", اللَّهِ is "of Allah". Two nouns, nothing between them, and the second one ends in kasrah.\n\nDoes that land, or shall I show you another?`
+    : `Good. One more: الْحَمْدُ لِلَّهِ (al-ḥamdu lillāh, 1:2) — "the praise is for Allah". Now you try: in رَبِّ الْعَالَمِينَ (rabbi'l-ʿālamīn), what does it mean?`;
+}
+
 // ── SCRIPT BOOTCAMP ───────────────────────────────────────────────────────────
 // Pulls the next ~10 characters of a non-Latin writing system into the SM-2
 // deck. Tracks which characters have been issued so units never repeat.
@@ -5048,6 +5775,21 @@ const QURANIC_PRESET_PROFILE = {
   altScripts: []
 };
 
+// ── THE CATALOGUE ────────────────────────────────────────────────────────────
+// The courses this app actually has. A course means a syllabus somebody wrote, a
+// tutor briefed on it, and curated data behind it — none of which can be
+// conjured from a language name typed into a box, which is why free text is
+// gone. Adding a language means adding an entry here, and building the course
+// that entry promises.
+const LANGUAGE_CATALOGUE = [
+  {
+    profile: QURANIC_PRESET_PROFILE,
+    recipeId: 'quranic',
+    preset: 'quranic',
+    blurb: '300 root words with their most common Quranic forms, then eight short units that take you from spotting a root to reading a verse. Taught by a tutor, in plain English, with every example from the Qur\'an itself.'
+  }
+];
+
 const LangOnboard = {
   step: 'start',
   profile: null,
@@ -5059,7 +5801,9 @@ const LangOnboard = {
   frontierBand: null,
   assessResult: null,
 
-  open() {
+  existingIds: [],
+
+  async open() {
     this.step = 'start';
     this.profile = null;
     this.level = 'A0';
@@ -5070,8 +5814,25 @@ const LangOnboard = {
     this.frontierBand = null;
     this.listeningBand = null;
     this.assessResult = null;
+    this.existingIds = [];
     document.getElementById('lang-onboard-overlay').style.display = 'flex';
     this.render();
+
+    // A course already added must not be offered again: generateSeed writes to
+    // `id: p.code`, so choosing it a second time would overwrite the learner's
+    // progress with a fresh profile.
+    try {
+      const existing = await dbGetAllLanguages();
+      this.existingIds = existing.map(l => l.id);
+      if (this.step === 'start') this.render();
+    } catch (err) {
+      console.warn('Could not read existing languages:', err.message);
+    }
+  },
+
+  // Catalogue entries the learner hasn't started yet
+  availableCourses() {
+    return LANGUAGE_CATALOGUE.filter(e => !this.existingIds.includes(e.profile.code));
   },
 
   close() {
@@ -5116,27 +5877,34 @@ const LangOnboard = {
     this.dots();
 
     if (this.step === 'start') {
-      content.innerHTML = `
-        <button class="lang-preset-card" id="lang-preset-quranic" type="button">
-          <span class="lang-preset-native">${QURANIC_PRESET_PROFILE.nativeName}</span>
-          <span class="lang-preset-name">Quranic Arabic</span>
-          <span class="lang-preset-desc">Ready-made track: root families in frequency order, anchored in real verses — with a live "% of the Quran you can read" meter.</span>
-        </button>
-        <div class="lang-preset-divider"><span>or add any other language</span></div>
-        <input type="text" id="lang-name-input" class="form-input lang-name-input"
-               placeholder="e.g. Spanish, Japanese, Urdu, Punjabi…" autocomplete="off">
+      // The catalogue, and only the catalogue. A course is a real thing the app
+      // has built — a syllabus, a tutor, curated data — not something improvised
+      // from a name typed into a box, so there is no box.
+      const available = this.availableCourses();
+      content.innerHTML = available.length ? `
+        <div class="prime-subhead">Choose a course.</div>
+        ${available.map((entry, i) => `
+          <button class="lang-preset-card" data-catalogue-idx="${i}" type="button">
+            <span class="lang-preset-native">${escapeAttr(entry.profile.nativeName)}</span>
+            <span class="lang-preset-name">${escapeAttr(entry.profile.name)}</span>
+            <span class="lang-preset-desc">${escapeAttr(entry.blurb)}</span>
+          </button>
+        `).join('')}
+      ` : `
+        <div class="prime-subhead">You're already studying every course we have.</div>
+        <p class="lang-notes-line">More are on the way — each one takes a syllabus and a tutor built for it, so they arrive slowly and properly.</p>
       `;
-      nextBtn.textContent = 'Continue →';
-      document.getElementById('lang-preset-quranic').addEventListener('click', () => {
-        this.preset = 'quranic';
-        this.recipeId = 'quranic';
-        this.profile = { ...QURANIC_PRESET_PROFILE };
-        this.step = 'profile';
-        this.render();
+      nextBtn.style.display = 'none';   // a card IS the choice
+      content.querySelectorAll('[data-catalogue-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const entry = available[parseInt(btn.dataset.catalogueIdx)];
+          this.preset = entry.preset || null;
+          this.recipeId = entry.recipeId;
+          this.profile = { ...entry.profile };
+          this.step = 'profile';
+          this.render();
+        });
       });
-      const input = document.getElementById('lang-name-input');
-      input.focus();
-      input.addEventListener('keydown', e => { if (e.key === 'Enter') this.next(); });
 
     } else if (this.step === 'profile') {
       const p = this.profile;
@@ -5246,30 +6014,10 @@ const LangOnboard = {
   },
 
   async next() {
-    if (this.step === 'start') {
-      const name = document.getElementById('lang-name-input')?.value.trim();
-      if (!name) return;
-      const content = document.getElementById('lang-onboard-content');
-      content.innerHTML = `
-        <div class="cp-loading" style="justify-content:center;">
-          <span class="cp-spinner"></span> Looking at ${name}'s writing system…
-        </div>
-      `;
-      document.getElementById('btn-lang-onboard-next').disabled = true;
-      try {
-        this.profile = AppState.mode === 'demo'
-          ? demoLanguageProfile(name)
-          : await callLanguageProfiler(name);
-        this.step = 'profile';
-        this.render();
-      } catch (err) {
-        showToast(err.message, 'error', 6000);
-        this.step = 'start';
-        this.render();
-      }
-    } else if (this.step === 'profile') {
-      this.advanceFrom('profile');
-    }
+    // The `start` step has no Next button any more — a catalogue entry is chosen
+    // by clicking it, and there is nothing to type. `profile` is the only step
+    // this button still drives.
+    if (this.step === 'profile') this.advanceFrom('profile');
   },
 
   async generateSeed() {
@@ -5347,6 +6095,10 @@ function initLanguages() {
   document.getElementById('btn-lang-onboard-next').addEventListener('click', () => LangOnboard.next());
   document.getElementById('btn-lang-onboard-close').addEventListener('click', () => LangOnboard.close());
   document.getElementById('btn-lang-session-close').addEventListener('click', () => LangSession.close());
+  document.getElementById('btn-lang-tutor-close').addEventListener('click', async () => {
+    QuranTutor.closeStandalone();
+    await renderLanguages();      // mastery reached in the tutor shows on the card
+  });
 }
 
 // ── TRANSFER PROBLEM ──────────────────────────────────────────────────────────
@@ -8523,6 +9275,38 @@ function showNextCard() {
   backText.classList.toggle('long', (card.back || '').length > 220);
   document.querySelectorAll('#flashcard-element .card-body').forEach(b => { b.scrollTop = 0; });
 
+  // ── Root cards: the root alone on the front; on the back the root again with
+  // its meaning, then the words the Qur'an actually builds from it. A list is
+  // the wrong thing to cram into a text node, so it renders separately.
+  const isRootCard = card.type === 'root' && Array.isArray(card.lemmas) && card.lemmas.length;
+  const rootHead = document.getElementById('card-back-root');
+  const lemmaBox = document.getElementById('card-back-lemmas');
+  const cardEl = document.getElementById('flashcard-element');
+  cardEl.classList.toggle('root-card', !!isRootCard);
+  if (rootHead) {
+    rootHead.style.display = isRootCard ? 'flex' : 'none';
+    if (isRootCard) {
+      document.getElementById('card-back-root-word').textContent = card.front;
+      document.getElementById('card-back-root-rom').textContent =
+        [card.romanization, card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : '']
+          .filter(Boolean).join(' · ');
+    }
+  }
+  if (lemmaBox) {
+    lemmaBox.style.display = isRootCard ? 'block' : 'none';
+    lemmaBox.innerHTML = isRootCard ? `
+      <div class="card-lemmas-head">Words built from it</div>
+      ${card.lemmas.map(l => `
+        <div class="card-lemma">
+          <span class="card-lemma-ar">${escapeAttr(l.word)}</span>
+          <span class="card-lemma-body">
+            ${l.romanization ? `<span class="card-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
+            <span class="card-lemma-meaning">${escapeAttr(l.meaning)}</span>
+          </span>
+          ${l.form ? `<span class="card-lemma-form">${escapeAttr(l.form)}</span>` : ''}
+        </div>`).join('')}` : '';
+  }
+
   // ── Language cards: TTS button + romanization fade ──
   const isLangCard = card._src?.type === 'langCards';
   const speakBtn = document.getElementById('card-speak-btn');
@@ -8761,35 +9545,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('vocab-tier-select').addEventListener('change', (e) => {
     VocabBuilder.lang.tier = e.target.value;
   });
-  // Any language can have a vocabulary builder — it runs through the same
-  // profiler the courses use, so script and voice come out right.
-  document.getElementById('btn-vocab-add-lang').addEventListener('click', async () => {
-    const name = prompt('Which language do you want to build vocabulary in?');
-    if (!name || !name.trim()) return;
-    const btn = document.getElementById('btn-vocab-add-lang');
-    btn.disabled = true; btn.textContent = 'Adding…';
-    try {
-      const profile = AppState.mode === 'demo'
-        ? demoLanguageProfile(name.trim())
-        : await callLanguageProfiler(name.trim());
-      const lang = ensureLangScript({
-        ...profile, id: profile.code, recipeId: 'vocabBuilder',
-        tier: 'articulate', level: 'B2', knownWords: [], vocabSet: 0,
-        wordsLearned: 0, quizStats: { asked: 0, correct: 0 }, createdAt: Date.now()
-      });
-      await dbPutLanguage(lang);
-      VocabBuilder.langs.push(lang);
-      VocabBuilder.lang = lang;
-      VocabBuilder.words = [];
-      VocabBuilder.quiz = null;
-      VocabBuilder.renderControls();
-      VocabBuilder.renderTab();
-      showToast(`${lang.name} added to your vocabulary builder.`, 'success');
-    } catch (err) {
-      showToast('Could not add that language: ' + err.message, 'error', 6000);
-    } finally {
-      btn.disabled = false; btn.textContent = '+ Language';
-    }
+  // A language is picked from the catalogue, not typed. Ones already added are
+  // left out, so the list only ever offers something that would actually change
+  // anything.
+  document.getElementById('btn-vocab-add-lang').addEventListener('click', () => {
+    VocabBuilder.togglePicker();
   });
 
   // ── LIBRARY SEARCH ──

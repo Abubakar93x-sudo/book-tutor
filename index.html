@@ -679,8 +679,16 @@
                   <div class="flashcard-back">
                     <span class="card-tag" id="card-book-tag-back">Book</span>
                     <div class="card-body">
+                      <!-- Root cards only: the root repeated at the top with its
+                           meaning, so the answer starts from what was asked -->
+                      <div id="card-back-root" class="card-back-root" style="display:none;">
+                        <span id="card-back-root-word" class="card-back-root-word"></span>
+                        <span id="card-back-root-rom" class="card-back-root-rom"></span>
+                      </div>
                       <p id="card-back-text">Answer text</p>
                       <p id="card-back-romanization" class="card-romanization" style="display:none;"></p>
+                      <!-- Root cards only: the five commonest Quranic words -->
+                      <div id="card-back-lemmas" class="card-back-lemmas" style="display:none;"></div>
                     </div>
                     <span class="card-flip-hint">Rate your recall below</span>
                   </div>
@@ -749,6 +757,13 @@
           <div class="consolidate-body" id="lang-session-body"></div>
         </div>
 
+        <!-- The tutor on its own, opened from a language card. Same tutor as the
+             one inside a session, just reachable without running one. -->
+        <div id="lang-tutor-overlay" class="consolidate-overlay" style="display:none;">
+          <button class="prime-close" id="btn-lang-tutor-close" title="Close the tutor">✕</button>
+          <div class="consolidate-body" id="lang-tutor-body"></div>
+        </div>
+
         <!-- Language onboarding — reuses the Prime overlay pattern -->
         <div id="lang-onboard-overlay" class="prime-overlay" style="display:none;">
           <button class="prime-close" id="btn-lang-onboard-close" title="Cancel">✕</button>
@@ -785,6 +800,9 @@
           <input id="vocab-theme" class="vocab-theme" type="text" placeholder="Theme (optional) — e.g. argument, emotion" />
           <button class="btn btn-ghost btn-sm" id="btn-vocab-add-lang">+ Language</button>
         </div>
+
+        <!-- The languages this app builds vocabulary for. Chosen from, not typed. -->
+        <div class="vocab-picker" id="vocab-picker" style="display:none;"></div>
 
         <div class="vocab-tabs" id="vocab-tabs">
           <button class="vocab-tab active" data-tab="learn">Learn</button>

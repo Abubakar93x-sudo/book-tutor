@@ -77,10 +77,11 @@ const RECIPES = {
     id: 'quranic',
     label: 'Quranic Arabic',
     unitType: 'root',
-    // Roots give meaning; the Instructor's grammar and drill strands give the
-    // machinery to decode words never met before, and the syntax to see who
-    // did what to whom. Both halves run in the same session.
-    strands: ['review', 'grammar', 'drill', 'rootLesson', 'verses', 'recite', 'wrap'],
+    // Eight units, taught by a tutor. `tutor` comes first among the teaching
+    // strands because a person explaining something plainly is the course —
+    // grammar and drill are the written notes and the practice around it.
+    // Roots are learned separately, in the Vocabulary Builder.
+    strands: ['review', 'tutor', 'grammar', 'drill', 'rootLesson', 'verses', 'recite', 'wrap'],
     assessment: 'verse-ladder',
     loadingCopy: () => `Preparing today's root family and its verses…`,
     ui: { coverageMeter: true, syllabus: true, staticSyllabus: 'QURAN_GRAMMAR' },
@@ -131,6 +132,7 @@ function getLessonGenerator(recipeId) {
 // Strand kind → LangSession method name, for kinds beyond the original five.
 // renderActivity checks this map before its renderWrap catch-all.
 const RECIPE_ACTIVITY_RENDERERS = {
+  tutor: 'renderTutor',
   grammar: 'renderGrammar',
   drill: 'renderDrill',
   decode: 'renderDecode',
