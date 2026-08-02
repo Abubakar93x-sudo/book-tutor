@@ -867,7 +867,7 @@
             <div class="demo-warning-icon">🔒</div>
             <div class="demo-warning-text">
               <strong>Demo Mode is Active</strong>
-              <p>Adding real books requires a free Gemini API key. Turn off Demo Mode in Settings, paste your key, and you're good to go.</p>
+              <p>Adding real books requires a DeepSeek API key. Turn off Demo Mode in Settings, paste your key, and you're good to go.</p>
             </div>
             <button id="btn-open-settings-from-modal" class="btn btn-primary btn-sm">Open Settings →</button>
           </div>
@@ -1022,29 +1022,34 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label for="input-api-key">Google Gemini API Key</label>
-          <input type="password" id="input-api-key" class="form-input" placeholder="Paste your Gemini API key here">
-          <p class="form-hint">Get a free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>. It's stored locally and never leaves your device.</p>
+          <label for="input-api-key">DeepSeek API Key</label>
+          <input type="password" id="input-api-key" class="form-input" placeholder="sk-…">
+          <p class="form-hint">Get one at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>. It's stored locally and never leaves your device.</p>
         </div>
         <div class="form-group mt-4">
           <label for="select-model">AI Model</label>
           <select id="select-model" class="form-input">
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash — fast, free-tier friendly (recommended)</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro — strongest reasoning, slower</option>
+            <option value="deepseek-chat">DeepSeek V3 — fast, handles most work (recommended)</option>
+            <option value="deepseek-reasoner">DeepSeek R1 — thinks before answering, slower</option>
           </select>
-          <p class="form-hint">Flash handles the frequent small calls best. Pro raises quality on everything at the cost of speed and quota.</p>
+          <p class="form-hint">Your tutor always uses R1 whichever you pick — teaching is the one place worth waiting for. This sets everything else.</p>
         </div>
         <div class="form-group mt-4">
           <div class="toggle-row">
             <div>
-              <label class="toggle-label">Higher quality grading</label>
-              <p class="form-hint">Uses Gemini 2.5 Pro only for grading your explanations and recall (slower on those calls). Everything else stays on your default model.</p>
+              <label class="toggle-label">Think harder everywhere</label>
+              <p class="form-hint">Puts summaries, curricula and stories on R1 too. Better across the board, slower on every call. Quick lookups stay fast either way.</p>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="toggle-hq-grading">
               <span class="toggle-slider"></span>
             </label>
           </div>
+        </div>
+        <div class="form-group mt-4">
+          <label for="input-gemini-key">Google Gemini API Key <span class="form-optional">— for video only</span></label>
+          <input type="password" id="input-gemini-key" class="form-input" placeholder="AIza… (optional)">
+          <p class="form-hint">Only needed to add a book from a video, or to have a PDF read directly — DeepSeek can't watch video. Free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>. Leave blank if you don't use those.</p>
         </div>
         <div class="form-group mt-4">
           <div class="toggle-row">

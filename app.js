@@ -23,9 +23,10 @@ const AppState = {
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
   currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
-    apiKey: '',
-    model: 'gemini-2.5-flash',   // default Gemini model for all calls
-    highQualityGrading: false    // route 'deep' grading tasks to Pro when true
+    apiKey: '',                  // DeepSeek — runs everything
+    geminiKey: '',               // optional; only for attachments (video, PDF)
+    model: 'deepseek-chat',      // default model for the ordinary calls
+    highQualityGrading: false    // lift those ordinary calls to the reasoner too
   }
 };
 
@@ -6770,16 +6771,19 @@ function initNavReveal() {
 }
 
 // ── 6. SETTINGS LOAD/SAVE ─────────────────────────────────────────────────────
+// Two keys: DeepSeek runs the app, Gemini is optional and only reached for
+// attachments (a video to watch, a PDF to read directly).
 async function loadSettings() {
   const apiKeyRecord = await dbGet('settings', 'apiKey');
+  const geminiRecord = await dbGet('settings', 'geminiKey');
   const demoRecord   = await dbGet('settings', 'demoMode');
   const modelRecord  = await dbGet('settings', 'model');
   const hqRecord     = await dbGet('settings', 'highQualityGrading');
   const scopeRecord  = await dbGet('settings', 'tutorScope');
 
   // ── AUTO-CONFIGURE ON FIRST LAUNCH ──────────────────────────────
-  // API key must be entered via Settings — never hardcode it here
-  // as it would be exposed in the public GitHub repository.
+  // API keys must be entered via Settings — never hardcode them here
+  // as they would be exposed in the public GitHub repository.
   const USER_API_KEY = ''; // Enter your key in Settings (⚙️ bottom-left)
   if (!apiKeyRecord || !apiKeyRecord.value) {
     await dbPut('settings', { key: 'apiKey',   value: USER_API_KEY });
@@ -6791,9 +6795,22 @@ async function loadSettings() {
     const isDemoMode = demoRecord ? demoRecord.value : false;
     AppState.mode = isDemoMode ? 'demo' : 'live';
   }
+  AppState.settings.geminiKey = geminiRecord?.value || '';
 
-  // Model preferences (local-only, like the API key)
-  AppState.settings.model = modelRecord?.value || 'gemini-2.5-flash';
+  // Anyone who used this before the switch has a GEMINI key sitting in the main
+  // field. Google's keys start with AIza and DeepSeek's with sk-, so they can be
+  // told apart with certainty: move it to the video slot, where it still works,
+  // and leave the main field empty so it's obvious a DeepSeek key is now wanted.
+  if (/^AIza/.test(AppState.settings.apiKey) && !AppState.settings.geminiKey) {
+    console.log('Moving your existing Google key to the video-only slot — the app now runs on DeepSeek.');
+    AppState.settings.geminiKey = AppState.settings.apiKey;
+    AppState.settings.apiKey = '';
+    await dbPut('settings', { key: 'geminiKey', value: AppState.settings.geminiKey });
+    await dbPut('settings', { key: 'apiKey', value: '' });
+  }
+
+  // Model preferences (local-only, like the API keys)
+  AppState.settings.model = modelRecord?.value || 'deepseek-chat';
   AppState.settings.highQualityGrading = hqRecord?.value || false;
   // Cumulative by default: a book is one argument, and treating each chapter
   // as an island is the behaviour worth opting OUT of, not into.
@@ -6806,6 +6823,8 @@ async function loadSettings() {
   // Sync the settings UI
   if (document.getElementById('input-api-key'))
     document.getElementById('input-api-key').value = AppState.settings.apiKey;
+  if (document.getElementById('input-gemini-key'))
+    document.getElementById('input-gemini-key').value = AppState.settings.geminiKey;
   if (document.getElementById('toggle-demo-mode'))
     document.getElementById('toggle-demo-mode').checked = isDemoMode;
   if (document.getElementById('select-model'))
@@ -6820,16 +6839,19 @@ async function loadSettings() {
 
 async function saveSettings() {
   const apiKey = document.getElementById('input-api-key').value.trim();
+  const geminiKey = document.getElementById('input-gemini-key')?.value.trim() || '';
   const isDemoMode = document.getElementById('toggle-demo-mode').checked;
-  const model = document.getElementById('select-model')?.value || 'gemini-2.5-flash';
+  const model = document.getElementById('select-model')?.value || 'deepseek-chat';
   const hqGrading = document.getElementById('toggle-hq-grading')?.checked || false;
 
   AppState.settings.apiKey = apiKey;
+  AppState.settings.geminiKey = geminiKey;
   AppState.settings.model = model;
   AppState.settings.highQualityGrading = hqGrading;
   AppState.mode = isDemoMode ? 'demo' : 'live';
 
   await dbPut('settings', { key: 'apiKey', value: apiKey });
+  await dbPut('settings', { key: 'geminiKey', value: geminiKey });
   await dbPut('settings', { key: 'demoMode', value: isDemoMode });
   await dbPut('settings', { key: 'model', value: model });
   await dbPut('settings', { key: 'highQualityGrading', value: hqGrading });
@@ -8459,7 +8481,7 @@ async function generateCurriculum() {
   if (!resolvedKey) {
     document.getElementById('modal-add-book').style.display = 'none';
     document.getElementById('modal-settings').style.display = 'flex';
-    showToast('Please add your Gemini API key in Settings first.', 'error');
+    showToast('Please add your DeepSeek API key in Settings first.', 'error');
     return;
   }
   // Ensure AppState is in sync in case loadSettings() was slow

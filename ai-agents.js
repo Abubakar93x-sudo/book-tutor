@@ -1,123 +1,81 @@
 // ============================================================================
 // BookTutor — AI Agents Layer (ai-agents.js)
-// Bridges the web app to Google's Gemini API.
-// Contains all AI prompt pipelines: Diagnostic, Curriculum Designer,
-// Socratic Tutor (Teach & Quiz), and Feynman Assessor.
+// Every AI prompt pipeline in the app: Diagnostic, Curriculum Designer,
+// Socratic Tutor (Teach & Quiz), the language course, and the Feynman Assessor.
+//
+// TWO PROVIDERS, ONE RULE:
+//   DeepSeek runs everything. Gemini is kept for the one thing DeepSeek cannot
+//   do — read an attachment. It is text-only: no file upload, no vision, and no
+//   watching a YouTube video, which is the whole basis of video→curriculum.
+//   So: an attachment means Gemini, everything else means DeepSeek. That lives
+//   in queryAI() and nowhere else, because `fileUri` is only ever set by the PDF
+//   and video paths and no caller needs to know which provider it got.
 // ============================================================================
 
 // ── MODEL TIERING ─────────────────────────────────────────────────────────────
-// Two tiers of Gemini model, selected per task:
-//   'fast' — the user's default model (Flash unless changed in Settings).
-//            Used for high-frequency grounded calls: question generation,
-//            segment classification, tutor turns. Speed + cost matter here.
-//   'deep' — reasoning-heavy grading (Feynman assessor, recall diff, Socratic
-//            hinting). Routes to Pro when the "Higher quality grading" toggle
-//            is on; otherwise falls back to the user's default model.
-const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
-const GEMINI_DEEP_MODEL    = 'gemini-2.5-pro';
+// Three tiers, chosen per task. The names are unchanged from the Gemini era so
+// no caller had to move:
+//   'quick' — word glosses, lemmas, drill generation. High-frequency and
+//             latency-critical; the learner is waiting on these.
+//   'fast'  — the default for grounded generation: summaries, curricula,
+//             segment classification.
+//   'deep'  — teaching and grading. The reasoner thinks before it answers,
+//             which is exactly what those two need and what the cheap tier
+//             was never going to give them.
+const DEEPSEEK_CHAT     = 'deepseek-chat';       // V3 — fast
+const DEEPSEEK_REASONER = 'deepseek-reasoner';   // R1 — thinks first
+const DEEPSEEK_URL      = 'https://api.deepseek.com/chat/completions';
 
-// Tiers:
-//   'quick' — ALWAYS Flash, regardless of the user's default model. Used by the
-//             language section: high-frequency, latency-critical, grounded
-//             generation where Flash is more than sufficient and Pro's slower
-//             "thinking" phase buys nothing but delay.
-//   'fast'  — the user's chosen default model (Flash unless changed).
-//   'deep'  — Pro when "Higher quality grading" is on; else the default.
 function modelFor(tier = 'fast') {
-  if (tier === 'quick') return GEMINI_DEFAULT_MODEL;
-  const base = AppState.settings.model || GEMINI_DEFAULT_MODEL;
-  if (tier === 'deep' && AppState.settings.highQualityGrading) return GEMINI_DEEP_MODEL;
-  return base;
+  if (tier === 'deep') return DEEPSEEK_REASONER;
+  // 'quick' always takes the fast model: a word lookup that thinks first is a
+  // word lookup nobody waits for, however much quality is wanted elsewhere.
+  if (tier === 'quick') return DEEPSEEK_CHAT;
+  // The Settings toggle lifts the ORDINARY calls to the reasoner too —
+  // summaries, curricula, story generation. Slower everywhere, better everywhere.
+  if (AppState.settings.highQualityGrading) return DEEPSEEK_REASONER;
+  return AppState.settings.model || DEEPSEEK_CHAT;
 }
 
-// Flash's "thinking" step adds latency with no benefit on the grounded language
-// tasks, so we turn it off for the quick tier (Flash supports thinkingBudget 0).
-function thinkingConfigFor(tier) {
-  return tier === 'quick' ? { thinkingBudget: 0 } : null;
-}
+const isReasoner = (model) => model === DEEPSEEK_REASONER;
 
 function geminiUrl(model, stream = false) {
   const method = stream ? 'streamGenerateContent' : 'generateContent';
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}`;
 }
+const GEMINI_FILE_MODEL = 'gemini-2.5-flash';   // the only Gemini model still used
 
-// ── HELPER: GET API KEY ──────────────────────────────────────────────────────
-// Safely retrieves the API key. Checks AppState first, then falls back to the
-// Settings input field so a missing loadSettings() call doesn't silently break things.
+// ── HELPER: GET API KEYS ─────────────────────────────────────────────────────
+// The DeepSeek key drives the app. Falls back to the Settings field so a missing
+// loadSettings() call doesn't silently break things.
 function getApiKey() {
   const key = AppState.settings.apiKey
     || document.getElementById('input-api-key')?.value?.trim();
-  if (!key) throw new Error('Gemini API Key is missing. Please add it in Settings.');
-  // Keep AppState in sync if it was stale
+  if (!key) throw new Error('DeepSeek API key is missing. Add it in Settings.');
   if (key && !AppState.settings.apiKey) AppState.settings.apiKey = key;
   return key;
 }
 
-// ── CORE: GEMINI HTTP REQUEST ─────────────────────────────────────────────────
-// Sends a prompt to the Gemini API and returns either raw text or parsed JSON.
-// fileUri: optional attachment. A bare string is a PDF (Gemini File API URI).
-//          Pass { fileUri, mimeType } to attach anything else; omit mimeType
-//          for a YouTube URL, which Gemini fetches and watches by itself.
-// tier:    'fast' (default) or 'deep' — resolved to a model via modelFor()
-async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 'fast') {
-  const apiKey = getApiKey();
-  const url = `${geminiUrl(modelFor(tier))}?key=${apiKey}`;
-
-  // Media part FIRST, then the text — the order the API's own examples use.
-  // videoMetadata must sit beside fileData in the SAME part; that pairing is
-  // what clips the video server-side so only the requested window is ever
-  // tokenized. Without it a long video exceeds the context on its own.
-  const parts = [];
-  if (fileUri) {
-    const fileData = typeof fileUri === 'string'
-      ? { mimeType: 'application/pdf', fileUri }
-      : { fileUri: fileUri.fileUri, ...(fileUri.mimeType ? { mimeType: fileUri.mimeType } : {}) };
-    const part = { fileData };
-    if (typeof fileUri === 'object' && fileUri.videoMetadata) {
-      part.videoMetadata = fileUri.videoMetadata;
-    }
-    parts.push(part);
+// Gemini is only reached for attachments, so its key is optional — and when it
+// IS missing, the message has to say what it was actually needed for rather
+// than "API key missing", which would send you to the wrong field.
+function getGeminiKey() {
+  const key = AppState.settings.geminiKey
+    || document.getElementById('input-gemini-key')?.value?.trim();
+  if (!key) {
+    throw new Error('Reading a video or a PDF directly needs a Google Gemini key — '
+      + 'DeepSeek cannot watch video. Add one in Settings, under "For video".');
   }
-  parts.push({ text: prompt });
+  if (key && !AppState.settings.geminiKey) AppState.settings.geminiKey = key;
+  return key;
+}
 
-  const payload = {
-    contents: [{ parts }]
-  };
-
-  const gen = {};
-  if (responseJson) {
-    gen.responseMimeType = 'application/json';
-    // Raise the output limit: 1000-page books produce very large curricula.
-    // Gemini 2.5 Flash supports up to 65536 output tokens.
-    gen.maxOutputTokens = fileUri ? 65536 : 32768;
-  }
-  const thinking = thinkingConfigFor(tier);
-  if (thinking) gen.thinkingConfig = thinking;
-  if (Object.keys(gen).length) payload.generationConfig = gen;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const errData = await response.json();
-    console.error('Gemini API Error:', errData);
-    throw new Error(errData.error?.message || 'Failed to query Gemini API.');
-  }
-
-  const result = await response.json();
-  const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!textResponse) throw new Error('Received empty response from Gemini API.');
-
-  if (!responseJson) return textResponse;
-
-  // ── Robust JSON extraction ──
-  // Gemini sometimes wraps JSON in markdown fences or uses Python-style quotes.
+// ── JSON EXTRACTION ───────────────────────────────────────────────────────────
+// Models wrap JSON in markdown fences, use Python-style quotes, or slip in a
+// stray character. Shared by both providers, and load-bearing for the reasoner,
+// which is asked for JSON in the prompt rather than through response_format.
+function parseModelJson(textResponse) {
   let toParse = textResponse.trim();
-  console.log('Raw Gemini response:', toParse); // Keep for debugging
 
   // 1. Strip ```json ... ``` or ``` ... ``` fences
   const fenceMatch = toParse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -152,28 +110,87 @@ async function queryGemini(prompt, responseJson = false, fileUri = null, tier = 
   }
 }
 
-// ── CORE: GEMINI STREAMING REQUEST ────────────────────────────────────────────
-// Same as queryGemini but uses the streamGenerateContent SSE endpoint, calling
-// onChunk(piece, fullTextSoFar) as text arrives instead of waiting for the
-// whole response. Plain-text only — not used for the JSON curriculum calls,
-// since incremental JSON isn't safely parseable mid-stream.
-async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
-  const apiKey = getApiKey();
-  const url = `${geminiUrl(modelFor(tier), true)}?key=${apiKey}&alt=sse`;
+// ── CORE: ONE REQUEST, TWO PROVIDERS ──────────────────────────────────────────
+// fileUri: optional attachment. A bare string is a PDF (Gemini File API URI).
+//          Pass { fileUri, mimeType } for anything else; omit mimeType for a
+//          YouTube URL, which Gemini fetches and watches by itself.
+//          ITS PRESENCE IS WHAT ROUTES THE CALL TO GEMINI.
+// tier:    'quick' | 'fast' | 'deep' — resolved to a model by modelFor()
+async function queryAI(prompt, responseJson = false, fileUri = null, tier = 'fast') {
+  return fileUri
+    ? geminiRequest(prompt, responseJson, fileUri)
+    : deepseekRequest(prompt, responseJson, tier);
+}
 
-  const body = { contents: [{ parts: [{ text: prompt }] }] };
-  const thinking = thinkingConfigFor(tier);
-  if (thinking) body.generationConfig = { thinkingConfig: thinking };
+async function queryAIStream(prompt, onChunk, tier = 'fast') {
+  return deepseekStreamRequest(prompt, onChunk, tier);
+}
 
-  const response = await fetch(url, {
+// ── DEEPSEEK ──────────────────────────────────────────────────────────────────
+// OpenAI-compatible /chat/completions. Called straight from the browser: the
+// API sends CORS headers reflecting the origin, so this app needs no backend.
+function deepseekBody(prompt, responseJson, tier, stream = false) {
+  const model = modelFor(tier);
+  const messages = [];
+
+  // response_format is a deepseek-chat feature, and it REQUIRES the word "json"
+  // to appear in the messages. One system line beats editing thirty prompts.
+  const useResponseFormat = responseJson && !isReasoner(model);
+  if (useResponseFormat) {
+    messages.push({ role: 'system', content: 'Reply with a single valid json object and nothing else.' });
+  }
+  messages.push({ role: 'user', content: prompt });
+
+  const body = { model, messages, stream };
+  if (useResponseFormat) body.response_format = { type: 'json_object' };
+  // The reasoner rejects response_format, so a deep JSON call is asked for JSON
+  // in the prompt (every one of them already says so) and parsed by
+  // parseModelJson. Not a fallback — the documented way to do it.
+  if (!isReasoner(model)) body.max_tokens = 8192;
+  return body;
+}
+
+async function deepseekRequest(prompt, responseJson, tier) {
+  const response = await fetch(DEEPSEEK_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${getApiKey()}`
+    },
+    body: JSON.stringify(deepseekBody(prompt, responseJson, tier))
   });
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error?.message || 'Failed to query Gemini API.');
+    console.error('DeepSeek API Error:', errData);
+    throw new Error(errData.error?.message || `DeepSeek request failed (${response.status}).`);
+  }
+
+  const result = await response.json();
+  const textResponse = result.choices?.[0]?.message?.content;
+  if (!textResponse) throw new Error('Received empty response from DeepSeek.');
+
+  if (!responseJson) return textResponse;
+  console.log('Raw DeepSeek response:', textResponse.trim());
+  return parseModelJson(textResponse);
+}
+
+// Streaming, OpenAI SSE. The reasoner streams its chain of thought first, as
+// `reasoning_content` deltas — those are deliberately dropped, or the learner
+// would watch the model think out loud before it says anything to them.
+async function deepseekStreamRequest(prompt, onChunk, tier) {
+  const response = await fetch(DEEPSEEK_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${getApiKey()}`
+    },
+    body: JSON.stringify(deepseekBody(prompt, false, tier, true))
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `DeepSeek request failed (${response.status}).`);
   }
 
   const reader = response.body.getReader();
@@ -186,17 +203,16 @@ async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    // SSE frames are "data: {...}" lines separated by newlines
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // keep the last (possibly incomplete) line for the next read
+    buffer = lines.pop();   // keep the last (possibly incomplete) line
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed.startsWith('data:')) continue;
       const jsonStr = trimmed.slice(5).trim();
-      if (!jsonStr) continue;
+      if (!jsonStr || jsonStr === '[DONE]') continue;
       try {
-        const parsed = JSON.parse(jsonStr);
-        const piece = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        const delta = JSON.parse(jsonStr).choices?.[0]?.delta;
+        const piece = delta?.content;      // NOT delta.reasoning_content
         if (piece) {
           fullText += piece;
           onChunk(piece, fullText);
@@ -205,8 +221,56 @@ async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
     }
   }
 
-  if (!fullText) throw new Error('Received empty response from Gemini API.');
+  if (!fullText) throw new Error('Received empty response from DeepSeek.');
   return fullText;
+}
+
+// ── GEMINI: ATTACHMENTS ONLY ──────────────────────────────────────────────────
+// Reached only when a call carries a fileUri — a PDF in the Gemini File API, or
+// a YouTube URL for it to watch. Everything else goes to DeepSeek.
+async function geminiRequest(prompt, responseJson, fileUri) {
+  const url = `${geminiUrl(GEMINI_FILE_MODEL)}?key=${getGeminiKey()}`;
+
+  // Media part FIRST, then the text — the order the API's own examples use.
+  // videoMetadata must sit beside fileData in the SAME part; that pairing is
+  // what clips the video server-side so only the requested window is ever
+  // tokenized. Without it a long video exceeds the context on its own.
+  const fileData = typeof fileUri === 'string'
+    ? { mimeType: 'application/pdf', fileUri }
+    : { fileUri: fileUri.fileUri, ...(fileUri.mimeType ? { mimeType: fileUri.mimeType } : {}) };
+  const part = { fileData };
+  if (typeof fileUri === 'object' && fileUri.videoMetadata) {
+    part.videoMetadata = fileUri.videoMetadata;
+  }
+
+  const payload = { contents: [{ parts: [part, { text: prompt }] }] };
+  if (responseJson) {
+    payload.generationConfig = {
+      responseMimeType: 'application/json',
+      // 1000-page books produce very large curricula
+      maxOutputTokens: 65536
+    };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    console.error('Gemini API Error:', errData);
+    throw new Error(errData.error?.message || 'Failed to query Gemini API.');
+  }
+
+  const result = await response.json();
+  const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!textResponse) throw new Error('Received empty response from Gemini API.');
+
+  if (!responseJson) return textResponse;
+  console.log('Raw Gemini response:', textResponse.trim());
+  return parseModelJson(textResponse);
 }
 
 // ── GEMINI FILE UPLOAD ────────────────────────────────────────────────────────
@@ -214,7 +278,7 @@ async function queryGeminiStream(prompt, onChunk, tier = 'fast') {
 // Returns the fileUri string, which can then be attached to any prompt.
 // onProgress(0..100) is called with upload progress estimates.
 async function uploadPdfToGemini(file, onProgress = () => {}) {
-  const apiKey = getApiKey();
+  const apiKey = getGeminiKey();
   const BOUNDARY = '----GeminiUpload' + Date.now();
   const mimeType = file.type || (file.name.toLowerCase().endsWith('.txt') ? 'text/plain' : 'application/pdf');
 
@@ -270,8 +334,8 @@ async function uploadPdfToGemini(file, onProgress = () => {}) {
 }
 
 // ── AGENT 1: DIAGNOSTIC LIBRARIAN ────────────────────────────────────────────
-// Checks if Gemini has deep or surface-level knowledge of the requested book.
-// Returns "deep" if Gemini knows the book well, or "ref" if the user must paste text.
+// Checks whether the model has deep or surface-level knowledge of the book.
+// Returns "deep" if it knows the book well, or "ref" if the user must paste text.
 async function callLiveDiagnosticCheck(title, author) {
   const prompt = `
     You are an AI Librarian and diagnostic bot.
@@ -288,7 +352,7 @@ async function callLiveDiagnosticCheck(title, author) {
     }
   `;
   try {
-    return await queryGemini(prompt, true);
+    return await queryAI(prompt, true);
   } catch (error) {
     console.error('Diagnostic failed:', error);
     return {
@@ -320,7 +384,7 @@ async function callBookIdentifier(firstPageText) {
     If you cannot determine one of these, use null for that field.
   `;
   try {
-    return await queryGemini(prompt, true);
+    return await queryAI(prompt, true);
   } catch (e) {
     console.warn('Book identifier failed:', e.message);
     return { title: null, author: null };
@@ -365,7 +429,7 @@ async function callChapterCurriculumGenerator(chapterTitle, bookTitle, bookAutho
     }
   `;
   try {
-    const result = await queryGemini(prompt, true);
+    const result = await queryAI(prompt, true);
     // Ensure all required fields exist
     return {
       summary_10s: result.summary_10s || '',
@@ -432,8 +496,8 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '',
   } else if (isFullPdfText && userUploadedText) {
     // ── STRUCTURE EXCERPT MODE: chapter headings + brief excerpts from the PDF ──
     // We send a compact structure (headings + 400-char excerpts per chapter), NOT
-    // the raw verbatim text, to avoid Gemini's recitation/copyright protection.
-    // Gemini supplements with its knowledge to generate rich summaries.
+    // the raw verbatim text, to avoid tripping recitation/copyright filters.
+    // The model supplements with its own knowledge to generate rich summaries.
     const safeText = userUploadedText.substring(0, 150000); // structure is already compact
     prompt = `
       You are an expert curriculum designer and book educator.
@@ -534,7 +598,7 @@ async function callLiveCurriculumGenerator(title, author, userUploadedText = '',
     `;
   }
 
-  return await queryGemini(prompt, true, fileUri);
+  return await queryAI(prompt, true, fileUri);
 }
 
 // ── AGENT 2.5: VISUAL DIRECTOR ────────────────────────────────────────────────
@@ -567,7 +631,7 @@ async function callVisualDirectorAgent(conceptText, bookTitle, chapterTitle) {
     }
   `;
   try {
-    return await queryGemini(prompt, true);
+    return await queryAI(prompt, true);
   } catch (e) {
     console.warn('Visual Director failed silently:', e.message);
     return null;
@@ -608,7 +672,7 @@ async function callSegmentClassifier(paragraphs, chapterTitle, bookTitle) {
     Return ONLY valid JSON, no markdown fences, with exactly ${paragraphs.length} entries:
     { "labels": ["core", "support", "skim", ...] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryAI(prompt, true);
   const labels = Array.isArray(result.labels) ? result.labels : [];
   // Align defensively: unknown or missing entries become "support" (neutral)
   return paragraphs.map((_, i) =>
@@ -640,7 +704,7 @@ async function callCheckpointGenerator(segmentText, chapterTitle, bookTitle, con
     Return ONLY valid JSON, no markdown fences:
     { "question": "string", "concepts": ["string"] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryAI(prompt, true);
   return {
     question: result.question || 'In one or two sentences: what was the key idea of the passage you just read?',
     concepts: Array.isArray(result.concepts) ? result.concepts.filter(c => concepts.includes(c)) : []
@@ -681,7 +745,7 @@ async function callCheckpointGrader(segmentText, question, answer, hintRound = 0
     }
   `;
   // Judgement calls benefit from the deep tier when the user enables it
-  const result = await queryGemini(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'deep');
   return {
     verdict: result.verdict === 'pass' ? 'pass' : 'gap',
     feedback: result.feedback || '',
@@ -722,7 +786,7 @@ async function callRecallDiff(brainDump, concepts, chapterText, chapterTitle, bo
       "mixedUp": [{ "concept": "Concept", "note": "You said X — the text says Y.", "quote": "short exact quote" }]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'deep');
   return {
     recalled: Array.isArray(result.recalled) ? result.recalled : [],
     missed: Array.isArray(result.missed) ? result.missed : [],
@@ -758,7 +822,7 @@ async function callGapCardGenerator(diff, chapterText, chapterTitle, bookTitle) 
     Return ONLY valid JSON, no markdown fences:
     { "flashcards": [{ "front": "question", "back": "answer", "concept": "concept name" }] }
   `;
-  const result = await queryGemini(prompt, true);
+  const result = await queryAI(prompt, true);
   return Array.isArray(result.flashcards)
     ? result.flashcards.filter(c => c.front && c.back)
     : [];
@@ -786,7 +850,7 @@ async function callTransferProblem(chapterText, concepts, chapterTitle, bookTitl
     Return ONLY valid JSON, no markdown fences:
     { "problem": "the scenario ending in a question" }
   `;
-  const result = await queryGemini(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'deep');
   return result.problem || '';
 }
 
@@ -942,13 +1006,15 @@ ${NO_DEAD_END_RULE}
     `;
   }
 
+  // 'deep' — the tutor thinks before it answers. It ran on the cheap tier for a
+  // long time, which is most of why its teaching was thin.
   try {
     return onChunk
-      ? await queryGeminiStream(prompt, onChunk)
-      : await queryGemini(prompt, false);
+      ? await queryAIStream(prompt, onChunk, 'deep')
+      : await queryAI(prompt, false, null, 'deep');
   } catch (error) {
     console.error('Tutor API call failed:', error);
-    return `[Tutor System] Failed to reach Gemini API. Please check your key and connection.\nError: ${error.message}`;
+    return `[Tutor System] Couldn't reach the API. Please check your key and connection.\nError: ${error.message}`;
   }
 }
 
@@ -993,7 +1059,7 @@ async function callLanguageProfiler(languageName) {
 
     If the input is not a recognizable human language, return: { "error": "not a language" }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   if (result.error || !result.code) throw new Error(`Couldn't recognize "${languageName}" as a language.`);
   return {
     name: result.name,
@@ -1042,7 +1108,7 @@ async function callSeedDeckGenerator(langProfile, level) {
       ]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
   if (!cards.length) throw new Error('Seed deck generation returned no cards.');
   return cards.map(c => ({
@@ -1095,7 +1161,7 @@ async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
       ]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const units = Array.isArray(result.units)
     ? result.units.filter(u => u.title && u.structure)
     : [];
@@ -1154,7 +1220,7 @@ async function callGrammarUnitGenerator(langProfile, unit, knownWords = []) {
       "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const drills = Array.isArray(result.drills)
     ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
     : [];
@@ -1202,7 +1268,7 @@ async function callDrillGrader(langProfile, unit, drill, answer) {
     Return ONLY valid JSON, no markdown fences:
     { "verdict": "pass" | "gap", "feedback": "one sentence", "correctedAnswer": "the correct sentence" }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   return {
     verdict: result.verdict === 'pass' ? 'pass' : 'gap',
     feedback: result.feedback || '',
@@ -1229,7 +1295,7 @@ async function callWordGloss(langProfile, word, sentence = '') {
     Return ONLY valid JSON, no markdown fences:
     { "meaning": "short English meaning", ${nonLatin ? `"romanization": "in ${langProfile.romanizationName}", ` : ''}"note": "base form or grammar note, or empty" }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   return {
     meaning: result.meaning || '',
     romanization: result.romanization || null,
@@ -1264,7 +1330,7 @@ async function callFoundationDeck(langProfile, band, count = 50) {
       ]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
   if (!cards.length) throw new Error(`Foundation deck band ${band} returned no cards.`);
   return cards.map(c => ({
@@ -1301,7 +1367,7 @@ async function callScriptUnitGenerator(langProfile, unitNumber, learnedChars = [
     Return ONLY valid JSON, no markdown fences:
     { "cards": [{ "front": "char", "back": "sound/meaning — mnemonic", "romanization": "pronunciation" }] }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const cards = Array.isArray(result.cards) ? result.cards.filter(c => c.front && c.back) : [];
   if (!cards.length) throw new Error('Script unit generation returned no cards.');
   return cards.slice(0, 12).map(c => ({
@@ -1361,7 +1427,7 @@ ${unit ? `
       "chatTopic": "one-line topic"
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   if (!Array.isArray(result.sentences) || !result.sentences.length) {
     throw new Error('Story generation returned no sentences.');
   }
@@ -1441,8 +1507,8 @@ ${unit ? `
   `;
 
   return onChunk
-    ? await queryGeminiStream(prompt, onChunk, 'quick')
-    : await queryGemini(prompt, false, null, 'quick');
+    ? await queryAIStream(prompt, onChunk, 'quick')
+    : await queryAI(prompt, false, null, 'quick');
 }
 
 // ── ASSESSMENT ITEM GENERATORS ───────────────────────────────────────────────
@@ -1482,7 +1548,7 @@ async function callPlacementItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "question text", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
+  return _validateAssessItems(await queryAI(prompt, true, null, 'quick'));
 }
 
 // Frontier finding for fluent speakers: which frequency band gets spotty
@@ -1506,7 +1572,7 @@ async function callFrontierItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "Which is the closest meaning of «word»?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
+  return _validateAssessItems(await queryAI(prompt, true, null, 'quick'));
 }
 
 // ── AGENT: QURANIC TUTOR ─────────────────────────────────────────────────────
@@ -1624,10 +1690,12 @@ ${priorBlock}${rootsBlock}${voice}
 ${NO_DEAD_END_RULE}
   `;
 
+  // 'deep', for the same reason as the book tutor: teaching is the one place
+  // worth waiting a few seconds for.
   try {
     return onChunk
-      ? await queryGeminiStream(prompt, onChunk)
-      : await queryGemini(prompt, false);
+      ? await queryAIStream(prompt, onChunk, 'deep')
+      : await queryAI(prompt, false, null, 'deep');
   } catch (error) {
     console.error('Quran tutor call failed:', error);
     return `[Tutor] Couldn't reach the API. ${error.message}`;
@@ -1669,7 +1737,7 @@ async function callQuranLemmas(entry, count = 5) {
     Return ONLY valid JSON, no markdown fences:
     { "lemmas": [ { "word": "…", "romanization": "…", "meaning": "…", "form": "…", "note": "…" } ] }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const lemmas = (Array.isArray(result.lemmas) ? result.lemmas : [])
     // An Arabic lemma is written in Arabic. Same guard as the vocabulary
     // builder: a model asked for Arabic will occasionally answer in English.
@@ -1710,7 +1778,7 @@ async function callVerseLadderItems(band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "«arabic snippet» (transliteration) — Surah X:Y. What is this saying?", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  return _validateAssessItems(await queryGemini(prompt, true, null, 'quick'));
+  return _validateAssessItems(await queryAI(prompt, true, null, 'quick'));
 }
 
 // ── AGENT 5: FEYNMAN SANDBOX ASSESSOR ────────────────────────────────────────
@@ -1744,14 +1812,14 @@ async function callLiveSandboxAssessor(concept, explanation) {
 
   try {
     // Grading nuance benefits from the deep tier when the user enables it
-    return await queryGemini(prompt, true, null, 'deep');
+    return await queryAI(prompt, true, null, 'deep');
   } catch (error) {
     console.error('Feynman assessor failed:', error);
     return {
       score: 0,
       right: 'Connection error. Could not grade your explanation.',
       gaps: `Error: ${error.message}`,
-      refined: 'Please check your Gemini API key in Settings and try again.'
+      refined: 'Please check your DeepSeek API key in Settings and try again.'
     };
   }
 }
@@ -1786,7 +1854,7 @@ async function callDecodeDrillGenerator(langProfile, learnedChars = [], knownWor
       ]
     }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const drills = (Array.isArray(result.drills) ? result.drills : [])
     .filter(d => d.written && d.meaning && Array.isArray(d.distractors) && d.distractors.length >= 2)
     .slice(0, 6);
@@ -1822,7 +1890,7 @@ async function callListeningCheckItems(langProfile, band) {
     Return ONLY valid JSON, no markdown fences:
     { "items": [{ "prompt": "What did the sentence mean?", "ttsText": "sentence in ${langProfile.name}", "options": ["a","b","c","d"], "answerIdx": 0 }] }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const items = _validateAssessItems(result);
   if (!items.every(it => result.items.find(r => r.prompt === it.prompt)?.ttsText)) {
     // keep whatever ttsText came through; items without it still render as text
@@ -1858,7 +1926,7 @@ async function callPrecisionWords(langProfile, frontierBand, knownWords = []) {
     Return ONLY valid JSON, no markdown fences:
     { "words": [{ "word": "word", "meaning": "…", "example": "…", "cloze": "…", "contrast": "…" }] }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const words = (Array.isArray(result.words) ? result.words : [])
     .filter(w => w.word && w.meaning && w.example).slice(0, 5);
   if (!words.length) throw new Error('Precision word generation returned nothing usable.');
@@ -2013,7 +2081,7 @@ async function callVideoCurriculum(videoUrl, userTitle = '', startChapter = 1, e
 
   let result;
   try {
-    result = await queryGemini(prompt, true, attachment, 'fast');
+    result = await queryAI(prompt, true, attachment, 'fast');
   } catch (err) {
     // Too big for this video: halve the split and retry from the same point,
     // so a dense or high-framerate recording still gets through.
@@ -2270,7 +2338,7 @@ async function callVocabWords(langProfile, tier = 'articulate', knownWords = [],
   // model — being shown the mistake is what actually stops it repeating.
   for (let attempt = 0; attempt < 2 && kept.length < count; attempt++) {
     const banList = [...knownWords, ...kept.map(w => w.word)];
-    const result = await queryGemini(
+    const result = await queryAI(
       buildPrompt(count - kept.length, banList, wrongScript), true, null, 'quick');
     const words = (Array.isArray(result.words) ? result.words : [])
       .filter(w => w.word && w.meaning && w.example);
@@ -2347,7 +2415,7 @@ async function callVocabUsageGrader(langProfile, wordEntry, sentence) {
       Return ONLY valid JSON, no markdown fences:
       { "verdict": "pass" | "gap", "feedback": "one encouraging sentence — if they were wrong, name a word from this root and what it means" }
     `;
-    const result = await queryGemini(prompt, true, null, 'quick');
+    const result = await queryAI(prompt, true, null, 'quick');
     return { verdict: result.verdict === 'pass' ? 'pass' : 'gap', feedback: result.feedback || '' };
   }
 
@@ -2367,7 +2435,7 @@ async function callVocabUsageGrader(langProfile, wordEntry, sentence) {
     Return ONLY valid JSON, no markdown fences:
     { "verdict": "pass" | "gap", "feedback": "one encouraging sentence naming what worked or what went wrong" }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   return {
     verdict: result.verdict === 'pass' ? 'pass' : 'gap',
     feedback: result.feedback || ''
@@ -2391,7 +2459,7 @@ async function callPrecisionCards(langProfile, selection, sentence, sourceBook) 
     Return ONLY valid JSON, no markdown fences:
     { "cards": [{ "front": "…", "back": "…" }] }
   `;
-  const result = await queryGemini(prompt, true, null, 'quick');
+  const result = await queryAI(prompt, true, null, 'quick');
   const cards = (Array.isArray(result.cards) ? result.cards : [])
     .filter(c => c.front && c.back).slice(0, 2);
   if (!cards.length) throw new Error('Card generation returned nothing usable.');
