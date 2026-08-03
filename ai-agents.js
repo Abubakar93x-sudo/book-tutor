@@ -12,32 +12,37 @@
 //   and video paths and no caller needs to know which provider it got.
 // ============================================================================
 
-// ── MODEL TIERING ─────────────────────────────────────────────────────────────
-// Three tiers, chosen per task. The names are unchanged from the Gemini era so
-// no caller had to move:
-//   'quick' — word glosses, lemmas, drill generation. High-frequency and
-//             latency-critical; the learner is waiting on these.
-//   'fast'  — the default for grounded generation: summaries, curricula,
-//             segment classification.
-//   'deep'  — teaching and grading. The reasoner thinks before it answers,
-//             which is exactly what those two need and what the cheap tier
-//             was never going to give them.
-const DEEPSEEK_CHAT     = 'deepseek-chat';       // V3 — fast
-const DEEPSEEK_REASONER = 'deepseek-reasoner';   // R1 — thinks first
-const DEEPSEEK_URL      = 'https://api.deepseek.com/chat/completions';
+// ── TIERING: WHAT THINKS, AND WHAT DOESN'T ────────────────────────────────────
+// The tier does not choose a MODEL. It chooses whether the model is allowed to
+// think before it answers, which is the only knob that matters here — measured
+// against the live API on a real lesson-generation call:
+//
+//     thinking off   7.1s        thinking on   14.5s … 31.2s
+//
+// Same model, same prompt, same valid JSON out either way. So thinking is worth
+// it only where the model genuinely has to work something out, and is pure dead
+// time everywhere else. Two further findings from that session, both the
+// opposite of what the docs led me to expect:
+//
+//   • `reasoning_effort: 'low'` is ACCEPTED and then IGNORED — it produced MORE
+//     reasoning (1350 tokens) than the default (895). Do not use it.
+//   • `deepseek-chat` and `deepseek-reasoner` are aliases onto the same model
+//     (deepseek-v4-flash); the alias only preset the thinking flag. Setting
+//     `thinking` explicitly is what actually controls it, on either name.
+//   • deepseek-v4-pro reasons so hard it spent an entire 500-token budget
+//     thinking and returned no answer at all. Not usable for this.
+//
+//   'quick' — word glosses, lemmas. The learner is mid-tap.        no thinking
+//   'fast'  — the default: the tutor, grading, summaries, stories. no thinking
+//   'deep'  — building a syllabus or a lesson. Generated once and then cached
+//             for good, so it is the one place where being right matters more
+//             than being quick.                                       THINKING
+const DEEPSEEK_MODEL = 'deepseek-chat';
+const DEEPSEEK_URL   = 'https://api.deepseek.com/chat/completions';
 
-function modelFor(tier = 'fast') {
-  if (tier === 'deep') return DEEPSEEK_REASONER;
-  // 'quick' always takes the fast model: a word lookup that thinks first is a
-  // word lookup nobody waits for, however much quality is wanted elsewhere.
-  if (tier === 'quick') return DEEPSEEK_CHAT;
-  // The Settings toggle lifts the ORDINARY calls to the reasoner too —
-  // summaries, curricula, story generation. Slower everywhere, better everywhere.
-  if (AppState.settings.highQualityGrading) return DEEPSEEK_REASONER;
-  return AppState.settings.model || DEEPSEEK_CHAT;
-}
-
-const isReasoner = (model) => model === DEEPSEEK_REASONER;
+// One model; the tier decides whether it thinks.
+function modelFor() { return DEEPSEEK_MODEL; }
+const tierThinks = (tier) => tier === 'deep';
 
 function geminiUrl(model, stream = false) {
   const method = stream ? 'streamGenerateContent' : 'generateContent';
@@ -130,24 +135,50 @@ async function queryAIStream(prompt, onChunk, tier = 'fast') {
 // OpenAI-compatible /chat/completions. Called straight from the browser: the
 // API sends CORS headers reflecting the origin, so this app needs no backend.
 function deepseekBody(prompt, responseJson, tier, stream = false) {
-  const model = modelFor(tier);
   const messages = [];
 
-  // response_format is a deepseek-chat feature, and it REQUIRES the word "json"
-  // to appear in the messages. One system line beats editing thirty prompts.
-  const useResponseFormat = responseJson && !isReasoner(model);
-  if (useResponseFormat) {
+  // response_format REQUIRES the word "json" to appear in the messages. One
+  // system line beats editing thirty prompts. Verified working alongside
+  // thinking, so every JSON call gets it whatever the tier.
+  if (responseJson) {
     messages.push({ role: 'system', content: 'Reply with a single valid json object and nothing else.' });
   }
   messages.push({ role: 'user', content: prompt });
 
-  const body = { model, messages, stream };
-  if (useResponseFormat) body.response_format = { type: 'json_object' };
-  // The reasoner rejects response_format, so a deep JSON call is asked for JSON
-  // in the prompt (every one of them already says so) and parsed by
-  // parseModelJson. Not a fallback — the documented way to do it.
-  if (!isReasoner(model)) body.max_tokens = 8192;
+  const body = { model: modelFor(), messages, stream };
+  if (responseJson) body.response_format = { type: 'json_object' };
+
+  // The one line that decides whether this call takes 7 seconds or 30. Stated
+  // explicitly in both directions rather than left to the model's default,
+  // because the default moved under us once already when the aliases changed.
+  body.thinking = { type: tierThinks(tier) ? 'enabled' : 'disabled' };
+
+  // Thinking tokens count against this budget — a thinking call that runs out
+  // mid-thought returns NOTHING (seen on deepseek-v4-pro at 500). Deep calls
+  // get room for both halves.
+  body.max_tokens = tierThinks(tier) ? 16384 : 8192;
   return body;
+}
+
+// DeepSeek's own error strings are terse, and two of them are what every new
+// user meets first. Verified against the live API: a bad key returns 401
+// "Authentication Fails", and a valid key with no credit returns 402
+// "Insufficient Balance" — which sounds like a fault rather than an errand.
+// Both get turned into something that says what to do about it.
+function deepseekError(status, errData) {
+  const raw = errData?.error?.message || '';
+  if (status === 402 || /insufficient balance/i.test(raw)) {
+    return new Error('Your DeepSeek account has no credit. The API is pay-as-you-go — '
+      + 'top up at platform.deepseek.com (Billing) and try again. Your key is fine.');
+  }
+  if (status === 401 || /authentication fails/i.test(raw)) {
+    return new Error('DeepSeek rejected that API key. Check it in Settings — it should '
+      + 'start with "sk-" and be copied whole.');
+  }
+  if (status === 429) {
+    return new Error('DeepSeek is rate-limiting the account. Wait a moment and try again.');
+  }
+  return new Error(raw || `DeepSeek request failed (${status}).`);
 }
 
 async function deepseekRequest(prompt, responseJson, tier) {
@@ -163,7 +194,7 @@ async function deepseekRequest(prompt, responseJson, tier) {
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
     console.error('DeepSeek API Error:', errData);
-    throw new Error(errData.error?.message || `DeepSeek request failed (${response.status}).`);
+    throw deepseekError(response.status, errData);
   }
 
   const result = await response.json();
@@ -190,7 +221,7 @@ async function deepseekStreamRequest(prompt, onChunk, tier) {
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `DeepSeek request failed (${response.status}).`);
+    throw deepseekError(response.status, errData);
   }
 
   const reader = response.body.getReader();
@@ -745,7 +776,7 @@ async function callCheckpointGrader(segmentText, question, answer, hintRound = 0
     }
   `;
   // Judgement calls benefit from the deep tier when the user enables it
-  const result = await queryAI(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'fast');
   return {
     verdict: result.verdict === 'pass' ? 'pass' : 'gap',
     feedback: result.feedback || '',
@@ -786,7 +817,7 @@ async function callRecallDiff(brainDump, concepts, chapterText, chapterTitle, bo
       "mixedUp": [{ "concept": "Concept", "note": "You said X — the text says Y.", "quote": "short exact quote" }]
     }
   `;
-  const result = await queryAI(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'fast');
   return {
     recalled: Array.isArray(result.recalled) ? result.recalled : [],
     missed: Array.isArray(result.missed) ? result.missed : [],
@@ -850,7 +881,7 @@ async function callTransferProblem(chapterText, concepts, chapterTitle, bookTitl
     Return ONLY valid JSON, no markdown fences:
     { "problem": "the scenario ending in a question" }
   `;
-  const result = await queryAI(prompt, true, null, 'deep');
+  const result = await queryAI(prompt, true, null, 'fast');
   return result.problem || '';
 }
 
@@ -1006,12 +1037,14 @@ ${NO_DEAD_END_RULE}
     `;
   }
 
-  // 'deep' — the tutor thinks before it answers. It ran on the cheap tier for a
-  // long time, which is most of why its teaching was thin.
+  // 'fast'. The tutor streams, so its words start arriving in about a second —
+  // and a tutor that pauses to think is a tutor you stop talking to. The
+  // thinking budget is spent on the LESSON instead, which is written once and
+  // then read many times.
   try {
     return onChunk
-      ? await queryAIStream(prompt, onChunk, 'deep')
-      : await queryAI(prompt, false, null, 'deep');
+      ? await queryAIStream(prompt, onChunk, 'fast')
+      : await queryAI(prompt, false, null, 'fast');
   } catch (error) {
     console.error('Tutor API call failed:', error);
     return `[Tutor System] Couldn't reach the API. Please check your key and connection.\nError: ${error.message}`;
@@ -1161,7 +1194,10 @@ async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
       ]
     }
   `;
-  const result = await queryAI(prompt, true, null, 'quick');
+  // 'deep' — this is the one call worth waiting for. A syllabus is written
+  // ONCE and then read for the whole course, so letting the model think it
+  // through costs a few seconds once and pays back every lesson after.
+  const result = await queryAI(prompt, true, null, 'deep');
   const units = Array.isArray(result.units)
     ? result.units.filter(u => u.title && u.structure)
     : [];
@@ -1220,7 +1256,9 @@ async function callGrammarUnitGenerator(langProfile, unit, knownWords = []) {
       "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]
     }
   `;
-  const result = await queryAI(prompt, true, null, 'quick');
+  // 'deep' — a lesson is generated once and cached for good. Being right
+  // matters more here than being quick, and nobody re-reads a bad lesson.
+  const result = await queryAI(prompt, true, null, 'deep');
   const drills = Array.isArray(result.drills)
     ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
     : [];
@@ -1690,12 +1728,12 @@ ${priorBlock}${rootsBlock}${voice}
 ${NO_DEAD_END_RULE}
   `;
 
-  // 'deep', for the same reason as the book tutor: teaching is the one place
-  // worth waiting a few seconds for.
+  // 'fast', for the same reason as the book tutor: it streams, and a pause
+  // before every reply costs more than the thinking is worth in a conversation.
   try {
     return onChunk
-      ? await queryAIStream(prompt, onChunk, 'deep')
-      : await queryAI(prompt, false, null, 'deep');
+      ? await queryAIStream(prompt, onChunk, 'fast')
+      : await queryAI(prompt, false, null, 'fast');
   } catch (error) {
     console.error('Quran tutor call failed:', error);
     return `[Tutor] Couldn't reach the API. ${error.message}`;
@@ -1812,7 +1850,7 @@ async function callLiveSandboxAssessor(concept, explanation) {
 
   try {
     // Grading nuance benefits from the deep tier when the user enables it
-    return await queryAI(prompt, true, null, 'deep');
+    return await queryAI(prompt, true, null, 'fast');
   } catch (error) {
     console.error('Feynman assessor failed:', error);
     return {

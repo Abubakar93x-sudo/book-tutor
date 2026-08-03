@@ -24,9 +24,7 @@ const AppState = {
   currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
     apiKey: '',                  // DeepSeek — runs everything
-    geminiKey: '',               // optional; only for attachments (video, PDF)
-    model: 'deepseek-chat',      // default model for the ordinary calls
-    highQualityGrading: false    // lift those ordinary calls to the reasoner too
+    geminiKey: ''                // optional; only for attachments (video, PDF)
   }
 };
 
@@ -919,7 +917,9 @@ function unitKey(unitIndex) {
 //       derivation and summary
 //   3 — Quranic Arabic rebuilt on the eight-unit syllabus: the old 20-unit
 //       ladder is gone, so every lesson cached against it must be regenerated
-const LESSON_SCHEMA_VERSION = 3;
+//   4 — every lesson still cached was written by Gemini. Rebuild them all on
+//       DeepSeek, with thinking on, which is the one call that gets it.
+const LESSON_SCHEMA_VERSION = 4;
 
 async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
@@ -947,7 +947,10 @@ async function dbGetSyllabus(langId) {
 async function dbPutSyllabus(langId, units) {
   const col = userCol('langSyllabus');
   if (!col) return;
-  await col.doc(langId).set({ langId, units, updatedAt: Date.now() }, { merge: true });
+  await col.doc(langId).set(
+    { langId, units, schemaVersion: LESSON_SCHEMA_VERSION, updatedAt: Date.now() },
+    { merge: true }
+  );
 }
 
 // langGloss/{langId} — a word→meaning cache shared by every tap-a-word lookup,
@@ -3846,8 +3849,12 @@ const LangSession = {
     const staticId = this.recipe?.ui?.staticSyllabus;
     if (staticId === 'QURAN_GRAMMAR') return quranGrammarUnits();
 
+    // A syllabus written by the previous provider is rebuilt, not served —
+    // same version stamp the lessons use.
     const cached = await dbGetSyllabus(lang.id);
-    if (cached?.units?.length) return cached.units;
+    if (cached?.units?.length && (cached.schemaVersion || 0) >= LESSON_SCHEMA_VERSION) {
+      return cached.units;
+    }
 
     const units = AppState.mode === 'demo'
       ? demoSyllabus(lang)
@@ -5015,8 +5022,11 @@ const LessonView = {
   async loadSyllabus(lang) {
     const recipe = getRecipe(lang);
     if (recipe.ui?.staticSyllabus === 'QURAN_GRAMMAR') return quranGrammarUnits();
+    // Rebuilt rather than served if it predates the current lesson shape.
     const cached = await dbGetSyllabus(lang.id);
-    if (cached?.units?.length) return cached.units;
+    if (cached?.units?.length && (cached.schemaVersion || 0) >= LESSON_SCHEMA_VERSION) {
+      return cached.units;
+    }
     const units = AppState.mode === 'demo'
       ? demoSyllabus(lang)
       : await callSyllabusArchitect(lang, lang.level || 'A0');
@@ -6777,8 +6787,6 @@ async function loadSettings() {
   const apiKeyRecord = await dbGet('settings', 'apiKey');
   const geminiRecord = await dbGet('settings', 'geminiKey');
   const demoRecord   = await dbGet('settings', 'demoMode');
-  const modelRecord  = await dbGet('settings', 'model');
-  const hqRecord     = await dbGet('settings', 'highQualityGrading');
   const scopeRecord  = await dbGet('settings', 'tutorScope');
 
   // ── AUTO-CONFIGURE ON FIRST LAUNCH ──────────────────────────────
@@ -6809,9 +6817,10 @@ async function loadSettings() {
     await dbPut('settings', { key: 'apiKey', value: '' });
   }
 
-  // Model preferences (local-only, like the API keys)
-  AppState.settings.model = modelRecord?.value || 'deepseek-chat';
-  AppState.settings.highQualityGrading = hqRecord?.value || false;
+  // No model picker any more. Which model runs is not a preference — there is
+  // one model, and the TASK decides whether it thinks. A global "think harder"
+  // switch could only ever make the whole app slower for no gain on the
+  // structured calls, which is measured in ai-agents.js.
   // Cumulative by default: a book is one argument, and treating each chapter
   // as an island is the behaviour worth opting OUT of, not into.
   AppState.tutorScope = scopeRecord?.value === 'chapter' ? 'chapter' : 'cumulative';
@@ -6827,10 +6836,6 @@ async function loadSettings() {
     document.getElementById('input-gemini-key').value = AppState.settings.geminiKey;
   if (document.getElementById('toggle-demo-mode'))
     document.getElementById('toggle-demo-mode').checked = isDemoMode;
-  if (document.getElementById('select-model'))
-    document.getElementById('select-model').value = AppState.settings.model;
-  if (document.getElementById('toggle-hq-grading'))
-    document.getElementById('toggle-hq-grading').checked = AppState.settings.highQualityGrading;
 
   if (isDemoMode) {
     document.getElementById('btn-demo-banner').style.display = 'inline-flex';
@@ -6841,20 +6846,14 @@ async function saveSettings() {
   const apiKey = document.getElementById('input-api-key').value.trim();
   const geminiKey = document.getElementById('input-gemini-key')?.value.trim() || '';
   const isDemoMode = document.getElementById('toggle-demo-mode').checked;
-  const model = document.getElementById('select-model')?.value || 'deepseek-chat';
-  const hqGrading = document.getElementById('toggle-hq-grading')?.checked || false;
 
   AppState.settings.apiKey = apiKey;
   AppState.settings.geminiKey = geminiKey;
-  AppState.settings.model = model;
-  AppState.settings.highQualityGrading = hqGrading;
   AppState.mode = isDemoMode ? 'demo' : 'live';
 
   await dbPut('settings', { key: 'apiKey', value: apiKey });
   await dbPut('settings', { key: 'geminiKey', value: geminiKey });
   await dbPut('settings', { key: 'demoMode', value: isDemoMode });
-  await dbPut('settings', { key: 'model', value: model });
-  await dbPut('settings', { key: 'highQualityGrading', value: hqGrading });
 
   document.getElementById('modal-settings').style.display = 'none';
   document.getElementById('btn-demo-banner').style.display = isDemoMode ? 'inline-flex' : 'none';
