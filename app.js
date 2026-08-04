@@ -5620,10 +5620,15 @@ const QuranTutor = {
         </div>
       </div>
       <div class="lang-chat qtutor-chat"></div>
-      <div class="lang-chat-input-row">
-        <textarea class="cp-answer qtutor-input" rows="2"
+      <div class="chat-composer">
+        <textarea class="cp-answer qtutor-input" rows="1"
                   placeholder="Ask anything, or say &quot;start&quot;…"></textarea>
-        <button class="btn btn-primary qtutor-send">Send</button>
+        <button class="qtutor-send" type="button" title="Send" aria-label="Send">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 16V4M5 9l5-5 5 5"/>
+          </svg>
+        </button>
       </div>
       ${this.embedded ? `<div class="consolidate-actions">
         <button class="btn btn-ghost qtutor-done">Continue →</button>
@@ -5646,6 +5651,10 @@ const QuranTutor = {
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); }
     });
+    // The composer grows with what is typed and stops at a third of the pane,
+    // rather than sitting at a fixed two rows whether there is one word in it
+    // or ten lines.
+    input.addEventListener('input', () => this.autoGrow(input));
     // Only the session player has a "next activity" to continue to; the lesson
     // pane has its own topbar and footer for getting anywhere.
     el.querySelector('.qtutor-done')?.addEventListener('click', () => LangSession.next());
@@ -5657,7 +5666,7 @@ const QuranTutor = {
     this.root.querySelectorAll('[data-tmode]').forEach(b =>
       b.classList.toggle('active', b.dataset.tmode === mode));
     this.root.querySelector('.qtutor-input').placeholder = mode === 'quiz'
-      ? 'Answer, or ask for a hint…'
+      ? 'Your answer…'
       : 'Ask anything, or say "start"…';
     this.paintHistory();
   },
@@ -5683,25 +5692,88 @@ const QuranTutor = {
     const msgs = this.history[this.mode];
     if (!msgs.length) {
       chat.innerHTML = `<div class="qtutor-empty">${this.mode === 'quiz'
-        ? 'Say "ready" and I\'ll start asking.'
+        ? 'Say "ready" and the questions start. No teaching — just questions.'
         : 'Say "start" whenever you are.'}</div>`;
       return;
     }
     msgs.forEach(m => this.addBubble(m.role, m.content, false));
+    // Coming back to a quiz mid-question: the offer that was on screen when you
+    // left is still the live question, so the chips come back with it.
+    const last = msgs[msgs.length - 1];
+    if (this.mode === 'quiz' && last?.role !== 'user' && /\[EXPLAIN\?\]/i.test(last?.content || '')) {
+      this.offerExplain();
+    }
     chat.scrollTop = chat.scrollHeight;
+  },
+
+  autoGrow(input) {
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  },
+
+  // Tags the model emits for the app, not for the learner: mastery bookkeeping
+  // and the quiz's offer-an-explanation marker. Both are stripped on the way to
+  // the screen — see the chips in `turn`.
+  cleanText(content) {
+    return String(content)
+      .replace(/\[MASTERED:[^\]]*\]/gi, '')
+      .replace(/\[EXPLAIN\?\]/gi, '')
+      .trim();
   },
 
   addBubble(role, content, scroll = true) {
     const chat = this.root?.querySelector('.qtutor-chat');
     if (!chat) return null;
     chat.querySelector('.qtutor-empty')?.remove();
+
+    // A row per message: the tutor gets a small mark and its words run the full
+    // width of the thread; the learner gets a bubble on the right. Same shape as
+    // the chat apps everyone already knows how to read.
+    const row = document.createElement('div');
+    row.className = `chat-msg ${role === 'user' ? 'user' : 'tutor'}`;
     const div = document.createElement('div');
     div.className = `lang-bubble ${role === 'user' ? 'user' : 'partner'}`;
-    // The mastery tag is bookkeeping, not something to read
-    div.textContent = String(content).replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
-    chat.appendChild(div);
+    div.textContent = this.cleanText(content);
+    if (role !== 'user') {
+      const mark = document.createElement('span');
+      mark.className = 'chat-avatar';
+      mark.textContent = 'ق';
+      mark.setAttribute('aria-hidden', 'true');
+      row.appendChild(mark);
+    }
+    row.appendChild(div);
+    chat.appendChild(row);
     if (scroll) chat.scrollTop = chat.scrollHeight;
     return div;
+  },
+
+  // The two answers to "Want me to explain?", so the commonest reply in a quiz
+  // is a tap rather than a sentence.
+  offerExplain() {
+    const chat = this.root?.querySelector('.qtutor-chat');
+    if (!chat) return;
+    chat.querySelector('.chat-chips')?.remove();
+    const row = document.createElement('div');
+    row.className = 'chat-chips';
+    // A tap is a known intent, so it is passed as one. Left to infer it from
+    // the words, the model graded "Yes, explain" as an answer to its question,
+    // decided it was wrong, and offered to explain all over again.
+    row.innerHTML = `
+      <button class="chat-chip" data-reply="Yes, explain" data-intent="explain">Explain it</button>
+      <button class="chat-chip ghost" data-reply="No, next question" data-intent="next">Next question</button>`;
+    row.querySelectorAll('[data-reply]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (this.busy) return;
+        row.remove();
+        const text = btn.dataset.reply;
+        this.addBubble('user', text);
+        this.history[this.mode].push({ role: 'user', content: text });
+        this.turn(text, btn.dataset.intent);
+      });
+    });
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
   },
 
   send() {
@@ -5710,18 +5782,28 @@ const QuranTutor = {
     const text = input?.value.trim();
     if (!text) return;
     input.value = '';
+    this.autoGrow(input);
+    this.root?.querySelector('.chat-chips')?.remove();
     this.addBubble('user', text);
     this.history[this.mode].push({ role: 'user', content: text });
     this.turn(text);
   },
 
-  async turn(userMessage) {
+  async turn(userMessage, intent = null) {
     const { lang, unit } = this;
     this.busy = true;
     const sendBtn = this.root?.querySelector('.qtutor-send');
-    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
+    if (sendBtn) sendBtn.disabled = true;
 
+    // Three dots until the first words land, so the wait reads as the tutor
+    // thinking rather than as nothing happening.
     const bubble = this.addBubble('tutor', '');
+    bubble.classList.add('typing');
+    bubble.innerHTML = '<span></span><span></span><span></span>';
+    const paint = (text) => {
+      bubble.classList.remove('typing');
+      bubble.textContent = this.cleanText(text);
+    };
     let full = '';
 
     try {
@@ -5729,7 +5811,7 @@ const QuranTutor = {
         // Same slice as the live path: the message being answered is passed
         // separately, so it must not also appear in the history behind it.
         full = demoQuranTutor(unit, userMessage, this.mode, this.history[this.mode].slice(0, -1));
-        bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
+        paint(full);
       } else {
         // Real verses to quote from, different ones each turn, never one this
         // conversation has already used. A failed load is not fatal — the tutor
@@ -5750,14 +5832,20 @@ const QuranTutor = {
             .filter(Boolean),
           priorUnits: this.syllabus.slice(0, this.unitIndex),
           verses,
+          intent,
           onChunk: (chunk) => {
             full += chunk;
-            bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
+            paint(full);
             const chat = this.root?.querySelector('.qtutor-chat');
             if (chat) chat.scrollTop = chat.scrollHeight;
           }
         });
       }
+
+      // The chunks normally paint as they arrive, but a reply that comes back
+      // whole — no streaming, or a stream that yielded nothing — would leave the
+      // three dots sitting there for good. Paint once more, unconditionally.
+      paint(full || '(No reply came back — ask me again.)');
 
       this.history[this.mode].push({ role: 'tutor', content: full });
       dbPutTutorChat(lang.id, this.unitIndex, this.mode, this.history[this.mode])
@@ -5765,12 +5853,16 @@ const QuranTutor = {
 
       // Teach mode only: the tag is how the tutor says they have it
       if (this.mode === 'teach' && /\[MASTERED:/i.test(full)) await this.markMastered();
+      // Quiz mode: a missed question ends with the offer, which becomes a chip.
+      // Never after a tap, though — an offer answered is answered, and a model
+      // that repeats it would leave the learner tapping the same button forever.
+      if (this.mode === 'quiz' && !intent && /\[EXPLAIN\?\]/i.test(full)) this.offerExplain();
     } catch (err) {
       console.warn('Tutor turn failed:', err.message);
-      bubble.textContent = '(Connection hiccup — ask me again.)';
+      paint('(Connection hiccup — ask me again.)');
     } finally {
       this.busy = false;
-      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+      if (sendBtn) sendBtn.disabled = false;
     }
   },
 
@@ -5832,6 +5924,29 @@ function demoQuranTutor(unit, userMessage, mode, history) {
   const dunno = /(i don'?t know|no idea|not sure|tell me|what'?s the answer|just tell me|skip)/i.test(msg);
   const asked = history.filter(m => m.role === 'tutor').length;
 
+  // Quiz mode runs on its own rails: correct → next question, wrong → the
+  // answer plus an offer, never a second pass through the lesson.
+  if (mode === 'quiz') {
+    const last = [...history].reverse().find(m => m.role === 'tutor')?.content || '';
+    const offered = /\[EXPLAIN\?\]/.test(last);
+    const wants = /^(y|yes|yeah|ok|okay|please|explain|why|go on|sure)\b/i.test(msg);
+    const declines = /^(n|no|next|move on|skip|carry on)\b/i.test(msg);
+
+    if (!asked) {
+      return `In الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ (1:2) — which two words are the possession pair?`;
+    }
+    if (offered && wants) {
+      return `رَبِّ is "Lord" and الْعَالَمِينَ is "the worlds". Two nouns side by side, nothing between them, so the second owns the first: "Lord of the worlds". The first noun drops its الْ and the second takes a kasrah.\n\nNext: in يَوْمِ الدِّينِ (1:4), which word is being owned?`;
+    }
+    if (offered && declines) {
+      return `In يَوْمِ الدِّينِ (1:4), which word is being owned?`;
+    }
+    if (dunno || /\b(hamd|الحمد|lillah)\b/i.test(msg)) {
+      return `Not quite — it is رَبِّ الْعَالَمِينَ.\n\nWant me to explain? [EXPLAIN?]`;
+    }
+    return `Correct.\n\nIn مَالِكِ يَوْمِ الدِّينِ (1:4) there are two pairs stacked — what owns يَوْمِ?`;
+  }
+
   if (dunno) {
     // First time a hint, second time the answer — the rule the real prompt carries
     const priorDunno = history.filter(m =>
@@ -5839,11 +5954,6 @@ function demoQuranTutor(unit, userMessage, mode, history) {
     return priorDunno >= 1
       ? `No problem — here it is. In بِسْمِ اللَّهِ (bismillāh, "in the name of Allah", 1:1), the two nouns sit side by side, so it means "the name OF Allah". That is the possession pair. Now you have it — the next one will be easier.`
       : `Have a look at بِسْمِ اللَّهِ (bismillāh, 1:1). Two nouns, nothing between them. What do you think the second one is doing to the first? If you'd rather I just told you, say so.`;
-  }
-  if (mode === 'quiz') {
-    return asked === 0
-      ? `Let's see what stuck. In الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ (al-ḥamdu lillāhi rabbi'l-ʿālamīn, 1:2) — which two words are the possession pair, and how can you tell?`
-      : `Good. Now a harder one: in مَالِكِ يَوْمِ الدِّينِ (māliki yawmi'd-dīn, 1:4) there are TWO possession pairs stacked. Can you see both?`;
   }
   if (asked >= 2) {
     return `That's exactly it. [MASTERED: ${unit?.title || 'this unit'}] You've got this one — let's carry it into the next.`;

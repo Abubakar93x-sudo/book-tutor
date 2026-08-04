@@ -1750,13 +1750,25 @@ function usedVerseRefs(history) {
 //   opts.priorUnits the units already covered, for the cumulative view.
 //   opts.verses    real verses from the bundled text to quote from, so the
 //                  example and its reference are checked rather than recalled.
+//   opts.intent    'explain' | 'next' when the learner TAPPED an answer to
+//                  "Want me to explain?" rather than typing one. See below —
+//                  a tap is a known intent, so it does not go through the
+//                  branch table at all.
 async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}) {
   const { scope = 'cumulative', history = [], roots = [], priorUnits = [],
-          verses = [], onChunk = null } = opts;
+          verses = [], intent = null, onChunk = null } = opts;
 
+  // The tags are machinery. Left in the transcript the model copies them back —
+  // it answered "yes, explain" by offering to explain all over again, because
+  // that is what its own previous message looked like. The state they carry is
+  // restated below in words instead.
   const historyText = history
-    .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
+    .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${
+      String(m.content).replace(/\[MASTERED:[^\]]*\]/gi, '').replace(/\[EXPLAIN\?\]/gi, '').trim()}`)
     .join('\n');
+
+  const lastTutor = [...history].reverse().find(m => m.role !== 'user')?.content || '';
+  const offerPending = /\[EXPLAIN\?\]/i.test(lastTutor);
 
   const priorBlock = (scope === 'cumulative' && priorUnits.length) ? `
       ALREADY COVERED — build on these, never re-teach them from scratch:
@@ -1784,9 +1796,29 @@ async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}
       there teaches the point cleanly, go anywhere else in the Qur'an — but do
       not fall back on the famous short surahs out of habit.`;
 
-  // The house style. Identical in both modes — a tutor who explains simply and
-  // then quizzes in jargon is two different teachers.
-  const voice = `
+  // The house style. Shared where it should be — plain English, jargon always
+  // unpacked — but the two modes are not the same job. Teaching explains;
+  // quizzing asks. Running one voice across both is what turned the quiz into
+  // a second pass through the lesson.
+  const commonVoice = `
+      - Plain English, short sentences. Never use a grammatical term without its
+        meaning in the same breath: "idafah (two nouns stuck together to mean
+        'the X of the Y')". Not once the first time and bare thereafter — every
+        time.
+      - Never make them feel behind. They are learning eight things, not eighty.`;
+
+  const voice = mode === 'quiz' ? `
+      HOW YOU TALK — in a quiz this matters more than anything else:
+      - NEVER THINK OUT LOUD. No "hold on", no "actually", no "wait, that's only
+        one word", no correcting yourself halfway through. Work out what you are
+        asking BEFORE you start writing, then write only that. A message that
+        shows you changing your mind is a failed message however good it ends up.
+      - SHORT. A whole message is one or two lines plus the question. If you are
+        writing a third line, you have started teaching again.
+      - No preamble, no recap, no "as we saw earlier", no summing up what they
+        have learned. They were taught this on the lesson page. Ask.
+${commonVoice}
+${QURAN_SOURCE_RULE}${regionBlock}${usedBlock}` : `
       HOW YOU TALK — this matters as much as what you teach:
       - Plain English, short sentences, ONE idea per message. If a message is
         getting long, stop and ask something instead.
@@ -1838,33 +1870,99 @@ ${priorBlock}${rootsBlock}${voice}
          tell them the next unit is waiting.
 ${NO_DEAD_END_RULE}${versesLast}
   ` : `
-      You are testing an adult beginner on a short Quranic Arabic course.
+      You are quizzing an adult beginner on a short Quranic Arabic course.
+
+      THIS IS A QUIZ, NOT A LESSON. They have already read the lesson page and
+      been taught this. Your job is to ask, take the answer, and ask the next
+      one. Teaching happens here only when they ask for it.
 
       ${scope === 'cumulative'
         ? `TEST EVERYTHING THEY HAVE COVERED, up to and including "${unit?.title || ''}".
       Favour questions that need two units at once — those are the ones that show
       whether it has actually landed.`
         : `TEST ONLY THIS UNIT: "${unit?.title || ''}" — ${unit?.structure || ''}.`}
-${priorBlock}${rootsBlock}${voice}
+${priorBlock}${rootsBlock}${voice}${versesLast}
 
-      QUIZ CONVERSATION SO FAR:
+      QUIZ SO FAR:
       ${historyText || '(this is the start)'}
+${offerPending ? `
+      STATE: your last message asked "Want me to explain?" and is waiting for an
+      answer. The student's message below is that answer. You have NOT explained
+      yet, and you have NOT asked a new question yet.` : ''}
 
-      Student's message: "${userMessage}"
+      The student has just said: "${userMessage}"
+${intent === 'explain' ? `
+      ── WHAT TO DO NOW ──────────────────────────────────────────────────────
+      They have TAPPED "Explain it". This is not an answer to your question —
+      it is a request. Do exactly this and nothing else:
 
-      HOW THE QUIZ RUNS:
-      1. Ask ONE question at a time, always about a REAL Quranic word, phrase or
-         verse — "in بِسْمِ اللَّهِ, which two words are the possession pair, and how
-         do you know?" — never an abstract grammar question with no text attached.
-      2. Right answer: say what they got right, then go one step deeper.
-      3. Wrong answer: point at the part of the word or verse that gives it away
-         and let them look again. Don't hand it over on the first miss.
-      4. They may ask questions mid-quiz. Answer them, then carry on.
-      5. NEVER output a "[MASTERED: ...]" tag in this mode.
-      6. When you've covered the ground, give them a short, honest summary of
-         what is solid and what needs another look.
-${NO_DEAD_END_RULE}${versesLast}
-  `;
+      Explain the question they just missed, in two or three sentences. Then ask
+      ONE new question, in one line.
+
+      Do NOT open with "Not quite". Do NOT restate the correction. Do NOT ask
+      whether they want an explanation — they have just told you they do. Do NOT
+      output [EXPLAIN?]. Six lines at the very most.
+  ` : intent === 'next' ? `
+      ── WHAT TO DO NOW ──────────────────────────────────────────────────────
+      They have TAPPED "Next question". This is not an answer to your question —
+      it is a request to move on. Do exactly this and nothing else:
+
+      Ask ONE new question. One line. Nothing before it.
+
+      Do NOT comment on the question they missed. Do NOT explain anything. Do
+      NOT output [EXPLAIN?].
+  ` : `
+      ── WHAT TO DO NOW ──────────────────────────────────────────────────────
+      Work out which ONE of these the message is, and do only that. Nothing
+      else goes in your reply.
+
+      A) They are starting ("ready", "ok", "go") →
+         Ask one question. Nothing before it.
+
+      B) Their answer is RIGHT →
+         "Correct." then the next question. Exactly two lines. Do not say why it
+         was right. Do not add a detail. Do not go deeper on the same point.
+
+      C) Their answer is WRONG, or they don't know →
+         Three things, in this order, and then STOP:
+           1. "Not quite —" and the correct answer, in ONE line.
+           2. The line "Want me to explain?"
+           3. The tag [EXPLAIN?] on its own.
+         Do NOT explain. Do NOT ask another question. Do NOT mention any other
+         verse. Four lines at the very most, and the message ends at the tag.
+
+      D) They are answering "Want me to explain?" with YES ("yes", "explain",
+         "why", "go on") →
+         Explain the question they just missed, in two or three sentences —
+         no more. Then ask ONE new question, in one line. Six lines total, and
+         no [EXPLAIN?] tag on this message.
+
+      E) They are answering "Want me to explain?" with NO ("no", "next",
+         "move on") →
+         Ask the next question. One line. Say nothing about the one they missed.
+
+         While an offer is pending, anything that is not plainly a refusal —
+         including "I don't know", another wrong guess, or a puzzled reply —
+         counts as YES. Do branch D. Never re-offer an explanation you have
+         already offered.
+
+      F) They asked you something →
+         Answer it in two sentences, then ask the next question.
+
+      G) They say they are done →
+         One short, honest line on what is solid and what needs another look.
+
+      WHATEVER THE BRANCH:
+      - Pick your question silently. If the first verse you look at has nothing
+        useful in it, look at another one — in your head. Never write "hold on",
+        "that's only one word", "let me find a better one". The student sees the
+        finished question and nothing else.
+      - One question per message. Never two.
+      - Never output a "[MASTERED: ...]" tag in this mode. The [EXPLAIN?] tag is
+        machinery: it is stripped before the student sees the message, and it
+        puts an "Explain it" button under your question. It belongs on branch C
+        and nowhere else.
+  `}`;
 
   // 'fast', for the same reason as the book tutor: it streams, and a pause
   // before every reply costs more than the thinking is worth in a conversation.
