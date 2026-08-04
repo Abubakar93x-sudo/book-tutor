@@ -629,7 +629,21 @@
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h3.5c1.5 0 2.5 1 3.5 2.5S12 13 13.5 13H17M3 13h3.5c.8 0 1.5-.3 2-.8M17 6h-3.5c-.8 0-1.5.3-2 .8"/><path d="M15 4l2 2-2 2M15 11l2 2-2 2"/></svg>
               Shuffle random cards
             </button>
+            <!-- Only for language decks; books are deleted from the Library -->
+            <button id="btn-delete-deck" class="btn btn-ghost btn-danger-ghost" style="display:none;">
+              Delete deck
+            </button>
           </div>
+        </div>
+
+        <!-- Recently deleted decks: hidden unless the bin has something in it -->
+        <div class="trash-section" id="trash-decks" style="display:none;">
+          <details class="trash-details">
+            <summary class="trash-summary">
+              Recently deleted decks <span class="trash-count" id="trash-decks-count">0</span>
+            </summary>
+            <div class="trash-list" id="trash-decks-list"></div>
+          </details>
         </div>
 
         <div class="review-layout">

@@ -1740,6 +1740,67 @@ ${NO_DEAD_END_RULE}
   }
 }
 
+// ── AGENT: QURANIC LEMMAS, IN BULK ───────────────────────────────────────────
+// The whole 300-root deck is built at once, and one call per root would be 300
+// calls. Fifteen roots per call returns all fifteen with five lemmas each in
+// about twenty seconds (measured), so the entire corpus costs ~21 calls that
+// can run in parallel. The roots, their transliterations, meanings and
+// frequencies all come from the static file — this only supplies the words.
+const QURAN_LEMMA_BATCH = 15;
+
+async function callQuranLemmasBatch(entries, perRoot = 5) {
+  const list = entries.map((e, i) => {
+    const label = e.kind === 'particles' ? e.words.join(' · ') : e.root;
+    return `${i + 1}. ${label} (${e.translit}) — ${e.gloss}`;
+  }).join('\n');
+
+  const prompt = `
+    You are a Quranic Arabic lexicographer. For EACH entry below, give the
+    ${perRoot} words built from it that occur MOST OFTEN in the Qur'an.
+
+    ${list}
+
+    Frequency in the Qur'an decides each list — not how interesting or how
+    classical a word is. If a form barely appears, leave it out in favour of one
+    that appears constantly.
+
+    For each word give:
+    - "word": the word in Arabic script, fully vowelled, in the form the Qur'an
+      actually uses (a verb in its 3rd-person masculine singular past, a noun in
+      its singular indefinite, unless another form is the common one)
+    - "romanization": how an English speaker would say it
+    - "meaning": what it means, in plain English, in a few words
+    - "form": what kind of word it is, in plain English — "verb (Form I), past",
+      "noun", "doer noun", "passive participle", "plural noun", "adjective".
+      Never an Arabic grammatical term without its English gloss.
+
+    Return ONLY valid json, no markdown fences:
+    { "roots": [ { "root": "<exactly as written above>",
+                   "lemmas": [ { "word": "…", "romanization": "…", "meaning": "…", "form": "…" } ] } ] }
+
+    All ${entries.length} entries must appear, in the same order.
+  `;
+
+  const result = await queryAI(prompt, true, null, 'fast');
+  const rows = Array.isArray(result.roots) ? result.roots : [];
+
+  // Matched back by POSITION, not by the root string the model echoed — it
+  // reformats Arabic spacing often enough that string matching drops rows.
+  return entries.map((entry, i) => {
+    const lemmas = (rows[i]?.lemmas || [])
+      .filter(l => l && l.word && l.meaning && wordMatchesScript(l.word, 'arabic'))
+      .slice(0, perRoot)
+      .map(l => ({
+        word: l.word,
+        romanization: l.romanization || '',
+        meaning: l.meaning,
+        form: l.form || '',
+        note: ''
+      }));
+    return { entry, lemmas };
+  });
+}
+
 // ── AGENT: QURANIC LEMMAS ────────────────────────────────────────────────────
 // Item one of the syllabus: 300 roots, "along with some lemmas". The root, its
 // transliteration, its meaning and its frequency all come from the static

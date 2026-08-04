@@ -496,6 +496,129 @@ async function dbPurgeLanguage(langId) {
   delete _glossCache[langId];
 }
 
+// ── DECKS ────────────────────────────────────────────────────────────────────
+// A deck is not a language. Emptying the Quranic root deck must not take the
+// course's progress with it, so deletion is marked on the language document
+// with its own field and only ever destroys the cards.
+async function dbSoftDeleteDeck(langId) {
+  await dbPatchLanguage(langId, { deckDeletedAt: Date.now() });
+}
+
+async function dbRestoreDeck(langId) {
+  const col = userCol('languages');
+  if (!col) return;
+  await col.doc(langId).set(
+    { deckDeletedAt: firebase.firestore.FieldValue.delete() }, { merge: true }
+  );
+}
+
+// The cards, and nothing else. rootDeckSeeded goes back to false so the root
+// track offers to rebuild rather than assuming the deck is still there.
+async function dbPurgeDeck(langId) {
+  await deleteQueryDocs(userCol('langCards'), 'langId', langId);
+  const col = userCol('languages');
+  if (!col) return;
+  await col.doc(langId).set({
+    cardCount: 0,
+    rootDeckSeeded: false,
+    deckDeletedAt: firebase.firestore.FieldValue.delete(),
+    updatedAt: Date.now()
+  }, { merge: true });
+}
+
+async function deleteDeckFlow(lang) {
+  const ok = await confirmAction({
+    title: `Delete the ${escapeAttr(lang.name)} deck?`,
+    body: `Its ${lang.cardCount || 0} flashcards go. Your progress through the
+      course itself stays exactly where it is.
+      <br><br>You can restore the deck from <strong>Recently deleted decks</strong>
+      for the next ${TRASH_DAYS} days, after which the cards are gone for good.`,
+    confirmLabel: 'Delete deck'
+  });
+  if (!ok) return false;
+
+  try {
+    await dbSoftDeleteDeck(lang.id);
+    AppState._reviewLangCache = null;
+    if (AppState.reviewFilter === `lang:${lang.id}`) AppState.reviewFilter = 'all';
+    showToast(`${lang.name} deck deleted — restorable for ${TRASH_DAYS} days.`, 'success', 5000);
+    await initReviewSession();
+    return true;
+  } catch (err) {
+    showToast('Could not delete that deck: ' + err.message, 'error', 7000);
+    return false;
+  }
+}
+
+// The deck bin, in the Flashcards view. Same shape as renderTrashSection, but
+// its items are languages filtered on a different field.
+async function renderDeckTrash() {
+  const wrap = document.getElementById('trash-decks');
+  const list = document.getElementById('trash-decks-list');
+  const count = document.getElementById('trash-decks-count');
+  if (!wrap || !list) return;
+
+  const items = (await dbGetAllLanguages().catch(() => [])).filter(l => l.deckDeletedAt);
+  if (!items.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+
+  items.sort((a, b) => b.deckDeletedAt - a.deckDeletedAt);
+  if (count) count.textContent = items.length;
+
+  list.innerHTML = items.map(l => {
+    const left = trashDaysLeft({ deletedAt: l.deckDeletedAt });
+    return `
+      <div class="trash-item" data-id="${escapeAttr(l.id)}">
+        <div class="trash-item-body">
+          <span class="trash-item-name">${escapeAttr(l.name)} deck</span>
+          <span class="trash-item-meta">${l.cardCount || 0} cards · ${left > 0
+            ? `${left} day${left === 1 ? '' : 's'} left to restore`
+            : 'will be removed shortly'}</span>
+        </div>
+        <button class="trash-btn trash-restore" data-id="${escapeAttr(l.id)}">Restore</button>
+        <button class="trash-btn trash-purge" data-id="${escapeAttr(l.id)}">Delete now</button>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.trash-restore').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await dbRestoreDeck(btn.dataset.id);
+        AppState._reviewLangCache = null;
+        showToast('Deck restored.', 'success', 3000);
+        await initReviewSession();
+      } catch (err) {
+        showToast('Could not restore: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  list.querySelectorAll('.trash-purge').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const lang = items.find(l => l.id === btn.dataset.id);
+      const ok = await confirmAction({
+        title: `Permanently delete the ${escapeAttr(lang.name)} deck?`,
+        body: 'This cannot be undone. The cards are destroyed immediately — your course progress is untouched.',
+        confirmLabel: 'Delete permanently'
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await dbPurgeDeck(lang.id);
+        AppState._reviewLangCache = null;
+        showToast('Deck permanently deleted.', 'success', 3000);
+        await initReviewSession();
+      } catch (err) {
+        showToast('Could not delete: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  wrap.style.display = 'block';
+}
+
 // Anything past its grace period is destroyed for good. Runs once on load —
 // quietly, and never blocking what the learner is trying to do.
 async function purgeExpiredTrash() {
@@ -507,10 +630,14 @@ async function purgeExpiredTrash() {
     ]);
     const staleBooks = books.filter(b => b.deletedAt && b.deletedAt < cutoff);
     const staleLangs = langs.filter(l => l.deletedAt && l.deletedAt < cutoff);
+    // A deck whose language is itself being purged needs no separate sweep.
+    const staleDecks = langs.filter(l =>
+      l.deckDeletedAt && l.deckDeletedAt < cutoff && !staleLangs.includes(l));
     for (const b of staleBooks) await dbPurgeBook(b.id).catch(() => {});
     for (const l of staleLangs) await dbPurgeLanguage(l.id).catch(() => {});
-    if (staleBooks.length || staleLangs.length) {
-      console.log(`Trash: purged ${staleBooks.length} book(s), ${staleLangs.length} language(s) past ${TRASH_DAYS} days.`);
+    for (const l of staleDecks) await dbPurgeDeck(l.id).catch(() => {});
+    if (staleBooks.length || staleLangs.length || staleDecks.length) {
+      console.log(`Trash: purged ${staleBooks.length} book(s), ${staleLangs.length} language(s), ${staleDecks.length} deck(s) past ${TRASH_DAYS} days.`);
     }
   } catch (err) {
     console.warn('Trash purge failed:', err.message);
@@ -736,6 +863,7 @@ async function dbPutLangCardBatch(langId, batchNum, cards) {
 async function dbAppendLangCards(langId, newCards) {
   const batches = await dbGetLangCardBatches(langId);
   let queue = [...newCards];
+  const before = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
 
   const last = batches[batches.length - 1];
   if (last && (last.flashcards || []).length < LANG_CARDS_PER_BATCH) {
@@ -748,6 +876,11 @@ async function dbAppendLangCards(langId, newCards) {
     await dbPutLangCardBatch(langId, nextBatch, queue.splice(0, LANG_CARDS_PER_BATCH));
     nextBatch += 1;
   }
+
+  // The running total lives on the language document so the flashcard source
+  // list can leave out decks that hold nothing without reading every batch.
+  await dbPatchLanguage(langId, { cardCount: before + newCards.length })
+    .catch(err => console.warn(`Card count update failed for ${langId}:`, err.message));
 }
 
 // vocabSets/{langId}_set_{n} — one generated batch of vocabulary-builder
@@ -2621,6 +2754,85 @@ async function migrateQuranVocabId(languages) {
           { ...stray, recipeId: 'quranic' }];
 }
 
+// ── THE FULL ROOT DECK ───────────────────────────────────────────────────────
+// Every entry in QURAN_SEQUENCE as a flashcard, in one go. The learn tab still
+// walks six at a time — that is reading, and it is unchanged — but the deck
+// holds the whole corpus from the moment the track is added, because a root
+// list is a reference you revise, not something to be handed out in instalments.
+//
+// The only per-root work is the lemmas, so that is what's batched: fifteen
+// roots per call, every batch in flight at once, and any root already in the
+// lemma cache is never asked for again. All 305 arrive due immediately.
+async function buildQuranRootDeck(lang, onProgress = () => {}) {
+  const entries = QURAN_SEQUENCE;
+  const lemmasFor = new Map();
+
+  // Cache first — a re-run after a partial failure only pays for what's missing.
+  const cached = await Promise.all(entries.map(async (e) => {
+    try { return [e, await dbGetQuranLemmas(e.id)]; } catch (_) { return [e, null]; }
+  }));
+  const missing = [];
+  for (const [entry, lemmas] of cached) {
+    if (lemmas?.length) lemmasFor.set(entry.id, lemmas);
+    else missing.push(entry);
+  }
+
+  onProgress(entries.length - missing.length, entries.length);
+
+  if (AppState.mode === 'demo') {
+    missing.forEach(e => lemmasFor.set(e.id, demoQuranLemmas(e)));
+  } else if (missing.length) {
+    const chunks = [];
+    for (let i = 0; i < missing.length; i += QURAN_LEMMA_BATCH) {
+      chunks.push(missing.slice(i, i + QURAN_LEMMA_BATCH));
+    }
+
+    let done = entries.length - missing.length;
+    await Promise.all(chunks.map(async (chunk) => {
+      let rows = [];
+      try {
+        rows = await callQuranLemmasBatch(chunk);
+      } catch (err) {
+        // A failed batch costs those roots their lemmas, not the whole deck —
+        // they still go in as cards and fill in on a later run.
+        console.warn(`Lemma batch failed (${chunk[0].root}…):`, err.message);
+      }
+      for (const { entry, lemmas } of rows) {
+        if (!lemmas.length) continue;
+        lemmasFor.set(entry.id, lemmas);
+        dbPutQuranLemmas(entry.id, lemmas)
+          .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
+      }
+      done += chunk.length;
+      onProgress(Math.min(done, entries.length), entries.length);
+    }));
+  }
+
+  // Cards the deck doesn't already hold. Re-running tops up rather than doubles.
+  const have = new Set();
+  for (const batch of await dbGetLangCardBatches(lang.id)) {
+    for (const c of batch.flashcards || []) if (c.rootId) have.add(c.rootId);
+  }
+
+  const cards = entries.filter(e => !have.has(e.id)).map(e => ({
+    front: e.root,                       // the root alone, in Arabic
+    back: e.gloss,
+    word: e.root,
+    romanization: e.translit,
+    type: 'root',
+    rootId: e.id,
+    quranCount: e.count,
+    lemmas: lemmasFor.get(e.id) || []
+  }));
+
+  if (cards.length) await dbAppendLangCards(lang.id, cards);
+
+  lang.rootDeckSeeded = true;
+  lang.rootDeckCount = entries.length;
+  await dbPatchLanguage(lang.id, { rootDeckSeeded: true, rootDeckCount: entries.length });
+  return cards.length;
+}
+
 // Checked before its own script, so kanji doesn't get read as Chinese and
 // Hangul doesn't get read as CJK.
 const SCRIPT_DETECT_ORDER = ['arabic', 'hebrew', 'devanagari', 'cyrillic', 'greek',
@@ -2760,8 +2972,47 @@ const VocabBuilder = {
       this.renderControls();
       this.renderTab();
       showToast(`${lang.name} added to your vocabulary.`, 'success');
+      // The root track ships with its whole deck rather than an empty one.
+      if (isQuranVocab(lang)) this.seedRootDeck();
     } catch (err) {
       showToast('Could not add that language: ' + err.message, 'error', 6000);
+    }
+  },
+
+  // Build the full root deck, with the learn panel standing in as the progress
+  // bar. Runs once per track; the banner in renderLearn is the way back in if
+  // it was interrupted.
+  async seedRootDeck() {
+    const lang = this.lang;
+    if (this._seeding) return;
+    this._seeding = true;
+
+    const panel = document.getElementById('vocab-panel-learn');
+    const paint = (done, total) => {
+      if (!panel || this.lang.id !== lang.id || this.tab !== 'learn') return;
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">Building your root deck</h3>
+          <p class="vocab-empty-sub">
+            All ${total} roots, each with the words the Qur'an builds from it.
+            This runs once.
+          </p>
+          <div class="seed-progress"><div class="seed-progress-fill" style="width:${Math.round(done / total * 100)}%"></div></div>
+          <p class="vocab-empty-sub">${done} / ${total}</p>
+        </div>`;
+    };
+
+    paint(0, QURAN_SEQUENCE.length);
+    try {
+      const added = await buildQuranRootDeck(lang, paint);
+      showToast(added
+        ? `${added} root cards are in your deck and due now.`
+        : 'Your root deck is already complete.', 'success', 4000);
+    } catch (err) {
+      showToast('Could not build the root deck: ' + err.message, 'error', 6000);
+    } finally {
+      this._seeding = false;
+      if (this.lang.id === lang.id) this.renderTab();
     }
   },
 
@@ -2891,6 +3142,24 @@ const VocabBuilder = {
   renderLearn() {
     const panel = document.getElementById('vocab-panel-learn');
     if (!panel) return;
+    if (this._seeding) return;               // the progress bar owns the panel
+
+    // A root track added before the deck was built whole starts with the offer
+    // to fill it, rather than six cards and 299 missing ones.
+    if (isQuranVocab(this.lang) && !this.lang.rootDeckSeeded) {
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">Put all ${QURAN_SEQUENCE.length} roots in your deck</h3>
+          <p class="vocab-empty-sub">
+            The root on the front; on the back, the root with its meaning and the
+            words the Qur'an most often builds from it. Every card due straight away.
+          </p>
+          <button class="btn btn-primary" id="btn-vocab-seed-roots">Build the full root deck →</button>
+        </div>`;
+      document.getElementById('btn-vocab-seed-roots')
+        .addEventListener('click', () => this.seedRootDeck());
+      return;
+    }
 
     if (!this.words.length) {
       panel.innerHTML = `
@@ -3071,12 +3340,16 @@ const VocabBuilder = {
       lang.rootsLearned = [...new Set([...(lang.rootsLearned || []), ...rootIds])];
     }
 
+    // Once the full root deck has been built, every root is already a card —
+    // reading the next six must not file them a second time.
+    const fresh = lang.rootDeckSeeded ? words.filter(w => !w.rootId) : words;
+
     try {
       // The WORD goes on the front — recall runs word → meaning, which is what
       // owning a word actually is. The back carries the definition and the
       // sentence that makes it stick, plus the translation for a non-Latin
       // script where the sentence itself needs one.
-      await dbAppendLangCards(lang.id, words.map(w => {
+      if (fresh.length) await dbAppendLangCards(lang.id, fresh.map(w => {
         // A root card is the root alone on the front. The back carries the root
         // again with its meaning, then the five words the Qur'an builds from it
         // — structured, because the renderer lays it out rather than printing a
@@ -8964,8 +9237,12 @@ async function collectCards({ dueOnly = true } = {}) {
   // off-script card check below has something to test against.
   languages.forEach(ensureLangScript);
 
+  // A deck in the bin is out of the deck until it is restored — the cards are
+  // still on disk for the grace period, they just stop being reviewed.
+  const liveDecks = languages.filter(l => !l.deckDeletedAt);
+
   const [langBatchSets, pdfChapterSets] = await Promise.all([
-    Promise.all(languages.map(lang =>
+    Promise.all(liveDecks.map(lang =>
       dbGetLangCardBatches(lang.id).then(batches => ({ lang, batches })).catch(() => ({ lang, batches: [] }))
     )),
     Promise.all(books.filter(b => b.isPdfBook).map(book =>
@@ -9072,12 +9349,32 @@ async function populateReviewFilterFromMeta() {
     dbGetAllLanguages().catch(() => [])
   ]);
 
+  // A language document is not a deck. Quranic Arabic exists twice — the course
+  // and the root vocabulary — and listing both by name gave two identical
+  // entries, one of which was empty. Only decks that actually hold cards are
+  // offered, and where two survive under one name they say which is which.
+  await Promise.all(languages.map(async (l) => {
+    if (l.deckDeletedAt) { l.cardCount = 0; return; }   // in the bin, not on offer
+    if (typeof l.cardCount === 'number') return;
+    try {
+      const batches = await dbGetLangCardBatches(l.id);
+      l.cardCount = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
+      dbPatchLanguage(l.id, { cardCount: l.cardCount }).catch(() => {});
+    } catch (_) { l.cardCount = 1; }   // unreadable: keep it rather than hide it
+  }));
+
+  const withCards = languages.filter(l => l.cardCount > 0);
+  const nameCount = withCards.reduce((m, l) => (m[l.name] = (m[l.name] || 0) + 1, m), {});
+  const deckLabel = (l) => nameCount[l.name] > 1
+    ? `${l.name} — ${l.recipeId === 'vocabBuilder' ? 'vocabulary' : 'course'}`
+    : l.name;
+
   const bookOpts = books
     .sort((a, b) => a.title.localeCompare(b.title))
     .map(b => `<option value="book:${b.id}">${b.title}</option>`).join('');
-  const langOpts = languages
+  const langOpts = withCards
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(l => `<option value="lang:${l.id}">${l.name}</option>`).join('');
+    .map(l => `<option value="lang:${l.id}">${deckLabel(l)}</option>`).join('');
 
   select.innerHTML =
     '<option value="all">Random — everything mixed</option>' +
@@ -9095,6 +9392,22 @@ async function populateReviewFilterFromMeta() {
   const exists = [...select.options].some(o => o.value === AppState.reviewFilter);
   select.value = exists ? AppState.reviewFilter : 'all';
   AppState.reviewFilter = select.value;
+
+  // Deleting is per-deck, so the button only exists once a deck is selected.
+  // Book cards live inside their chapters — a book is deleted in the Library.
+  AppState._reviewDecks = withCards;
+  syncDeleteDeckButton();
+  await renderDeckTrash();
+}
+
+function syncDeleteDeckButton() {
+  const btn = document.getElementById('btn-delete-deck');
+  if (!btn) return;
+  const id = (AppState.reviewFilter || '').startsWith('lang:')
+    ? AppState.reviewFilter.slice(5) : null;
+  const lang = id ? (AppState._reviewDecks || []).find(l => l.id === id) : null;
+  btn.style.display = lang ? '' : 'none';
+  btn.onclick = lang ? () => deleteDeckFlow(lang) : null;
 }
 
 // Practice deck: up to 20 random cards from the selected source, due or not.
