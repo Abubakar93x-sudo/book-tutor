@@ -1052,7 +1052,10 @@ function unitKey(unitIndex) {
 //       ladder is gone, so every lesson cached against it must be regenerated
 //   4 — every lesson still cached was written by Gemini. Rebuild them all on
 //       DeepSeek, with thinking on, which is the one call that gets it.
-const LESSON_SCHEMA_VERSION = 4;
+//   5 — Quranic lessons were written under a rule that preferred famous short
+//       surahs, so their examples all come from the same handful of verses.
+//       The rule now opens the whole muṣḥaf; the cached lessons have to go.
+const LESSON_SCHEMA_VERSION = 5;
 
 async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
@@ -2752,6 +2755,76 @@ async function migrateQuranVocabId(languages) {
   }
   return [...languages.filter(l => l.id !== 'ar-quran'), moved,
           { ...stray, recipeId: 'quranic' }];
+}
+
+// ── THE QUR'ANIC TEXT ────────────────────────────────────────────────────────
+// quran-text.js is a megabyte and only the Quranic course wants it, so it is
+// fetched the first time something asks. A script tag rather than fetch(),
+// because index.html is meant to open straight off disk and file:// blocks
+// fetch — see the "no build step" promise in the project notes.
+let _quranTextPromise = null;
+
+function loadQuranText() {
+  if (typeof QURAN_TEXT !== 'undefined') return Promise.resolve(QURAN_TEXT);
+  if (_quranTextPromise) return _quranTextPromise;
+  _quranTextPromise = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = 'quran-text.js';
+    el.onload = () => resolve(typeof QURAN_TEXT !== 'undefined' ? QURAN_TEXT : null);
+    el.onerror = () => {
+      _quranTextPromise = null;
+      reject(new Error('Could not load the Qur\'anic text.'));
+    };
+    document.head.appendChild(el);
+  });
+  return _quranTextPromise;
+}
+
+function quranSurahName(num) {
+  const row = (typeof QURAN_SURAHS !== 'undefined' ? QURAN_SURAHS : []).find(s => s[0] === num);
+  return row ? `Sūrat ${row[1]}` : `Surah ${num}`;
+}
+
+// A spread of real verses for the tutor to quote from. Sampling uniformly over
+// all 6,236 ayat is itself the right distribution — most of the Qur'an is in the
+// long and middle surahs, so that is where most of the sample lands, without
+// anyone having to weight it. One verse per surah, so a dozen candidates come
+// from a dozen different places.
+//
+// The length window is pedagogical: under four words there is nothing to break
+// down, over twenty and a beginner drowns before the point is made.
+function pickQuranVerses(count = 12, { exclude = [], minWords = 4, maxWords = 20 } = {}) {
+  if (typeof QURAN_TEXT === 'undefined') return [];
+  const keys = Object.keys(QURAN_TEXT);
+  const skip = new Set(exclude);
+  const surahsUsed = new Set();
+  const out = [];
+
+  for (let tries = 0; out.length < count && tries < count * 400; tries++) {
+    const ref = keys[Math.floor(Math.random() * keys.length)];
+    if (skip.has(ref)) continue;
+    const surah = parseInt(ref, 10);
+    if (surahsUsed.has(surah)) continue;
+    const text = QURAN_TEXT[ref];
+    const words = text.split(/\s+/).length;
+    if (words < minWords || words > maxWords) continue;
+    surahsUsed.add(surah);
+    skip.add(ref);
+    out.push({ ref, text, surah: quranSurahName(surah) });
+  }
+  return out;
+}
+
+// Verses already quoted, so a fresh sample never repeats one. Matches the
+// tutor's own citation format.
+function versesInHistory(history = []) {
+  const refs = [];
+  for (const m of history) {
+    for (const [, s, a] of String(m.content || '').matchAll(/\b(\d{1,3}):(\d{1,3})\b/g)) {
+      if (+s >= 1 && +s <= 114) refs.push(`${+s}:${+a}`);
+    }
+  }
+  return refs;
 }
 
 // ── THE FULL ROOT DECK ───────────────────────────────────────────────────────
@@ -5314,9 +5387,22 @@ const LessonView = {
     if (lesson && (lesson.schemaVersion || 0) < LESSON_SCHEMA_VERSION) lesson = null;
     if (lesson?.grammar) return lesson;
 
+    // A lesson wants more verses than a single tutor message — it writes four
+    // examples and a pattern table, and they should not all come from one page
+    // of the muṣḥaf.
+    let verses = [];
+    if (AppState.mode !== 'demo') {
+      try {
+        await loadQuranText();
+        verses = pickQuranVerses(20);
+      } catch (err) {
+        console.warn('Qur\'anic text unavailable for this lesson:', err.message);
+      }
+    }
+
     const grammar = AppState.mode === 'demo'
       ? demoQuranGrammarUnit(this.unit)
-      : await callGrammarUnitGenerator(this.lang, this.unit, this.lang.knownWords || []);
+      : await callGrammarUnitGenerator(this.lang, this.unit, this.lang.knownWords || [], verses);
 
     lesson = { grammar, unit: this.unit, formMarkers: QURAN_FORM_MARKERS,
                schemaVersion: LESSON_SCHEMA_VERSION };
@@ -5645,6 +5731,17 @@ const QuranTutor = {
         full = demoQuranTutor(unit, userMessage, this.mode, this.history[this.mode].slice(0, -1));
         bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();
       } else {
+        // Real verses to quote from, different ones each turn, never one this
+        // conversation has already used. A failed load is not fatal — the tutor
+        // falls back to its own recall, with the reference rules that go with it.
+        let verses = [];
+        try {
+          await loadQuranText();
+          verses = pickQuranVerses(10, { exclude: versesInHistory(this.history[this.mode]) });
+        } catch (err) {
+          console.warn('Qur\'anic text unavailable for this turn:', err.message);
+        }
+
         full = await callQuranTutor(lang, unit, userMessage, this.mode, {
           scope: this.scope,
           history: this.history[this.mode].slice(0, -1),   // the new message is passed separately
@@ -5652,6 +5749,7 @@ const QuranTutor = {
             .map(id => QURAN_ROOTS.find(r => r.id === id)?.root)
             .filter(Boolean),
           priorUnits: this.syllabus.slice(0, this.unitIndex),
+          verses,
           onChunk: (chunk) => {
             full += chunk;
             bubble.textContent = full.replace(/\[MASTERED:[^\]]*\]/gi, '').trim();

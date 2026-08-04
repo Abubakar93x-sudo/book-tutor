@@ -1214,15 +1214,23 @@ async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
 // ── AGENT: GRAMMAR UNIT GENERATOR ────────────────────────────────────────────
 // One unit's teaching content, generated on demand and cached with the lesson.
 // Explanation → pattern table → worked examples → the pitfall → drills.
-async function callGrammarUnitGenerator(langProfile, unit, knownWords = []) {
+async function callGrammarUnitGenerator(langProfile, unit, knownWords = [], verses = []) {
   const nonLatin = langProfile.script !== 'latin';
   const knownList = knownWords.slice(-200).join(', ');
+
+  // The Quranic course has a closed corpus: its sentences are not invented to
+  // fit the grammar, they are verses. Every other language writes its own.
+  const quranBlock = langProfile.code === 'ar-quran'
+    ? `\n    THE EXAMPLES ARE NOT YOURS TO WRITE — they are verses.\n${QURAN_SOURCE_RULE}${quranVerseBlock(verses)}\n`
+    : '';
+
   const prompt = `
     You are a patient grammar teacher explaining ONE structure in
     ${langProfile.name} to an adult English speaker.
 
     THE UNIT: ${unit.title}
     THE STRUCTURE: ${unit.structure}
+${quranBlock}
 
     WORDS THEY ALREADY KNOW (build examples from these where you can):
     ${knownList || '(near-beginner — use only the most universal starter words)'}
@@ -1613,6 +1621,119 @@ async function callFrontierItems(langProfile, band) {
   return _validateAssessItems(await queryAI(prompt, true, null, 'quick'));
 }
 
+// ── WHERE QURANIC EXAMPLES COME FROM ─────────────────────────────────────────
+// Shared by the tutor and the lesson writer. The rule used to say "prefer short,
+// famous verses the student is likely to have heard", naming al-Fātiḥah,
+// al-Ikhlāṣ and Āyat al-Kursī — which is exactly why the same dozen verses came
+// round again and again and the other 6,000 never appeared. Familiarity was the
+// wrong thing to optimise: a learner is here to read the Qur'an they will
+// actually open, and nearly all of it sits in the long and middle surahs.
+//
+// Naming surahs explicitly rather than saying "vary it" is deliberate. A model
+// asked to be varied stays where it is comfortable; a model handed a list
+// reaches into the list.
+const QURAN_SOURCE_RULE = `
+      WHERE YOUR EXAMPLES COME FROM:
+      - Every example is REAL QUR'AN, quoted exactly: the Arabic, then the
+        transliteration, then the English, then the surah:ayah reference. Never
+        invent an Arabic sentence to illustrate a point.
+      - Draw on the WHOLE Qur'an — any of the 114 surahs, any juzʾ. Most of the
+        Qur'an is in the long and middle surahs, so that is where most of your
+        examples should come from: al-Baqarah, Āl ʿImrān, al-Nisāʾ, al-Māʾidah,
+        al-Anʿām, al-Aʿrāf, al-Tawbah, Yūnus, Hūd, Yūsuf, al-Raʿd, Ibrāhīm,
+        al-Ḥijr, al-Naḥl, al-Isrāʾ, al-Kahf, Maryam, Ṭā-Hā, al-Anbiyāʾ, al-Ḥajj,
+        al-Muʾminūn, al-Nūr, al-Furqān, al-Shuʿarāʾ, al-Naml, al-Qaṣaṣ,
+        al-ʿAnkabūt, al-Rūm, Luqmān, al-Sajdah, al-Aḥzāb, Sabaʾ, Fāṭir, Yā-Sīn,
+        al-Ṣāffāt, Ṣād, al-Zumar, Ghāfir, Fuṣṣilat, al-Shūrā, al-Zukhruf,
+        al-Dukhān, al-Jāthiyah, al-Aḥqāf, Muḥammad, al-Fatḥ, al-Ḥujurāt, Qāf,
+        al-Dhāriyāt, al-Ṭūr, al-Najm, al-Qamar, al-Raḥmān, al-Wāqiʿah, al-Ḥadīd,
+        al-Mujādilah, al-Ḥashr, al-Ṣaff, al-Jumuʿah, al-Munāfiqūn, al-Ṭalāq,
+        al-Taḥrīm, al-Mulk, al-Qalam, al-Ḥāqqah, al-Maʿārij, Nūḥ.
+      - Do NOT keep returning to al-Fātiḥah, Āyat al-Kursī, al-Ikhlāṣ, al-ʿAṣr,
+        al-Kawthar and the last juzʾ. A verse being famous is not a reason to
+        pick it. Fitting the point you are teaching is the only reason.
+      - Move around. Consecutive examples should come from different surahs, and
+        across a lesson you should range over narrative, law, parable, argument
+        and supplication rather than one kind of passage.
+      - Accuracy still outranks reach. Quote only wording you are certain of — if
+        you cannot recall a verse exactly, choose a different one you can.
+      - THE REFERENCE MUST BE RIGHT OR ABSENT. Ranging widely means you will
+        sometimes be sure of the words but unsure of the number. When that
+        happens, name the surah alone ("from Sūrat al-Kahf") or say "elsewhere in
+        the Qur'an" — never attach a surah:ayah you are guessing at. A student
+        who memorises a wrong reference has been taught something false, and a
+        missing number costs them nothing.`;
+
+// The verses handed to a call, drawn from the bundled text. Quoting beats
+// recalling: everything in this block is the checked Uthmani text with its real
+// reference, so an example built from it cannot be misquoted or misattributed.
+function quranVerseBlock(verses) {
+  if (!verses?.length) return '';
+  return `
+      VERSES TO BUILD THIS MESSAGE'S EXAMPLE FROM — this is the exact text of
+      the Qur'an with its exact reference. Copy the Arabic character for
+      character and cite the reference as given:
+${verses.map(v => `      ${v.ref} · ${v.surah}\n        ${v.text}`).join('\n')}
+
+      YOUR EXAMPLE COMES FROM THIS LIST. Pick whichever shows your point most
+      clearly — a phrase inside a verse is fine, you need not use the whole
+      ayah. Copy it from the text above; do not type it from memory. The Arabic
+      you show must appear character for character inside the verse you cite.
+
+      Do NOT set the list aside for a verse you happen to remember. The verses
+      you remember best — al-Fātiḥah, Āyat al-Kursī, al-Ikhlāṣ, the last juzʾ —
+      are the ones this student has already met a hundred times, and they are
+      off limits here. That is the whole reason this list exists.
+
+      Only if NOT ONE of the verses above contains the structure at all may you
+      go elsewhere, and then say the surah name with NO verse number.
+
+      Choose silently. The student sees ONE example, not your search for it —
+      never show a verse and then say it was the wrong one.`;
+}
+
+// A fresh conversation has no history to diversify against, and left to itself
+// a model opens on the same verse every time. Each turn is handed a different
+// stretch of the muṣḥaf to look in first — a nudge, not a cage: if the unit is
+// better served elsewhere, elsewhere is right.
+const QURAN_REGIONS = [
+  'al-Baqarah and Āl ʿImrān (surahs 2-3)',
+  'al-Nisāʾ, al-Māʾidah and al-Anʿām (surahs 4-6)',
+  'al-Aʿrāf, al-Anfāl and al-Tawbah (surahs 7-9)',
+  'Yūnus, Hūd and Yūsuf (surahs 10-12)',
+  'al-Raʿd through al-Naḥl (surahs 13-16)',
+  'al-Isrāʾ, al-Kahf and Maryam (surahs 17-19)',
+  'Ṭā-Hā, al-Anbiyāʾ and al-Ḥajj (surahs 20-22)',
+  'al-Muʾminūn, al-Nūr and al-Furqān (surahs 23-25)',
+  'al-Shuʿarāʾ, al-Naml and al-Qaṣaṣ (surahs 26-28)',
+  'al-ʿAnkabūt through al-Sajdah (surahs 29-32)',
+  'al-Aḥzāb, Sabaʾ and Fāṭir (surahs 33-35)',
+  'Yā-Sīn, al-Ṣāffāt and Ṣād (surahs 36-38)',
+  'al-Zumar, Ghāfir and Fuṣṣilat (surahs 39-41)',
+  'al-Shūrā through al-Jāthiyah (surahs 42-45)',
+  'al-Aḥqāf, Muḥammad, al-Fatḥ and al-Ḥujurāt (surahs 46-49)',
+  'Qāf, al-Dhāriyāt, al-Ṭūr and al-Najm (surahs 50-53)',
+  'al-Qamar, al-Raḥmān and al-Wāqiʿah (surahs 54-56)',
+  'al-Ḥadīd through al-Ṣaff (surahs 57-61)',
+  'al-Jumuʿah through al-Taḥrīm (surahs 62-66)',
+  'al-Mulk, al-Qalam, al-Ḥāqqah and al-Maʿārij (surahs 67-70)'
+];
+
+// Surah:ayah references the tutor has already used, pulled back out of the
+// conversation so it can be told not to repeat itself. Insisting on variety in
+// the abstract does nothing; naming the verses already spent does.
+function usedVerseRefs(history) {
+  const refs = [];
+  for (const m of history) {
+    if (m.role === 'user') continue;
+    for (const [, s, a] of String(m.content).matchAll(/\b(\d{1,3}):(\d{1,3})\b/g)) {
+      const surah = parseInt(s, 10);
+      if (surah >= 1 && surah <= 114 && parseInt(a, 10) >= 1) refs.push(`${surah}:${a}`);
+    }
+  }
+  return [...new Set(refs)];
+}
+
 // ── AGENT: QURANIC TUTOR ─────────────────────────────────────────────────────
 // The book tutor's counterpart for the language side, and the same two modes:
 // `teach` works through the unit and emits [MASTERED: …] when the learner shows
@@ -1627,8 +1748,11 @@ async function callFrontierItems(langProfile, band) {
 //   opts.roots     roots the learner already knows, so examples use words they
 //                  can actually decode.
 //   opts.priorUnits the units already covered, for the cumulative view.
+//   opts.verses    real verses from the bundled text to quote from, so the
+//                  example and its reference are checked rather than recalled.
 async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}) {
-  const { scope = 'cumulative', history = [], roots = [], priorUnits = [], onChunk = null } = opts;
+  const { scope = 'cumulative', history = [], roots = [], priorUnits = [],
+          verses = [], onChunk = null } = opts;
 
   const historyText = history
     .map(m => `${m.role === 'user' ? 'Student' : 'Tutor'}: ${m.content}`)
@@ -1645,6 +1769,21 @@ async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}
       ${roots.slice(-60).join(' · ')}
 ` : '';
 
+  const used = usedVerseRefs(history);
+  const usedBlock = used.length ? `
+      VERSES YOU HAVE ALREADY USED IN THIS CONVERSATION — do not use them again,
+      go somewhere else in the Qur'an:
+      ${used.slice(-40).join(' · ')}` : '';
+
+  // Real verses when the text is loaded; a region nudge when it isn't, so a
+  // learner whose text failed to download still gets examples from all over.
+  const verseBlock = quranVerseBlock(verses);
+  const regionBlock = verseBlock ? '' : `
+      LOOK HERE FIRST for this message's example: ${
+        QURAN_REGIONS[Math.floor(Math.random() * QURAN_REGIONS.length)]}. If nothing
+      there teaches the point cleanly, go anywhere else in the Qur'an — but do
+      not fall back on the famous short surahs out of habit.`;
+
   // The house style. Identical in both modes — a tutor who explains simply and
   // then quizzes in jargon is two different teachers.
   const voice = `
@@ -1654,16 +1793,15 @@ async function callQuranTutor(lang, unit, userMessage, mode = 'teach', opts = {}
       - Never use a grammatical term without its meaning in the same breath:
         "idafah (two nouns stuck together to mean 'the X of the Y')". Not once
         the first time and bare thereafter — every time.
-      - EVERY example must be REAL QUR'AN. An actual verse or an actual Quranic
-        word. Give the Arabic, then the transliteration, then the English, then
-        the surah:ayah reference. Never invent an Arabic sentence to illustrate
-        a point, and never quote a verse you are not sure of — pick one you are.
-      - Prefer short, famous verses the student is likely to have heard. Al-Fātiḥah,
-        al-Ikhlāṣ, Āyat al-Kursī and the short surahs are worth more than an
-        obscure verse that happens to fit better.
       - Answer any question they ask, however far off topic, and then come back
         to the unit. A question is never an interruption.
-      - Never make them feel behind. They are learning eight things, not eighty.`;
+      - Never make them feel behind. They are learning eight things, not eighty.
+${QURAN_SOURCE_RULE}${regionBlock}${usedBlock}`;
+
+  // Deliberately last in the prompt. Sitting up with the rest of the house
+  // style it was read as background and the model went on quoting from memory;
+  // immediately before the reply it is read as the task.
+  const versesLast = `${verseBlock}`;
 
   const prompt = mode === 'teach' ? `
       You are teaching ONE unit of a short Quranic Arabic course to an adult
@@ -1698,7 +1836,7 @@ ${priorBlock}${rootsBlock}${voice}
          went, on the same example, and let them try again. No tag.
       5. When the whole unit is covered and they can use it, say so plainly and
          tell them the next unit is waiting.
-${NO_DEAD_END_RULE}
+${NO_DEAD_END_RULE}${versesLast}
   ` : `
       You are testing an adult beginner on a short Quranic Arabic course.
 
@@ -1725,7 +1863,7 @@ ${priorBlock}${rootsBlock}${voice}
       5. NEVER output a "[MASTERED: ...]" tag in this mode.
       6. When you've covered the ground, give them a short, honest summary of
          what is solid and what needs another look.
-${NO_DEAD_END_RULE}
+${NO_DEAD_END_RULE}${versesLast}
   `;
 
   // 'fast', for the same reason as the book tutor: it streams, and a pause
