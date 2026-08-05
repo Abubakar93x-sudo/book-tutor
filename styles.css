@@ -5257,6 +5257,82 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   .root-lemma-form { max-width: none; width: 100%; text-align: left; }
 }
 
+/* ── The full root list ────────────────────────────────────────────────────
+   305 entries in frequency order. The header stays put while the list scrolls,
+   because with a list this long the search box is the main way into it. */
+.root-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-primary);
+  padding: 0.2rem 0 0.9rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.root-head-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+.root-head-note {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.root-search { width: 100%; margin: 0; }
+.root-fill-note {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+/* Frequency position, which is the whole point of the ordering */
+.root-entry .vocab-card-head { align-items: center; gap: 0.6rem; }
+.root-rank {
+  flex: none;
+  min-width: 2.1rem;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-radius: 100px;
+  padding: 0.15rem 0.45rem;
+  text-align: center;
+}
+.root-deck-offer {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-top: 0.7rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--purple-dim);
+  border: 1px solid rgba(184, 134, 63, 0.25);
+  border-radius: 12px;
+}
+.root-deck-offer-text {
+  flex: 1;
+  min-width: 12rem;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.root-deck-offer .seed-progress { flex: 1 0 100%; margin: 0.2rem 0 0; }
+
+.root-lemmas-pending {
+  margin-top: 0.7rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--border);
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
 .vocab-meta { display: flex; gap: 0.6rem; margin: 0.2rem 0 0.6rem; flex-wrap: wrap; }
 .vocab-pos {
   font-family: var(--font-body);

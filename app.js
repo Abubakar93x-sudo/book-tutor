@@ -281,36 +281,107 @@ async function dbClearStore(storeName) {
 // users/{uid}/bookChapters/{bookId}_ch_{N}, containing both the raw extracted
 // text (for tutor quoting) and the AI-generated curriculum (generated on demand).
 
+// The chapter's TEXT lives apart from everything else about the chapter, in
+// bookChapterText/{bookId}_ch_{n}. It is up to 200,000 characters — the single
+// biggest thing this app stores — and almost nothing that reads a chapter wants
+// it. Opening a chapter used to pull every OTHER chapter's text as well (to
+// build the tutor's prior-chapters context), and opening Flashcards pulled the
+// text of every chapter of every book to get at the cards inside them. That is
+// megabytes over the wire before anything appears, and it is why both were slow.
+//
+// Only the reader wants the text, and only for the one chapter it is showing.
+const chapterDocId = (bookId, n) => `${bookId}_ch_${n}`;
+
 async function dbPutChapter(bookId, chapterData) {
   const col = userCol('bookChapters');
   if (!col) return;
-  const key = `${bookId}_ch_${chapterData.chapterNumber}`;
-  await col.doc(key).set({ ...chapterData, bookId, updatedAt: Date.now() }, { merge: true });
+  const key = chapterDocId(bookId, chapterData.chapterNumber);
+  const { text, ...light } = chapterData;
+
+  const jobs = [col.doc(key).set({ ...light, bookId, updatedAt: Date.now() }, { merge: true })];
+  if (text !== undefined) {
+    const textCol = userCol('bookChapterText');
+    if (textCol) {
+      jobs.push(textCol.doc(key).set(
+        { bookId, chapterNumber: chapterData.chapterNumber, text, updatedAt: Date.now() },
+        { merge: true }
+      ));
+    }
+  }
+  await Promise.all(jobs);
 }
 
-async function dbGetChapter(bookId, chapterNumber) {
+async function dbGetChapterText(bookId, chapterNumber) {
+  const col = userCol('bookChapterText');
+  if (!col) return null;
+  const snap = await col.doc(chapterDocId(bookId, chapterNumber)).get();
+  return snap.exists ? (snap.data().text || '') : null;
+}
+
+// Chapters written before the split still carry `text` on the light document.
+// Moving it costs one extra write, once, on a read we were making anyway — and
+// the field is only removed after the copy is safely stored.
+async function migrateChapterText(bookId, chapterNumber, text) {
+  const col = userCol('bookChapters');
+  const textCol = userCol('bookChapterText');
+  if (!col || !textCol || !text) return;
+  try {
+    await textCol.doc(chapterDocId(bookId, chapterNumber)).set(
+      { bookId, chapterNumber, text, updatedAt: Date.now() }, { merge: true });
+    await col.doc(chapterDocId(bookId, chapterNumber)).set(
+      { text: firebase.firestore.FieldValue.delete() }, { merge: true });
+  } catch (err) {
+    console.warn(`Chapter text move failed for ${bookId} ch${chapterNumber}:`, err.message);
+  }
+}
+
+// `withText` is for the reader, which is the only caller that needs it.
+async function dbGetChapter(bookId, chapterNumber, { withText = true } = {}) {
   const col = userCol('bookChapters');
   if (!col) return null;
-  const key = `${bookId}_ch_${chapterNumber}`;
-  const snap = await col.doc(key).get();
-  return snap.exists ? snap.data() : null;
+  const snap = await col.doc(chapterDocId(bookId, chapterNumber)).get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  if (!withText) return data;
+
+  if (data.text) {                       // pre-split document: move it as we go
+    migrateChapterText(bookId, chapterNumber, data.text);
+    return data;
+  }
+  const text = await dbGetChapterText(bookId, chapterNumber);
+  return text == null ? data : { ...data, text };
 }
 
+// Deliberately light: summaries, concepts, cards and progress, never the text.
+// Any document still carrying text is moved here too, so a library heals itself
+// the first time each of these paths runs.
 async function dbGetChaptersForBook(bookId) {
   const col = userCol('bookChapters');
   if (!col) return [];
   const snap = await col.where('bookId', '==', bookId).get();
-  return snap.docs.map(d => d.data());
+  return snap.docs.map(d => {
+    const data = d.data();
+    if (data.text) {
+      migrateChapterText(bookId, data.chapterNumber, data.text);
+      const { text, ...light } = data;
+      return light;
+    }
+    return data;
+  });
 }
 
 async function dbDeleteBookChapters(bookId) {
-  const col = userCol('bookChapters');
-  if (!col) return;
-  const snap = await col.where('bookId', '==', bookId).get();
-  if (snap.empty) return;
-  const batch = firestoreDB.batch();
-  snap.docs.forEach(d => batch.delete(d.ref));
-  await batch.commit();
+  for (const name of ['bookChapters', 'bookChapterText']) {
+    const col = userCol(name);
+    if (!col) continue;
+    const snap = await col.where('bookId', '==', bookId).get();
+    if (snap.empty) continue;
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = firestoreDB.batch();
+      snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+  }
 }
 
 // ── CUMULATIVE TUTOR CONTEXT ─────────────────────────────────────────────────
@@ -443,6 +514,7 @@ async function dbPurgeBook(bookId) {
   if (!books) return;
 
   await deleteQueryDocs(chapters, 'bookId', bookId);
+  await deleteQueryDocs(userCol('bookChapterText'), 'bookId', bookId);
   await deleteQueryDocs(notes, 'bookId', bookId);
 
   // Chat is keyed `{bookId}-ch{n}`, so it needs a prefix sweep rather than a
@@ -963,6 +1035,22 @@ async function dbGetAllVocabSets(langId) {
     console.warn('Vocab set history read failed:', err.message);
     return [];
   }
+}
+
+// The root track keeps ONE set — the corpus. Anything left over from when it
+// was handed out six words at a time is stale by definition, and would show the
+// same roots again under a second heading in Saved vocab.
+async function dbDropVocabSetsAbove(langId, keepSetNumber = 0) {
+  const col = userCol('vocabSets');
+  if (!col) return 0;
+  const snap = await col.where('langId', '==', langId).get();
+  const stale = snap.docs.filter(d => (d.data().setNumber || 0) !== keepSetNumber);
+  for (let i = 0; i < stale.length; i += 400) {
+    const batch = firestoreDB.batch();
+    stale.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return stale.length;
 }
 
 // ── FOUNDATION DECK ──────────────────────────────────────────────────────────
@@ -2906,6 +2994,69 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
   return cards.length;
 }
 
+// ── RECOVERING LOST COURSE PROGRESS ──────────────────────────────────────────
+// A course document that was reset — re-added after going missing from the grid
+// — loses unitIndex and unitsMastered. The tutor transcripts do not: they live
+// in their own collection, one document per lesson, and every unit the learner
+// mastered has a "[MASTERED: …]" tag sitting in its teach transcript.
+//
+// So the progress is recoverable, and this rebuilds it. Runs once per language,
+// only when the stored progress is emptier than the transcripts say it should
+// be — it can only ever restore mastery, never take it away.
+async function recoverLangProgress(lang, syllabus) {
+  if (!lang || !syllabus?.length || lang.progressRecovered) return lang;
+  const col = userCol('langTutorChat');
+  if (!col) return lang;
+
+  let docs = [];
+  try {
+    const snap = await col.where('langId', '==', lang.id).get();
+    docs = snap.docs.map(d => d.data());
+  } catch (err) {
+    console.warn('Could not read tutor transcripts for recovery:', err.message);
+    return lang;
+  }
+
+  const mastered = new Set(lang.unitsMastered || []);
+  const before = mastered.size;
+  for (const doc of docs) {
+    if (doc.mode !== 'teach') continue;
+    const tagged = (doc.messages || []).some(m =>
+      m.role !== 'user' && /\[MASTERED:/i.test(String(m.content || '')));
+    if (!tagged) continue;
+    const unit = syllabus[doc.unitIndex];
+    if (unit?.id) mastered.add(unit.id);
+  }
+
+  if (mastered.size === before) {
+    // Nothing to restore, but record that we looked so we don't look again
+    lang.progressRecovered = true;
+    dbPatchLanguage(lang.id, { progressRecovered: true }).catch(() => {});
+    return lang;
+  }
+
+  // The furthest lesson they finished, plus one — the lesson they were on.
+  const lastDone = syllabus.reduce((n, u, i) => mastered.has(u.id) ? i : n, -1);
+  lang.unitsMastered = syllabus.filter(u => mastered.has(u.id)).map(u => u.id);
+  lang.unitIndex = Math.max(lang.unitIndex || 0, Math.min(lastDone + 1, syllabus.length - 1));
+  lang.progressRecovered = true;
+
+  try {
+    await dbPatchLanguage(lang.id, {
+      unitsMastered: lang.unitsMastered,
+      unitIndex: lang.unitIndex,
+      progressRecovered: true
+    });
+    const found = mastered.size - before;
+    console.log(`Recovered ${found} mastered lesson(s) for ${lang.name} from the tutor transcripts.`);
+    showToast(`Found ${found} lesson${found === 1 ? '' : 's'} you had already finished — your ${lang.name} progress is back.`,
+      'success', 6000);
+  } catch (err) {
+    console.warn('Progress recovery save failed:', err.message);
+  }
+  return lang;
+}
+
 // Checked before its own script, so kanji doesn't get read as Chinese and
 // Hangul doesn't get read as CJK.
 const SCRIPT_DETECT_ORDER = ['arabic', 'hebrew', 'devanagari', 'cyrillic', 'greek',
@@ -3060,19 +3211,14 @@ const VocabBuilder = {
     if (this._seeding) return;
     this._seeding = true;
 
-    const panel = document.getElementById('vocab-panel-learn');
+    // The progress replaces the offer strip, not the list — the learner should
+    // still be able to read the roots while their deck is being built.
     const paint = (done, total) => {
-      if (!panel || this.lang.id !== lang.id || this.tab !== 'learn') return;
-      panel.innerHTML = `
-        <div class="vocab-empty">
-          <h3 class="vocab-empty-title">Building your root deck</h3>
-          <p class="vocab-empty-sub">
-            All ${total} roots, each with the words the Qur'an builds from it.
-            This runs once.
-          </p>
-          <div class="seed-progress"><div class="seed-progress-fill" style="width:${Math.round(done / total * 100)}%"></div></div>
-          <p class="vocab-empty-sub">${done} / ${total}</p>
-        </div>`;
+      const strip = document.getElementById('root-deck-offer');
+      if (!strip || this.lang.id !== lang.id || this.tab !== 'learn') return;
+      strip.innerHTML = `
+        <span class="root-deck-offer-text">Adding them to your flashcards — ${done} of ${total}. This runs once.</span>
+        <div class="seed-progress"><div class="seed-progress-fill" style="width:${Math.round(done / total * 100)}%"></div></div>`;
     };
 
     paint(0, QURAN_SEQUENCE.length);
@@ -3217,21 +3363,18 @@ const VocabBuilder = {
     if (!panel) return;
     if (this._seeding) return;               // the progress bar owns the panel
 
-    // A root track added before the deck was built whole starts with the offer
-    // to fill it, rather than six cards and 299 missing ones.
-    if (isQuranVocab(this.lang) && !this.lang.rootDeckSeeded) {
-      panel.innerHTML = `
-        <div class="vocab-empty">
-          <h3 class="vocab-empty-title">Put all ${QURAN_SEQUENCE.length} roots in your deck</h3>
-          <p class="vocab-empty-sub">
-            The root on the front; on the back, the root with its meaning and the
-            words the Qur'an most often builds from it. Every card due straight away.
-          </p>
-          <button class="btn btn-primary" id="btn-vocab-seed-roots">Build the full root deck →</button>
-        </div>`;
-      document.getElementById('btn-vocab-seed-roots')
-        .addEventListener('click', () => this.seedRootDeck());
-      return;
+    // The root list is a reference, not a batch: it opens on the whole 305 and
+    // has no "next six" to press. If it isn't loaded yet, load it now rather
+    // than putting a button in front of a list that was never optional.
+    if (isQuranVocab(this.lang)) {
+      if (!this.words.length) {
+        panel.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:3rem 0;">
+          <span class="cp-spinner"></span> Opening the ${QURAN_SEQUENCE.length} roots…</div>`;
+        if (!this._loadingRoots) { this._loadingRoots = true; this.loadWords()
+          .finally(() => { this._loadingRoots = false; }); }
+        return;
+      }
+      return this.renderRootList(panel);
     }
 
     if (!this.words.length) {
@@ -3277,48 +3420,178 @@ const VocabBuilder = {
     document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
   },
 
-  // The 300 roots, six at a time, in the order the corpus file lays down.
-  // `known` holds the roots already issued — the entries themselves are picked
-  // here, so the only thing that can vary between two learners is which lemmas
-  // came back, and even those are cached per root rather than per person.
-  async loadQuranRoots(known = [], count = 6) {
-    const seen = new Set(known.map(w => String(w).trim()));
-    const entries = QURAN_SEQUENCE.filter(e => !seen.has(e.root)).slice(0, count);
-    if (!entries.length) return [];
+  // ── THE ROOT LIST ──
+  // All 305 entries in frequency order, each with the words the Qur'an builds
+  // from it. Rendered in one pass — 305 cards is a lot of nodes, so the HTML is
+  // built as a single string and assigned once rather than appended per card.
+  renderRootList(panel) {
+    const words = this.words;
+    const filter = (this.rootFilter || '').trim().toLowerCase();
+    const shown = filter
+      ? words.filter(w =>
+          String(w.word).includes(filter) ||
+          String(w.pronunciation).toLowerCase().includes(filter) ||
+          String(w.meaning).toLowerCase().includes(filter) ||
+          (w.lemmas || []).some(l => String(l.meaning).toLowerCase().includes(filter) ||
+                                     String(l.word).includes(filter)))
+      : words;
 
-    // Lemmas resolve in parallel; a root whose lemmas fail is still worth
-    // teaching, so it goes out with an empty list rather than sinking the set.
-    return Promise.all(entries.map(async (entry) => {
-      let lemmas = [];
-      try {
-        lemmas = await dbGetQuranLemmas(entry.id)
-          || (AppState.mode === 'demo'
-                ? demoQuranLemmas(entry)
-                : await callQuranLemmas(entry));
-        if (AppState.mode !== 'demo') {
-          dbPutQuranLemmas(entry.id, lemmas)
-            .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
+    const withLemmas = words.filter(w => w.lemmas?.length).length;
+    const covered = (quranCoverage(words.map(w => w.rootId)) * 100).toFixed(1);
+
+    // The deck offer sits above the list, not instead of it. Reading the roots
+    // and putting them in the review deck are two different things, and being
+    // shown a button where the words should be helps with neither.
+    const deckOffer = this.lang.rootDeckSeeded ? '' : `
+      <div class="root-deck-offer" id="root-deck-offer">
+        <span class="root-deck-offer-text">These ${words.length} roots can go in your flashcard deck too — the root on the front, its meaning and words on the back.</span>
+        <button class="btn btn-primary btn-sm" id="btn-vocab-seed-roots">Add to flashcards</button>
+      </div>`;
+
+    panel.innerHTML = `
+      <div class="root-head">
+        <div class="root-head-line">
+          <span class="vocab-set-count">${words.length} root words</span>
+          <span class="root-head-note">in order of how often they appear · ${covered}% of the Qur'an between them</span>
+        </div>
+        ${deckOffer}
+        <input type="search" id="vocab-root-search" class="form-input root-search"
+               placeholder="Search a root, a meaning or a word built from it…"
+               value="${escapeAttr(this.rootFilter || '')}">
+        <div id="vocab-fill-note" class="root-fill-note"
+             style="display:${this.fillingLemmas ? '' : 'none'}">${this.fillingLemmas
+               ? `Filling in the words built from ${this.fillingLemmas} more roots…` : ''}</div>
+      </div>
+      ${shown.length ? `<div class="vocab-list">
+        ${shown.map(w => rootEntryHtml(w, words.indexOf(w), withLemmas)).join('')}
+      </div>` : `<div class="vocab-empty"><p class="vocab-empty-sub">
+        Nothing matches “${escapeAttr(this.rootFilter)}”.</p></div>`}
+      <div class="vocab-actions">
+        <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
+      </div>
+    `;
+
+    document.getElementById('btn-vocab-seed-roots')
+      ?.addEventListener('click', () => this.seedRootDeck());
+
+    const search = document.getElementById('vocab-root-search');
+    search.addEventListener('input', () => {
+      this.rootFilter = search.value;
+      clearTimeout(this._rootFilterTimer);
+      this._rootFilterTimer = setTimeout(() => {
+        this.renderRootList(panel);
+        const again = document.getElementById('vocab-root-search');
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }, 180);
+    });
+
+    panel.querySelectorAll('.vocab-speak').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const w = words[parseInt(btn.dataset.idx)];
+        if (!NarrationEngine.speakLang(w.lemmas?.[0]?.word || w.word,
+              this.lang.ttsLangCode || this.lang.code, 0.85)) {
+          showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
         }
-      } catch (err) {
-        console.warn(`Lemmas unavailable for ${entry.root}:`, err.message);
-      }
-      return {
-        word: entry.root,
-        rootId: entry.id,
-        partOfSpeech: entry.kind === 'particles' ? 'function words' : 'root',
-        pronunciation: entry.translit,
-        meaning: entry.gloss,
-        // The example is the commonest real word built from it — for a root,
-        // the word IS the example, which is the whole point of learning roots.
-        example: lemmas[0]?.word || '',
-        exampleRomanization: lemmas[0]?.romanization || '',
-        exampleTranslation: lemmas[0]?.meaning || '',
-        cloze: '',
-        contrast: '',
-        quranCount: entry.count,
-        lemmas
-      };
+      });
+    });
+    document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
+  },
+
+  // One corpus entry as a vocabulary word. The root itself, its meaning and its
+  // frequency are curated data — nothing is asked of a model for them. Only the
+  // lemmas are generated, and those are cached per root, not per learner.
+  quranWord(entry, lemmas = []) {
+    return {
+      word: entry.root,
+      rootId: entry.id,
+      partOfSpeech: entry.kind === 'particles' ? 'function words' : 'root',
+      pronunciation: entry.translit,
+      meaning: entry.gloss,
+      // The example is the commonest real word built from it — for a root,
+      // the word IS the example, which is the whole point of learning roots.
+      example: lemmas[0]?.word || '',
+      exampleRomanization: lemmas[0]?.romanization || '',
+      exampleTranslation: lemmas[0]?.meaning || '',
+      cloze: '',
+      contrast: '',
+      quranCount: entry.count,
+      lemmas
+    };
+  },
+
+  // The whole list, not a handful. Quranic Arabic is a closed corpus of 305
+  // entries in frequency order, so the set IS the corpus — there is nothing to
+  // generate a batch at a time and no reason to make a learner press "next six"
+  // fifty times to see what they are studying.
+  //
+  // Lemmas come from the cache, so the list paints at once. Anything not cached
+  // is filled in behind the paint by `fillQuranLemmas`.
+  async loadQuranRoots() {
+    const cached = await Promise.all(QURAN_SEQUENCE.map(async (entry) => {
+      try { return await dbGetQuranLemmas(entry.id); } catch (_) { return null; }
     }));
+    return QURAN_SEQUENCE.map((entry, i) => this.quranWord(entry,
+      cached[i]?.length ? cached[i] : (AppState.mode === 'demo' ? demoQuranLemmas(entry) : [])));
+  },
+
+  // Generate the lemmas the cache didn't have, fifteen roots per call and every
+  // batch in flight at once, repainting as each lands. Nothing here blocks the
+  // list being on screen — a root with no lemmas yet is still a root you can
+  // read, and it fills in while you look at the others.
+  async fillQuranLemmas(words) {
+    if (AppState.mode === 'demo') return;
+    const missing = words.filter(w => !w.lemmas?.length)
+      .map(w => QURAN_SEQUENCE.find(e => e.id === w.rootId)).filter(Boolean);
+    if (!missing.length) return;
+
+    const byId = new Map(words.map(w => [w.rootId, w]));
+    const chunks = [];
+    for (let i = 0; i < missing.length; i += QURAN_LEMMA_BATCH) {
+      chunks.push(missing.slice(i, i + QURAN_LEMMA_BATCH));
+    }
+
+    this.fillingLemmas = missing.length;
+    this.renderFillNote();
+
+    await Promise.all(chunks.map(async (chunk) => {
+      let rows = [];
+      try {
+        rows = await callQuranLemmasBatch(chunk);
+      } catch (err) {
+        console.warn(`Lemma batch failed (${chunk[0].root}…):`, err.message);
+      }
+      for (const { entry, lemmas } of rows) {
+        if (!lemmas.length) continue;
+        const word = byId.get(entry.id);
+        if (word) {
+          word.lemmas = lemmas;
+          word.example = lemmas[0].word;
+          word.exampleRomanization = lemmas[0].romanization || '';
+          word.exampleTranslation = lemmas[0].meaning;
+        }
+        dbPutQuranLemmas(entry.id, lemmas)
+          .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
+      }
+      this.fillingLemmas = Math.max(0, this.fillingLemmas - chunk.length);
+      // Only repaint if the learner is still looking at this language
+      if (this.tab === 'learn' && isQuranVocab(this.lang)) this.renderLearn();
+    }));
+
+    this.fillingLemmas = 0;
+    if (this.tab === 'learn' && isQuranVocab(this.lang)) this.renderLearn();
+    dbPutVocabSet(this.lang.id, 0, words, {
+      langName: this.lang.name, script: this.lang.script
+    }).catch(err => console.warn('Root set save failed:', err.message));
+  },
+
+  renderFillNote() {
+    const note = document.getElementById('vocab-fill-note');
+    if (note) {
+      note.textContent = this.fillingLemmas
+        ? `Filling in the words built from ${this.fillingLemmas} more roots…` : '';
+      note.style.display = this.fillingLemmas ? '' : 'none';
+    }
   },
 
   async loadWords() {
@@ -3334,25 +3607,39 @@ const VocabBuilder = {
       const setNumber = this.lang.vocabSet || 0;
       const known = this.lang.knownWords || [];
 
-      // Quranic Arabic doesn't ask the model which words to teach. The roots
-      // come from the corpus file in frequency order, so the set is decided
-      // before any call is made — the model only supplies each root's lemmas.
-      let words;
+      // Quranic Arabic doesn't ask the model which words to teach, and it is
+      // not handed out a batch at a time: the corpus IS the set. All 305
+      // entries paint from the cache at once, and their lemmas fill in behind
+      // the paint. The model only ever supplies lemmas.
       if (isQuranVocab(this.lang)) {
-        words = await this.loadQuranRoots(known);
-      } else {
-        // Always a genuinely new set. The old code replayed a cached set for the
-        // same number, which is how previously-seen words kept reappearing.
-        words = AppState.mode === 'demo'
+        const words = await this.loadQuranRoots();
+        this.words = words;
+        this.setNumber = 0;
+        this.quiz = null;
+        this.renderLearn();
+        await dbPutVocabSet(this.lang.id, 0, words, {
+          langName: this.lang.name, script: this.lang.script
+        }).catch(err => console.warn('Root set save failed:', err.message));
+        // Sets written back when this track handed out six roots at a time
+        // would otherwise show the same roots again in Saved vocab.
+        dbDropVocabSetsAbove(this.lang.id, 0)
+          .then(n => { if (n) console.log(`Dropped ${n} stale root set(s).`); })
+          .catch(err => console.warn('Stale root set cleanup failed:', err.message));
+        this.fillQuranLemmas(words);
+        return;
+      }
+
+      // Always a genuinely new set. The old code replayed a cached set for the
+      // same number, which is how previously-seen words kept reappearing.
+      let words = AppState.mode === 'demo'
           ? demoVocabBuilderWords(this.lang, tier)
               .filter(w => !known.some(k => k.toLowerCase() === w.word.toLowerCase()))
               .slice(0, 6)
-          : await callVocabWords(this.lang, tier, known, theme);
-      }
+        : await callVocabWords(this.lang, tier, known, theme);
 
       // The agent drops repeats itself, which can leave the set short. One
       // top-up call, told about the words just issued as well, fills the gap.
-      if (words.length < 6 && AppState.mode !== 'demo' && !isQuranVocab(this.lang)) {
+      if (words.length < 6 && AppState.mode !== 'demo') {
         const excludeNow = [...known, ...words.map(w => w.word)];
         try {
           const more = await callVocabWords(this.lang, tier, excludeNow, theme, 6 - words.length);
@@ -3374,9 +3661,7 @@ const VocabBuilder = {
       }
 
       if (!words.length) {
-        throw new Error(isQuranVocab(this.lang)
-          ? 'Every root in the list is already yours — there are no new ones left.'
-          : 'No new words came back — try a different theme or tier.');
+        throw new Error('No new words came back — try a different theme or tier.');
       }
 
       await dbPutVocabSet(this.lang.id, setNumber, words, {
@@ -3651,6 +3936,39 @@ function rootCardHtml(w, i) {
             ${l.form ? `<span class="root-lemma-form">${escapeAttr(l.form)}</span>` : ''}
           </div>`).join('')}
       </div>
+    </article>`;
+}
+
+// One entry in the full root list. Numbered, because position in this list is
+// meaningful — it is frequency order, and #7 really is worth more than #250.
+// A root whose lemmas have not arrived yet still shows: the root, its sound and
+// its meaning are curated data and never needed a model.
+function rootEntryHtml(w, i, withLemmas) {
+  const lemmas = w.lemmas || [];
+  return `
+    <article class="vocab-card vocab-card-script vocab-card-root root-entry" data-idx="${i}">
+      <div class="vocab-card-head">
+        <span class="root-rank">${i + 1}</span>
+        <h3 class="vocab-word vocab-root-word">${escapeAttr(w.word)}</h3>
+        <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+      </div>
+      <div class="vocab-meta">
+        ${w.pronunciation ? `<span class="vocab-pron">(${escapeAttr(w.pronunciation)})</span>` : ''}
+        ${w.quranCount ? `<span class="vocab-pos">${w.quranCount.toLocaleString()}× in the Qur'an</span>` : ''}
+      </div>
+      <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
+      ${lemmas.length ? `<div class="root-lemmas">
+        <div class="root-lemmas-head">Words built from it</div>
+        ${lemmas.map(l => `
+          <div class="root-lemma">
+            <span class="root-lemma-ar">${escapeAttr(l.word)}</span>
+            <span class="root-lemma-body">
+              ${l.romanization ? `<span class="root-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
+              <span class="root-lemma-meaning">${escapeAttr(l.meaning)}</span>
+            </span>
+            ${l.form ? `<span class="root-lemma-form">${escapeAttr(l.form)}</span>` : ''}
+          </div>`).join('')}
+      </div>` : `<div class="root-lemmas-pending">Words built from it — coming…</div>`}
     </article>`;
 }
 
@@ -5323,6 +5641,10 @@ const LessonView = {
 
     try {
       this.syllabus = await this.loadSyllabus(lang);
+      // Progress lost to a reset course document is rebuilt from the tutor
+      // transcripts, which outlive it. Only ever restores; runs once.
+      await recoverLangProgress(lang, this.syllabus).catch(() => {});
+      if (unitIndex == null) this.unitIndex = lang.unitIndex || 0;
       // A syllabus can get shorter — clamp rather than index off the end.
       if (this.syllabus.length) {
         this.unitIndex = Math.max(0, Math.min(this.unitIndex, this.syllabus.length - 1));
@@ -6513,8 +6835,29 @@ const LangOnboard = {
         lastSessionAt: null,
         createdAt: Date.now()
       };
+      // NEVER flatten a course that is already there. dbPutLanguage merges, but
+      // the object above carries unitIndex: 0, unitsMastered: [] and
+      // rootsLearned: [] as literal values, so merging them writes those resets
+      // over real progress. A learner whose course went missing from the grid
+      // and who added it again to get it back lost everything they had done —
+      // that is what happened, and it must not be possible.
+      const prior = (await dbGetAllLanguages({ includeDeleted: true }).catch(() => []))
+        .find(l => l.id === lang.id);
+      if (prior) {
+        for (const field of ['unitIndex', 'unitsMastered', 'rootsLearned', 'knownWords',
+                             'learnedChars', 'scriptUnit', 'wordsLearned', 'streak',
+                             'sessionNumber', 'lastSessionAt', 'levelScore', 'bandsReleased',
+                             'createdAt', 'quizStats', 'vocabSet']) {
+          if (prior[field] !== undefined) lang[field] = prior[field];
+        }
+        // It was in the bin, which is why it was not offered as "already added"
+        lang.deletedAt = firebase.firestore.FieldValue.delete();
+        console.log(`Re-adding ${lang.id}: kept existing progress rather than resetting it.`);
+      }
+
       await dbPutLanguage(lang);
-      if (cards.length) await dbAppendLangCards(lang.id, cards);
+      // Only seed cards into a deck that has none — a re-add must not double it
+      if (cards.length && !prior) await dbAppendLangCards(lang.id, cards);
 
       this.close();
       const doneMsg = {
