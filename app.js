@@ -5531,8 +5531,23 @@ const LangSession = {
 // worked examples you can hear and tap, and the trap at the end. Two callers —
 // the lesson page and the old session's grammar strand — so there is one
 // renderer for a unit rather than two that drift apart.
+// `g` is the generated half and may not have arrived yet. Everything above it —
+// the title, what the structure is, why it matters, the form-marker table — is
+// curated data sitting in quran-grammar-data.js, so it goes on screen at once
+// and the written part fills in underneath. A learner should be reading within
+// a moment of opening a lesson, not watching a spinner.
 function grammarUnitHtml(unit, g, lang, formMarkers = null) {
-  if (!unit || !g) return '';
+  if (!unit) return '';
+  if (!g) {
+    return `
+      <h3 class="consolidate-title grammar-title">${escapeAttr(unit.title)}</h3>
+      <p class="grammar-structure">${unit.structure}</p>
+      ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
+      <div class="lesson-pending">
+        <span class="cp-spinner"></span>
+        <span>Writing this lesson — the explanation, the pattern and the examples.</span>
+      </div>`;
+  }
 
   const tableHtml = g.patternTable?.rows?.length ? `
     <div class="grammar-table-wrap">
@@ -5650,8 +5665,27 @@ const LessonView = {
         this.unitIndex = Math.max(0, Math.min(this.unitIndex, this.syllabus.length - 1));
       }
       this.unit = this.syllabus[this.unitIndex] || null;
-      this.lesson = await this.loadLesson();
+
+      // Which open() this is. A lesson can take ten seconds to write, and in
+      // that time the learner may well have moved on — the reply from the one
+      // they left must not paint over the one they are looking at.
+      const token = ++this._openToken;
+      const mine = () => this._openToken === token;
+
+      // On screen straight away with what we already have, then again once the
+      // written half lands. A cached lesson resolves immediately and the shell
+      // is never seen; an uncached one is readable while it is being written.
+      this.lesson = { grammar: null, unit: this.unit, formMarkers: QURAN_FORM_MARKERS };
       this.render();
+
+      const lesson = await this.lessonFor(this.unitIndex);
+      if (!mine()) return;
+      this.lesson = lesson;
+      this.render();
+
+      // While they read this one, quietly write the next. "Next lesson" is then
+      // instant instead of another wait.
+      this.prefetchLesson(this.unitIndex + 1);
     } catch (err) {
       console.warn('Lesson failed to load:', err.message);
       document.getElementById('lesson-column').innerHTML = `
@@ -5702,35 +5736,65 @@ const LessonView = {
     return units;
   },
 
-  // Cached per unit, and regenerated when the lesson shape changes underneath it.
-  async loadLesson() {
-    const key = unitKey(this.unitIndex);
-    let lesson = await dbGetLangLesson(this.lang.id, key).catch(() => null);
-    if (lesson && (lesson.schemaVersion || 0) < LESSON_SCHEMA_VERSION) lesson = null;
-    if (lesson?.grammar) return lesson;
+  _openToken: 0,
 
-    // A lesson wants more verses than a single tutor message — it writes four
-    // examples and a pattern table, and they should not all come from one page
-    // of the muṣḥaf.
-    let verses = [];
-    if (AppState.mode !== 'demo') {
-      try {
-        await loadQuranText();
-        verses = pickQuranVerses(20);
-      } catch (err) {
-        console.warn('Qur\'anic text unavailable for this lesson:', err.message);
+  loadLesson() { return this.lessonFor(this.unitIndex); },
+
+  // Cached per unit, and regenerated when the lesson shape changes underneath
+  // it. In-flight generations are shared, so the prefetch and a learner who
+  // taps "next lesson" before it finishes wait on the SAME call rather than
+  // paying for two.
+  _inflight: {},
+
+  async lessonFor(index) {
+    const unit = this.syllabus[index];
+    if (!unit) return null;
+    const lang = this.lang;
+    const key = unitKey(index);
+    const cacheKey = `${lang.id}_${key}`;
+    if (this._inflight[cacheKey]) return this._inflight[cacheKey];
+
+    const job = (async () => {
+      let lesson = await dbGetLangLesson(lang.id, key).catch(() => null);
+      if (lesson && (lesson.schemaVersion || 0) < LESSON_SCHEMA_VERSION) lesson = null;
+      if (lesson?.grammar) return lesson;
+
+      // Enough verses for four examples and a pattern table without them all
+      // coming from one page of the muṣḥaf. Ten rather than twenty: the block
+      // is a fifth of the prompt, and ten is already more than the lesson uses.
+      let verses = [];
+      if (AppState.mode !== 'demo') {
+        try {
+          await loadQuranText();
+          verses = pickQuranVerses(10);
+        } catch (err) {
+          console.warn('Qur\'anic text unavailable for this lesson:', err.message);
+        }
       }
-    }
 
-    const grammar = AppState.mode === 'demo'
-      ? demoQuranGrammarUnit(this.unit)
-      : await callGrammarUnitGenerator(this.lang, this.unit, this.lang.knownWords || [], verses);
+      const grammar = AppState.mode === 'demo'
+        ? demoQuranGrammarUnit(unit)
+        : await callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses);
 
-    lesson = { grammar, unit: this.unit, formMarkers: QURAN_FORM_MARKERS,
-               schemaVersion: LESSON_SCHEMA_VERSION };
-    dbPutLangLesson(this.lang.id, key, lesson)
-      .catch(err => console.warn('Lesson cache write failed:', err.message));
-    return lesson;
+      lesson = { grammar, unit, formMarkers: QURAN_FORM_MARKERS,
+                 schemaVersion: LESSON_SCHEMA_VERSION };
+      dbPutLangLesson(lang.id, key, lesson)
+        .catch(err => console.warn('Lesson cache write failed:', err.message));
+      return lesson;
+    })();
+
+    this._inflight[cacheKey] = job;
+    try { return await job; }
+    finally { delete this._inflight[cacheKey]; }
+  },
+
+  // Write the next lesson while this one is being read. Failure is silent by
+  // design — nothing depends on it, and opening that lesson normally will just
+  // generate it the ordinary way.
+  prefetchLesson(index) {
+    if (index < 0 || index >= this.syllabus.length) return;
+    this.lessonFor(index).catch(err =>
+      console.warn(`Prefetch of lesson ${index + 1} failed:`, err.message));
   },
 
   render() {

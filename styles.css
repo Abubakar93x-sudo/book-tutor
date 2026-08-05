@@ -5303,6 +5303,21 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   padding: 0.15rem 0.45rem;
   text-align: center;
 }
+/* The lesson is on screen before its written half arrives */
+.lesson-pending {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 1.4rem 0;
+  padding: 1rem 1.1rem;
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  font-family: var(--font-body);
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+}
+
 .root-deck-offer {
   display: flex;
   align-items: center;

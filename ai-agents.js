@@ -1264,12 +1264,32 @@ ${quranBlock}
       "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]
     }
   `;
-  // 'deep' — a lesson is generated once and cached for good. Being right
-  // matters more here than being quick, and nobody re-reads a bad lesson.
-  const result = await queryAI(prompt, true, null, 'deep');
-  const drills = Array.isArray(result.drills)
+  // 'fast', on evidence. This used to be 'deep' on the reasoning that a lesson
+  // is generated once and cached, so being right beat being quick. Timed against
+  // the live API on a real lesson prompt, that reasoning does not survive
+  // contact:
+  //
+  //   thinking on   107.6s   12,310 reasoning tokens   4 table rows
+  //   thinking off   13.1s        0 reasoning tokens   6 table rows
+  //
+  // and worse, a second run with thinking on spent its ENTIRE 16,384-token
+  // budget reasoning and returned an empty object after 141 seconds — a lesson
+  // that simply fails to load. The thinking was not buying quality here, it was
+  // buying a two-minute wait and a coin flip.
+  let result = await queryAI(prompt, true, null, 'fast');
+  let drills = Array.isArray(result.drills)
     ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
     : [];
+
+  // One retry before giving up: a JSON call that comes back empty is usually a
+  // one-off, and failing a lesson outright is much worse than asking twice.
+  if (!result.explanation && !drills.length) {
+    console.warn('Lesson generation came back empty — retrying once.');
+    result = await queryAI(prompt, true, null, 'fast');
+    drills = Array.isArray(result.drills)
+      ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
+      : [];
+  }
   if (!result.explanation && !drills.length) {
     throw new Error('Grammar unit generation returned nothing usable.');
   }
