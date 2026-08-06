@@ -600,7 +600,7 @@ async function dbPurgeDeck(langId) {
 
 async function deleteDeckFlow(lang) {
   const ok = await confirmAction({
-    title: `Delete the ${escapeAttr(lang.name)} deck?`,
+    title: `Delete the ${escapeAttr(deckLabel(lang))} deck?`,
     body: `Its ${lang.cardCount || 0} flashcards go. Your progress through the
       course itself stays exactly where it is.
       <br><br>You can restore the deck from <strong>Recently deleted decks</strong>
@@ -613,7 +613,7 @@ async function deleteDeckFlow(lang) {
     await dbSoftDeleteDeck(lang.id);
     AppState._reviewLangCache = null;
     if (AppState.reviewFilter === `lang:${lang.id}`) AppState.reviewFilter = 'all';
-    showToast(`${lang.name} deck deleted — restorable for ${TRASH_DAYS} days.`, 'success', 5000);
+    showToast(`${deckLabel(lang)} deck deleted — restorable for ${TRASH_DAYS} days.`, 'success', 5000);
     await initReviewSession();
     return true;
   } catch (err) {
@@ -641,7 +641,7 @@ async function renderDeckTrash() {
     return `
       <div class="trash-item" data-id="${escapeAttr(l.id)}">
         <div class="trash-item-body">
-          <span class="trash-item-name">${escapeAttr(l.name)} deck</span>
+          <span class="trash-item-name">${escapeAttr(deckLabel(l))} deck</span>
           <span class="trash-item-meta">${l.cardCount || 0} cards · ${left > 0
             ? `${left} day${left === 1 ? '' : 's'} left to restore`
             : 'will be removed shortly'}</span>
@@ -670,7 +670,7 @@ async function renderDeckTrash() {
     btn.addEventListener('click', async () => {
       const lang = items.find(l => l.id === btn.dataset.id);
       const ok = await confirmAction({
-        title: `Permanently delete the ${escapeAttr(lang.name)} deck?`,
+        title: `Permanently delete the ${escapeAttr(deckLabel(lang))} deck?`,
         body: 'This cannot be undone. The cards are destroyed immediately — your course progress is untouched.',
         confirmLabel: 'Delete permanently'
       });
@@ -9884,7 +9884,11 @@ async function collectCards({ dueOnly = true } = {}) {
           if (!dueOnly || isCardDue(card)) {
             out.push({
               ...card,
-              bookTitle: lang.name,                 // deck tag shows the language
+              // The tag on the card says which deck it came from, and in a
+              // mixed review that has to include which SIDE of the app —
+              // otherwise two Quranic Arabic cards look identical.
+              bookTitle: deckLabel(lang),
+              _langName: lang.name,                 // for prose, which wants no tag
               _langLevel: lang.level,               // drives the romanization fade
               _ttsLang: lang.ttsLangCode || lang.code,
               _src: { type: 'langCards', langId: lang.id, batch: batch.batch, index: idx }
@@ -9941,6 +9945,22 @@ async function collectDueCards() {
 
 // ── SOURCE FILTER + RANDOM PRACTICE ──────────────────────────────────────────
 
+// Which half of the app a deck belongs to. Two decks can share a name —
+// Quranic Arabic is both a course in Languages and a word list in Vocabulary —
+// and in the Flashcards view there is nothing else to tell them apart by. So
+// every language deck says which one it is, not only the ones that collide:
+// a rule you can rely on beats one that appears only sometimes.
+//
+//   (L) — the Languages side: a course, its lessons and its tutor
+//   (V) — the Vocabulary side: a word list you build up
+function deckTag(lang) {
+  return getRecipe(lang).id === 'vocabBuilder' ? 'V' : 'L';
+}
+
+function deckLabel(lang) {
+  return `${lang?.name || 'Deck'} (${deckTag(lang)})`;
+}
+
 function reviewSourceKey(card) {
   const src = card._src || {};
   return src.type === 'langCards' ? `lang:${src.langId}` : `book:${src.bookId}`;
@@ -9979,10 +9999,6 @@ async function populateReviewFilterFromMeta() {
   }));
 
   const withCards = languages.filter(l => l.cardCount > 0);
-  const nameCount = withCards.reduce((m, l) => (m[l.name] = (m[l.name] || 0) + 1, m), {});
-  const deckLabel = (l) => nameCount[l.name] > 1
-    ? `${l.name} — ${l.recipeId === 'vocabBuilder' ? 'vocabulary' : 'course'}`
-    : l.name;
 
   const bookOpts = books
     .sort((a, b) => a.title.localeCompare(b.title))
@@ -10068,6 +10084,7 @@ async function persistCardSchedule(card) {
   const clean = { ...card };
   delete clean._src;
   delete clean.bookTitle;
+  delete clean._langName;
   delete clean._langLevel;
   delete clean._ttsLang;
 
@@ -10224,7 +10241,8 @@ function showNextCard() {
   speakBtn.onclick = isLangCard ? (e) => {
     e.stopPropagation(); // don't flip the card
     if (!NarrationEngine.speakLang(card.front, card._ttsLang)) {
-      showToast(`No ${card.bookTitle} voice on this device — audio unavailable.`, 'info', 3500);
+      showToast(`No ${card._langName || card.bookTitle} voice on this device — audio unavailable.`,
+        'info', 3500);
     }
   } : null;
 
