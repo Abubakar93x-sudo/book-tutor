@@ -1294,20 +1294,49 @@ async function callSeedDeckGenerator(langProfile, level) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── AGENT: SYLLABUS ARCHITECT ────────────────────────────────────────────────
-// Called ONCE per language, then cached in langSyllabus/{langId} forever. Lays
-// out the grammar ladder in teaching order — each rung a structure the learner
-// can build sentences with the moment they've got it.
-async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
+// The grammar ladder for a language, in teaching order — each rung a structure
+// the learner can build sentences with the moment they've got it. Cached in
+// langSyllabus/{langId} once written.
+//
+// Written A SLICE AT A TIME, not all at once. Asking for the whole 40-unit
+// course in one call was the slowest thing in the app by a distance, and the
+// learner sat on a spinner for every second of it. Measured on DeepSeek:
+//
+//   40 units, reasoning on    82.2s   10631 tokens out
+//   40 units, reasoning off   23.2s    2948 tokens out
+//   8 units,  reasoning off    5.8s     569 tokens out
+//
+// Worse than slow, it was fragile: a reply that long came back as invalid JSON
+// often enough to lose the entire course to one bad brace. Eight units is the
+// first slice, and the rest is written behind the learner while they read
+// lesson one — see extendSyllabus in app.js.
+const SYLLABUS_TOTAL = 40;
+const SYLLABUS_CHUNK = 8;
+
+async function callSyllabusArchitect(langProfile, startLevel = 'A0',
+                                     { from = 1, count = SYLLABUS_CHUNK, prior = [] } = {}) {
+  const priorList = prior.length
+    ? prior.map((u, i) => `${i + 1}. ${u.title} — ${u.structure}`).join('\n')
+    : '';
+  const last = from + count - 1;
+
   const prompt = `
     You are designing the complete grammar syllabus for an adult English
-    speaker learning ${langProfile.name}, starting at ${startLevel}.
+    speaker learning ${langProfile.name}, starting at ${startLevel}. The full
+    course is ${SYLLABUS_TOTAL} units in strict teaching order.
 
-    Produce 40 units in STRICT TEACHING ORDER — each one usable immediately and
-    building only on units before it. Cover the real backbone of the language:
+    ${priorList
+      ? `Units 1-${from - 1} are already written:\n${priorList}\n\n` +
+        `Write units ${from}-${last}, carrying straight on from those and ` +
+        `covering nothing they already cover.`
+      : `Write the FIRST ${count} units — where an absolute beginner starts.`}
+
+    Across the whole course you are covering the real backbone of the language:
     how a basic sentence is built, then negation and questions, then the tense
-    system (present, past, future), agreement, and whatever else ${langProfile.name}
-    genuinely requires (cases, particles, aspect, classifiers, honorifics — only
-    if that language actually has them). Do NOT impose English grammar.
+    system (present, past, future), agreement, and whatever else
+    ${langProfile.name} genuinely requires (cases, particles, aspect,
+    classifiers, honorifics — only if that language actually has them). Do NOT
+    impose English grammar.
 
     For each unit:
     - "title": short and concrete, e.g. "Talking about yesterday"
@@ -1318,20 +1347,21 @@ async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
     Return ONLY valid JSON, no markdown fences:
     {
       "units": [
-        { "id": "u1", "title": "...", "structure": "...", "whyItMatters": "...", "level": "A0" }
+        { "id": "u${from}", "title": "...", "structure": "...", "whyItMatters": "...", "level": "A0" }
       ]
     }
   `;
-  // 'deep' — this is the one call worth waiting for. A syllabus is written
-  // ONCE and then read for the whole course, so letting the model think it
-  // through costs a few seconds once and pays back every lesson after.
-  const result = await queryAI(prompt, true, null, 'deep');
+  // 'fast'. Reasoning cost 59 extra seconds here and produced a syllabus no
+  // better than the one written without it — the same measurement that took
+  // lesson generation off the reasoner.
+  const result = await queryAI(prompt, true, null, 'fast');
   const units = Array.isArray(result.units)
     ? result.units.filter(u => u.title && u.structure)
     : [];
   if (!units.length) throw new Error('Syllabus generation returned no units.');
-  return units.map((u, i) => ({
-    id: u.id || `u${i + 1}`,
+  // Ids are positional, so a slice can never collide with the one before it.
+  return units.slice(0, count).map((u, i) => ({
+    id: `u${from + i}`,
     title: u.title,
     structure: u.structure,
     whyItMatters: u.whyItMatters || '',

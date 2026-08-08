@@ -2372,6 +2372,15 @@ async function renderLanguages() {
   // old shared id should come back the moment you look at your courses.
   const all = await migrateQuranVocabId(await dbGetAllLanguages());
 
+  // The Qur'anic text is 1.4MB and a lesson cannot start writing until it has
+  // loaded, because the verses go INTO the prompt. Fetching it the moment the
+  // courses appear takes that off the front of the first lesson — by the time
+  // one is opened it is already in memory, and if it isn't, loadQuranText
+  // returns the same in-flight promise rather than fetching it twice.
+  if (all.some(l => getRecipe(l).ui?.staticSyllabus === 'QURAN_GRAMMAR')) {
+    loadQuranText().catch(() => {});
+  }
+
   // Vocabulary-builder entries are not courses — they have no session to start
   // and live in their own view, so they stay off this grid.
   const languages = all.filter(l => getRecipe(l).id !== 'vocabBuilder');
@@ -2508,6 +2517,77 @@ function demoSyllabus(lang) {
     { title: 'What comes next', structure: 'ir a + infinitive for the near future', whyItMatters: 'Make plans out loud.', level: 'A2' }
   ];
   return base.map((u, i) => ({ id: `demo-u${i + 1}`, ...u }));
+}
+
+// ── THE SYLLABUS, A SLICE AT A TIME ──────────────────────────────────────────
+// Opening a course used to mean waiting for all forty units to be written
+// before a single word appeared — 82 seconds, measured, and a spinner for
+// every one of them. Now the first eight arrive in about six seconds and the
+// course opens on them, while the remaining thirty-two are written behind the
+// learner and appear as they land.
+//
+// This is shared by both readers of a syllabus, so they can never disagree
+// about how one is built.
+async function loadCourseSyllabus(lang) {
+  // Quranic Arabic's syllabus is hand-written rather than generated: its
+  // topics are settled and ordered the same way in every serious curriculum,
+  // so a fixed ladder beats asking the model to invent one each time.
+  if (getRecipe(lang).ui?.staticSyllabus === 'QURAN_GRAMMAR') return quranGrammarUnits();
+
+  // A syllabus written by the previous provider is rebuilt, not served —
+  // same version stamp the lessons use.
+  const cached = await dbGetSyllabus(lang.id);
+  if (cached?.units?.length && (cached.schemaVersion || 0) >= LESSON_SCHEMA_VERSION) {
+    // A course closed while its later units were still being written picks up
+    // where it stopped instead of being stuck at eight lessons forever.
+    if (cached.units.length < SYLLABUS_TOTAL) extendSyllabus(lang, cached.units);
+    return cached.units;
+  }
+
+  if (AppState.mode === 'demo') {
+    const units = demoSyllabus(lang);
+    await dbPutSyllabus(lang.id, units);
+    return units;
+  }
+
+  const first = await callSyllabusArchitect(lang, lang.level || 'A0',
+    { from: 1, count: SYLLABUS_CHUNK });
+  await dbPutSyllabus(lang.id, first);
+  extendSyllabus(lang, first);          // deliberately not awaited
+  return first;
+}
+
+// The rest of the course, written a slice at a time behind the learner. Each
+// slice is saved the moment it lands, so leaving mid-way costs one slice
+// rather than the whole course. One fill per language at a time.
+const _syllabusFills = {};
+
+function extendSyllabus(lang, units) {
+  if (_syllabusFills[lang.id] || AppState.mode === 'demo') return;
+  _syllabusFills[lang.id] = (async () => {
+    let all = [...units];
+    try {
+      while (all.length < SYLLABUS_TOTAL) {
+        const more = await callSyllabusArchitect(lang, lang.level || 'A0', {
+          from: all.length + 1,
+          count: Math.min(SYLLABUS_CHUNK, SYLLABUS_TOTAL - all.length),
+          prior: all
+        });
+        if (!more.length) break;        // nothing came back; stop rather than spin
+        all = [...all, ...more];
+        await dbPutSyllabus(lang.id, all);
+        // If the learner is reading this course right now, the lesson count and
+        // the end-of-course button correct themselves as the course grows.
+        if (LessonView.lang?.id === lang.id) LessonView.syllabusGrew(all);
+      }
+    } catch (err) {
+      // A course of eight real lessons is a working course. Failing to write
+      // unit 23 is not a reason to take the first eight away from anyone.
+      console.warn(`Syllabus fill stopped at ${all.length} units:`, err.message);
+    } finally {
+      delete _syllabusFills[lang.id];
+    }
+  })();
 }
 
 function demoGrammarUnit(unit) {
@@ -3423,7 +3503,10 @@ const VocabBuilder = {
           const key = String(w.word).trim().toLowerCase();
           if (!key || seen.has(key)) continue;
           seen.add(key);
-          words.push({ ...w, _learnedAt: set.createdAt || null });
+          // The set it came from travels with it, so a swap here can write the
+          // replacement back to the right document rather than guessing.
+          words.push({ ...w, _learnedAt: set.createdAt || null,
+                       _setNumber: set.setNumber ?? null });
         }
       }
       if (words.length) byLang.push({ lang, words });
@@ -3440,18 +3523,22 @@ const VocabBuilder = {
       return;
     }
 
-    // The language currently being studied opens by default
+    // The language currently being studied opens by default — but a group the
+    // learner opened themselves stays open through a re-render, or swapping a
+    // word would fold the list up underneath them.
+    const wasOpen = this._openSavedLangs
+      || new Set(byLang.filter(e => e.lang.id === this.lang?.id).map(e => e.lang.id));
     panel.innerHTML = `
       <div class="vocab-saved-list">
         ${byLang.map(({ lang, words }) => `
-          <details class="vocab-saved-set" data-lang="${escapeAttr(lang.id)}"${lang.id === this.lang?.id ? ' open' : ''}>
+          <details class="vocab-saved-set" data-lang="${escapeAttr(lang.id)}"${wasOpen.has(lang.id) ? ' open' : ''}>
             <summary class="vocab-saved-head">
               <span class="vocab-saved-title">${escapeAttr(lang.name)}</span>
               <span class="vocab-saved-meta">${words.length} word${words.length === 1 ? '' : 's'}</span>
               <span class="vocab-saved-words">${words.slice(0, 12).map(w => escapeAttr(w.word)).join(' · ')}${words.length > 12 ? ' …' : ''}</span>
             </summary>
             <div class="vocab-list vocab-saved-body">
-              ${words.map((w, i) => vocabCardHtml(w, i, lang)).join('')}
+              ${words.map((w, i) => vocabCardHtml(w, i, lang, { swappable: true })).join('')}
             </div>
             <div class="vocab-actions">
               <button class="btn btn-ghost btn-sm vocab-review-set" data-lang="${escapeAttr(lang.id)}">
@@ -3463,9 +3550,15 @@ const VocabBuilder = {
       </div>
     `;
 
+    this._openSavedLangs = new Set(wasOpen);
     panel.querySelectorAll('.vocab-saved-set').forEach(det => {
       const entry = byLang.find(e => e.lang.id === det.dataset.lang);
       if (!entry) return;
+
+      det.addEventListener('toggle', () => {
+        if (det.open) this._openSavedLangs.add(det.dataset.lang);
+        else this._openSavedLangs.delete(det.dataset.lang);
+      });
 
       det.querySelectorAll('.vocab-speak').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3474,6 +3567,22 @@ const VocabBuilder = {
             showToast(`No ${entry.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
           }
         });
+      });
+
+      // "I know this — swap it" works here too. It is arguably where it matters
+      // most: this is the whole history, and a word you have outgrown sitting in
+      // it is exactly the one you want replaced with something harder.
+      det.querySelectorAll('[data-know]').forEach(btn => {
+        btn.addEventListener('click', () => this.swapWord({
+          lang: entry.lang,
+          list: entry.words,
+          index: parseInt(btn.dataset.know),
+          btn,
+          // Saved words are written back to the set they arrived in.
+          setNumber: (w) => w._setNumber,
+          scope: `.vocab-saved-set[data-lang="${CSS.escape(entry.lang.id)}"]`,
+          rerender: () => this.renderSaved()
+        }));
       });
     });
 
@@ -3559,7 +3668,15 @@ const VocabBuilder = {
 
   bindKnowButtons(scope) {
     scope.querySelectorAll('[data-know]').forEach(btn => {
-      btn.addEventListener('click', () => this.swapKnownWord(parseInt(btn.dataset.know), btn));
+      btn.addEventListener('click', () => this.swapWord({
+        lang: this.lang,
+        list: this.words,
+        index: parseInt(btn.dataset.know),
+        btn,
+        setNumber: () => this.setNumber,
+        scope: '#vocab-panel-learn',
+        rerender: () => { this.quiz = null; this.renderLearn(); }
+      }));
     });
   },
 
@@ -3568,9 +3685,14 @@ const VocabBuilder = {
   // things: swaps the card, adds the word to the never-offer-again list, and
   // takes its flashcard out of the review deck — a word you know is not a card
   // you want back next week.
-  async swapKnownWord(index, btn) {
-    const lang = this.lang;
-    const old = this.words[index];
+  //
+  // One implementation, two callers. The Learn tab swaps within the batch on
+  // screen; Saved vocab swaps within the whole history and writes back to the
+  // set the word originally came from. Everything between those two facts is
+  // identical, and when it was only wired up on one of them the button sat
+  // there on the other doing nothing at all.
+  async swapWord({ lang, list, index, btn, setNumber, scope, rerender }) {
+    const old = list[index];
     if (!lang || !old || btn.disabled) return;
 
     btn.disabled = true;
@@ -3578,14 +3700,15 @@ const VocabBuilder = {
     btn.textContent = 'Finding a harder one…';
 
     try {
-      const known = [...(lang.knownWords || []), ...this.words.map(w => w.word)];
+      const known = [...(lang.knownWords || []), ...list.map(w => w.word)];
       const theme = document.getElementById('vocab-theme')?.value.trim() || '';
       const replacement = AppState.mode === 'demo'
         ? demoSimilarWord(lang, old)
         : await callSimilarWord(lang, lang.tier || 'articulate', old.word, old.meaning,
                                 known, theme);
 
-      this.words[index] = replacement;
+      const target = setNumber(old);
+      list[index] = { ...replacement, _setNumber: target };
 
       // Known, so never offered again — and its card leaves the deck.
       lang.knownWords = [...new Set([...(lang.knownWords || []), old.word, replacement.word])]
@@ -3605,27 +3728,38 @@ const VocabBuilder = {
         type: 'precision'
       }]);
 
-      // These touch different documents, so they can go together.
-      await Promise.all([
-        dbPutVocabSet(lang.id, this.setNumber, this.words,
-          { langName: lang.name, script: lang.script }),
-        dbPutLanguage(lang)
-      ]);
-
-      this.quiz = null;                  // the set changed under it
+      // Only the set the word actually belonged to is rewritten, and only that
+      // one word inside it. The list on screen in Saved vocab spans several
+      // sets and has had duplicates folded out of it, so writing it back
+      // wholesale would collapse the history into one set and drop words the
+      // view had merely hidden.
+      if (target != null) {
+        const stored = await dbGetVocabSet(lang.id, target);
+        // No stored copy means this batch was never written — fall back to what
+        // is on screen rather than replacing the set with a single word.
+        const base = stored?.words?.length
+          ? stored.words
+          : list.map(({ _setNumber, _learnedAt, ...w }) => w);
+        const members = base.map(w =>
+          String(w.word).trim() === String(old.word).trim() ? replacement : w);
+        if (!members.some(w => w.word === replacement.word)) members.push(replacement);
+        await dbPutVocabSet(lang.id, target, members,
+          { langName: lang.name, script: lang.script });
+      }
+      await dbPutLanguage(lang);
 
       // The card you pressed leaves, and the new one arrives in its place —
       // so the swap is something you watch happen rather than a list that
       // silently says something different than it did a moment ago.
       const card = btn.closest('.vocab-card');
-      if (card && !prefersReducedMotion()) {
+      const animate = !prefersReducedMotion();
+      if (card && animate) {
         card.classList.add('vocab-card-leaving');
         await new Promise(r => setTimeout(r, 220));
       }
-      this.renderLearn();
-      const arrived = document.querySelector(
-        `#vocab-panel-learn .vocab-card[data-idx="${index}"]`);
-      if (arrived && !prefersReducedMotion()) {
+      await rerender();
+      const arrived = document.querySelector(`${scope} .vocab-card[data-idx="${index}"]`);
+      if (arrived && animate) {
         arrived.classList.add('vocab-card-arriving');
         arrived.addEventListener('animationend',
           () => arrived.classList.remove('vocab-card-arriving'), { once: true });
@@ -4755,28 +4889,8 @@ const LangSession = {
     this.syllabus = null;
   },
 
-  // The grammar ladder for this language. One generation, cached forever —
-  // every later session reads it back rather than paying for it again.
-  async loadSyllabus(lang) {
-    // Quranic Arabic's syllabus is hand-written rather than generated: its
-    // topics are settled and ordered the same way in every serious curriculum,
-    // so a fixed ladder beats asking the model to invent one each time.
-    const staticId = this.recipe?.ui?.staticSyllabus;
-    if (staticId === 'QURAN_GRAMMAR') return quranGrammarUnits();
-
-    // A syllabus written by the previous provider is rebuilt, not served —
-    // same version stamp the lessons use.
-    const cached = await dbGetSyllabus(lang.id);
-    if (cached?.units?.length && (cached.schemaVersion || 0) >= LESSON_SCHEMA_VERSION) {
-      return cached.units;
-    }
-
-    const units = AppState.mode === 'demo'
-      ? demoSyllabus(lang)
-      : await callSyllabusArchitect(lang, lang.level || 'A0');
-    await dbPutSyllabus(lang.id, units);
-    return units;
-  },
+  // The grammar ladder for this language — see loadCourseSyllabus.
+  loadSyllabus(lang) { return loadCourseSyllabus(lang); },
 
   dotsHtml() {
     return `<div class="prime-dots lang-session-dots">${this.activities
@@ -5985,19 +6099,19 @@ const LessonView = {
   },
 
   // Hand-written for Quranic Arabic, generated-and-cached for anything else.
-  async loadSyllabus(lang) {
-    const recipe = getRecipe(lang);
-    if (recipe.ui?.staticSyllabus === 'QURAN_GRAMMAR') return quranGrammarUnits();
-    // Rebuilt rather than served if it predates the current lesson shape.
-    const cached = await dbGetSyllabus(lang.id);
-    if (cached?.units?.length && (cached.schemaVersion || 0) >= LESSON_SCHEMA_VERSION) {
-      return cached.units;
+  loadSyllabus(lang) { return loadCourseSyllabus(lang); },
+
+  // A slice of the course landed while this one was being read. Only the
+  // chrome moves — repainting the page would scroll the learner back to the
+  // top and wipe any teaching still streaming into it.
+  syllabusGrew(units) {
+    if (!units?.length || units.length <= this.syllabus.length) return;
+    this.syllabus = units;
+    this.renderChrome();
+    // And the lessons list, if it happens to be open in front of them.
+    if (document.getElementById('lesson-jump')?.style.display === 'flex') {
+      this.openLessonJump();
     }
-    const units = AppState.mode === 'demo'
-      ? demoSyllabus(lang)
-      : await callSyllabusArchitect(lang, lang.level || 'A0');
-    await dbPutSyllabus(lang.id, units);
-    return units;
   },
 
   _openToken: 0,
@@ -6041,17 +6155,37 @@ const LessonView = {
         grammar = demoQuranGrammarUnit(unit);
       } else {
         // Both halves at once. The teaching streams onto the page as it is
-        // written; the table, examples and drills arrive whenever they arrive.
-        // The wall clock is the slower of the two, not the sum, and the first
-        // sentence is readable in about a second either way.
-        const [explanation, mechanics] = await Promise.all([
+        // written; the table and examples arrive whenever they arrive. The wall
+        // clock is the slower of the two, not the sum, and the first sentence
+        // is readable in about a second either way.
+        //
+        // allSettled, not all: these are two independent calls, and a lesson
+        // whose pattern table failed is still a lesson. Failing the pair meant
+        // one bad reply from the smaller half threw away teaching that had
+        // already been written and put an error where the lesson should be.
+        const [written, mech] = await Promise.allSettled([
           callLessonExplanation(lang, unit, lang.knownWords || [], verses, onChunk),
           // The lesson page renders neither drills nor per-word glosses —
           // see the timings on callGrammarUnitGenerator.
           callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses,
             { withDrills: false, withWordGlosses: false })
         ]);
-        grammar = { explanation, ...mechanics };
+        if (written.status === 'rejected' && mech.status === 'rejected') {
+          throw written.reason;          // nothing came back at all
+        }
+        if (mech.status === 'rejected') {
+          console.warn('Lesson mechanics failed, teaching kept:', mech.reason?.message);
+        }
+        if (written.status === 'rejected') {
+          console.warn('Lesson teaching failed, mechanics kept:', written.reason?.message);
+        }
+        grammar = { explanation: written.status === 'fulfilled' ? written.value : '',
+                    ...(mech.status === 'fulfilled' ? mech.value : {}) };
+        // A half-written lesson is worth showing but not worth keeping — the
+        // next open should have another go at the part that failed.
+        if (written.status === 'rejected' || mech.status === 'rejected') {
+          return { grammar, unit, formMarkers: QURAN_FORM_MARKERS, partial: true };
+        }
       }
 
       lesson = { grammar, unit, formMarkers: QURAN_FORM_MARKERS,
@@ -6082,11 +6216,6 @@ const LessonView = {
     const hasNext = this.unitIndex < total - 1;
     const hasPrev = this.unitIndex > 0;
 
-    document.getElementById('lesson-title-btn').textContent =
-      `Lesson ${this.unitIndex + 1} of ${total} · ${unit?.title || ''}`;
-    document.getElementById('lesson-progress-fill').style.width =
-      `${total ? Math.round((done / total) * 100) : 0}%`;
-
     const column = document.getElementById('lesson-column');
     column.innerHTML = `
       <div class="lesson-kicker">${escapeAttr(unit?.stage || lang.name)}</div>
@@ -6095,18 +6224,40 @@ const LessonView = {
         Questions, examples and practice live with your tutor —
         <button class="lesson-handoff-link" id="btn-lesson-ask">ask about this lesson →</button>
       </div>
-      <div class="lesson-foot">
-        ${hasPrev ? `<button class="btn btn-ghost" id="btn-lesson-prev">← Previous lesson</button>` : '<span></span>'}
-        ${hasNext
-          ? `<button class="btn btn-primary" id="btn-lesson-next">Next lesson →</button>`
-          : `<button class="btn btn-primary" id="btn-lesson-done">Finish the course →</button>`}
-      </div>
+      <div class="lesson-foot" id="lesson-foot"></div>
     `;
+    this.renderChrome();
 
     bindGrammarUnit(column, lesson.grammar, lang, (el) => this.bindWordTaps(el));
     document.getElementById('lesson-scroll').scrollTop = 0;
 
     document.getElementById('btn-lesson-ask').addEventListener('click', () => this.showTutor());
+  },
+
+  // Everything on the page that depends on HOW LONG THE COURSE IS: the lesson
+  // count, the progress bar, and whether the last button says "next lesson" or
+  // "finish the course". Kept apart from render() because the course grows
+  // while it is being read — a slice of syllabus landing must not scroll the
+  // learner back to the top or wipe teaching still streaming onto the page.
+  renderChrome() {
+    const total = this.syllabus.length;
+    const done = (this.lang.unitsMastered || []).length;
+    const hasNext = this.unitIndex < total - 1;
+    const hasPrev = this.unitIndex > 0;
+
+    document.getElementById('lesson-title-btn').textContent =
+      `Lesson ${this.unitIndex + 1} of ${total} · ${this.unit?.title || ''}`;
+    document.getElementById('lesson-progress-fill').style.width =
+      `${total ? Math.round((done / total) * 100) : 0}%`;
+
+    const foot = document.getElementById('lesson-foot');
+    if (!foot) return;
+    foot.innerHTML = `
+      ${hasPrev ? `<button class="btn btn-ghost" id="btn-lesson-prev">← Previous lesson</button>` : '<span></span>'}
+      ${hasNext
+        ? `<button class="btn btn-primary" id="btn-lesson-next">Next lesson →</button>`
+        : `<button class="btn btn-primary" id="btn-lesson-done">Finish the course →</button>`}`;
+
     document.getElementById('btn-lesson-prev')
       ?.addEventListener('click', () => this.goTo(this.unitIndex - 1, false));
     document.getElementById('btn-lesson-next')
@@ -6229,7 +6380,13 @@ const LessonView = {
         <span class="chapter-jump-num">${i + 1}</span>
         <span class="chapter-jump-title">${escapeAttr(u.title)}</span>
         ${done.has(u.id) ? '<span class="chapter-jump-mark">✓</span>' : ''}
-      </button>`).join('');
+      </button>`).join('') +
+      // The course is written in slices, so a learner who opens this list two
+      // minutes in should be told the short list is temporary rather than left
+      // to conclude the course is eight lessons long.
+      (_syllabusFills[this.lang?.id]
+        ? `<div class="lesson-jump-note">Writing the rest of the course… ${this.syllabus.length} of ${SYLLABUS_TOTAL} lessons ready.</div>`
+        : '');
 
     list.querySelectorAll('.chapter-jump-item').forEach(btn => {
       btn.addEventListener('click', async () => {
