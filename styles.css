@@ -5324,6 +5324,27 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .form-group-idle:focus-within { opacity: 1; }
 
 /* "I know this" sits at the foot of a vocabulary card — available, not loud */
+/* The swap, made visible: the word you knew leaves to the left, the harder one
+   arrives from the right. Held to 220ms out / 320ms in — long enough to read as
+   a replacement, short enough not to be in the way. */
+@keyframes vocab-leave {
+  to { opacity: 0; transform: translateX(-14px) scale(0.97); }
+}
+@keyframes vocab-arrive {
+  from { opacity: 0; transform: translateX(16px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.vocab-card-leaving {
+  animation: vocab-leave 0.22s var(--ease) forwards;
+  pointer-events: none;
+}
+.vocab-card-arriving {
+  animation: vocab-arrive 0.32s var(--ease) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vocab-card-leaving, .vocab-card-arriving { animation: none; }
+}
+
 .vocab-card-foot {
   margin-top: 0.8rem;
   padding-top: 0.7rem;

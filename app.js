@@ -3537,7 +3537,7 @@ const VocabBuilder = {
         <button class="btn btn-ghost btn-sm" id="btn-vocab-more">New vocab →</button>
       </div>
       <div class="vocab-list">
-        ${this.words.map((w, i) => vocabCardHtml(w, i, this.lang)).join('')}
+        ${this.words.map((w, i) => vocabCardHtml(w, i, this.lang, { swappable: true })).join('')}
       </div>
       <div class="vocab-actions">
         <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
@@ -3613,7 +3613,23 @@ const VocabBuilder = {
       ]);
 
       this.quiz = null;                  // the set changed under it
+
+      // The card you pressed leaves, and the new one arrives in its place —
+      // so the swap is something you watch happen rather than a list that
+      // silently says something different than it did a moment ago.
+      const card = btn.closest('.vocab-card');
+      if (card && !prefersReducedMotion()) {
+        card.classList.add('vocab-card-leaving');
+        await new Promise(r => setTimeout(r, 220));
+      }
       this.renderLearn();
+      const arrived = document.querySelector(
+        `#vocab-panel-learn .vocab-card[data-idx="${index}"]`);
+      if (arrived && !prefersReducedMotion()) {
+        arrived.classList.add('vocab-card-arriving');
+        arrived.addEventListener('animationend',
+          () => arrived.classList.remove('vocab-card-arriving'), { once: true });
+      }
       showToast(`"${old.word}" swapped for "${replacement.word}".`, 'success', 3500);
     } catch (err) {
       console.warn('Word swap failed:', err.message);
@@ -4084,7 +4100,14 @@ const VocabBuilder = {
 // English pronunciation bracketed beneath it, and its example sentence in that
 // script with a romanization and an English translation — everything an English
 // speaker needs to actually read, say and understand it.
-function vocabCardHtml(w, i, lang) {
+// `swappable` is off by default. Saved vocab renders with this same function,
+// and a swap there has no set to swap WITHIN — the button appeared and did
+// nothing, which is worse than not offering it.
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+function vocabCardHtml(w, i, lang, { swappable = false } = {}) {
   const nonLatin = lang?.script && lang.script !== 'latin';
 
   // A root card is a different animal: instead of one word in one sentence, it
@@ -4108,9 +4131,9 @@ function vocabCardHtml(w, i, lang) {
         ${w.exampleTranslation ? `<span class="vocab-ex-trans">${escapeAttr(w.exampleTranslation)}</span>` : ''}
       </blockquote>
       ${w.contrast ? `<p class="vocab-contrast">${escapeAttr(w.contrast)}</p>` : ''}
-      <div class="vocab-card-foot">
+      ${swappable ? `<div class="vocab-card-foot">
         <button class="vocab-know" data-know="${i}">I know this — swap it</button>
-      </div>
+      </div>` : ''}
     </article>`;
 }
 
@@ -6023,7 +6046,10 @@ const LessonView = {
         // sentence is readable in about a second either way.
         const [explanation, mechanics] = await Promise.all([
           callLessonExplanation(lang, unit, lang.knownWords || [], verses, onChunk),
-          callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses)
+          // The lesson page renders neither drills nor per-word glosses —
+          // see the timings on callGrammarUnitGenerator.
+          callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses,
+            { withDrills: false, withWordGlosses: false })
         ]);
         grammar = { explanation, ...mechanics };
       }

@@ -1401,7 +1401,20 @@ ${lessonContext(langProfile, unit, knownWords, verses)}
 // Everything with a shape: the table, the examples, the pitfall, the drills.
 // No "explanation" field any more — that is the streamed half above, and asking
 // for it here would double the cost of the slowest call for nothing.
-async function callGrammarUnitGenerator(langProfile, unit, knownWords = [], verses = []) {
+// `opts.withDrills` / `opts.withWordGlosses` — both default on, and both are
+// turned OFF by the lesson page, which renders NEITHER. The drill activity
+// belongs to the daily-session player, and the Quranic course has no strands so
+// it is unreachable there; word taps look their gloss up on tap (see glossify,
+// which ignores wordGlosses entirely). Generating them anyway put roughly 1,200
+// output tokens on the slowest call for nothing:
+//
+//   with drills + wordGlosses   13.7s   1,898 output tokens
+//   without                      7.5s     705 output tokens
+//
+// That is not a quality trade. It is the same lesson, minus two fields nobody
+// ever saw. Recipes that DO play drills still ask for them.
+async function callGrammarUnitGenerator(langProfile, unit, knownWords = [], verses = [], opts = {}) {
+  const { withDrills = true, withWordGlosses = true } = opts;
   const nonLatin = langProfile.script !== 'latin';
   const prompt = `
     You are a patient grammar teacher laying out ONE structure in
@@ -1412,9 +1425,9 @@ ${lessonContext(langProfile, unit, knownWords, verses)}
     1. "patternTable" — the pattern laid out concretely (the conjugation set,
        the word-order slots, the case endings — whatever fits). 3-8 rows.
     2. "examples" — 4 full sentences using the structure, each with an English
-       gloss and a per-word gloss so every word can be tapped.
+       gloss${withWordGlosses ? ' and a per-word gloss so every word can be tapped' : ''}.
     3. "pitfall" — the ONE mistake English speakers reliably make here.
-    4. "drills" — 6 practice items, mixed across these kinds:
+    ${withDrills ? `4. "drills" — 6 practice items, mixed across these kinds:
        - "cloze": prompt has a ___ blank; "answer" is the missing word only
        - "build": "options" are the sentence's words scrambled; "answer" is the
          correctly ordered sentence
@@ -1422,15 +1435,14 @@ ${lessonContext(langProfile, unit, knownWords, verses)}
          into the past"); "answer" is the transformed sentence
        - "translate": prompt is an English sentence; "answer" is it in ${langProfile.name}
        Every drill must exercise THIS unit's structure. Include a "hint" that
-       points at the rule without giving the answer away.
+       points at the rule without giving the answer away.` : ''}
     ${nonLatin ? `- Give "${langProfile.romanizationName}" romanization for every example sentence.` : ''}
 
     Return ONLY valid JSON, no markdown fences:
     {
       "patternTable": { "caption": "...", "rows": [{ "form": "...", "example": "...", "gloss": "..." }] },
-      "examples": [{ "text": "...", ${nonLatin ? '"romanization": "...", ' : ''}"gloss": "...", "wordGlosses": [{ "word": "...", "gloss": "..." }] }],
-      "pitfall": "...",
-      "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]
+      "examples": [{ "text": "...", ${nonLatin ? '"romanization": "...", ' : ''}"gloss": "..."${withWordGlosses ? ', "wordGlosses": [{ "word": "...", "gloss": "..." }]' : ''} }],
+      "pitfall": "..."${withDrills ? ',\n      "drills": [{ "kind": "cloze", "prompt": "...", "answer": "...", "options": [], "hint": "..." }]' : ''}
     }
   `;
   // 'fast', on evidence. This used to be 'deep' on the reasoning that a lesson
@@ -1452,7 +1464,8 @@ ${lessonContext(langProfile, unit, knownWords, verses)}
 
   // One retry before giving up: a JSON call that comes back empty is usually a
   // one-off, and failing a lesson outright is much worse than asking twice.
-  const empty = (r, d) => !d.length && !r.patternTable?.rows?.length && !(r.examples || []).length;
+  const empty = (r, d) => !r.patternTable?.rows?.length && !(r.examples || []).length
+                          && (!withDrills || !d.length);
   if (empty(result, drills)) {
     console.warn('Lesson mechanics came back empty — retrying once.');
     result = await queryAI(prompt, true, null, 'fast');
