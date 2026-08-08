@@ -1053,18 +1053,56 @@ async function dbRemoveLangCardsByFront(langId, front) {
   const target = String(front).trim();
   if (!target) return 0;
   let removed = 0;
+  let total = 0;
   for (const batch of await dbGetLangCardBatches(langId)) {
+    const had = (batch.flashcards || []).length;
     const kept = (batch.flashcards || []).filter(c => String(c.front).trim() !== target);
-    if (kept.length === (batch.flashcards || []).length) continue;
-    removed += (batch.flashcards || []).length - kept.length;
+    total += kept.length;
+    if (kept.length === had) continue;
+    removed += had - kept.length;
     await dbPutLangCardBatch(langId, batch.batch, kept);
   }
-  if (removed) {
-    const total = (await dbGetLangCardBatches(langId))
-      .reduce((n, b) => n + (b.flashcards || []).length, 0);
-    await dbPatchLanguage(langId, { cardCount: total }).catch(() => {});
-  }
+  // The new total was counted on the way through. Re-reading every batch a
+  // second time just to add them up was a whole extra round trip for a number
+  // we already had.
+  if (removed) await dbPatchLanguage(langId, { cardCount: total }).catch(() => {});
   return removed;
+}
+
+// A word swapped for a harder one: the old card out, the new card in. One read
+// of the deck instead of two, and no window in between where the deck holds
+// neither. Done as two separate calls it was seven round trips, and running
+// them in parallel corrupted the deck — both read every batch, so the second
+// one's read predated the first one's write and silently undid it.
+async function dbReplaceLangCard(langId, oldFront, newCard) {
+  const target = String(oldFront).trim();
+  const batches = await dbGetLangCardBatches(langId);
+
+  let placed = false;
+  let total = 0;
+  const writes = [];
+  for (const batch of batches) {
+    const had = batch.flashcards || [];
+    // The replacement takes the departing card's place, so a swap does not
+    // shuffle the deck order under someone mid-review.
+    const next = had.map(c => {
+      if (placed || String(c.front).trim() !== target) return c;
+      placed = true;
+      return newCard;
+    });
+    total += next.length;
+    if (next.some((c, i) => c !== had[i])) writes.push([batch.batch, next]);
+  }
+
+  if (!placed) {
+    // Nothing to replace — the word was never in the deck. Add it rather than
+    // dropping it, so the deck still gains the word the learner just met.
+    await dbAppendLangCards(langId, [newCard]);
+    return false;
+  }
+  for (const [n, cards] of writes) await dbPutLangCardBatch(langId, n, cards);
+  await dbPatchLanguage(langId, { cardCount: total }).catch(() => {});
+  return true;
 }
 
 // The root track keeps ONE set — the corpus. Anything left over from when it
@@ -3579,9 +3617,7 @@ const VocabBuilder = {
           index: parseInt(btn.dataset.know),
           btn,
           // Saved words are written back to the set they arrived in.
-          setNumber: (w) => w._setNumber,
-          scope: `.vocab-saved-set[data-lang="${CSS.escape(entry.lang.id)}"]`,
-          rerender: () => this.renderSaved()
+          setNumber: (w) => w._setNumber
         }));
       });
     });
@@ -3674,8 +3710,7 @@ const VocabBuilder = {
         index: parseInt(btn.dataset.know),
         btn,
         setNumber: () => this.setNumber,
-        scope: '#vocab-panel-learn',
-        rerender: () => { this.quiz = null; this.renderLearn(); }
+        onSwapped: () => { this.quiz = null; }   // the set changed under it
       }));
     });
   },
@@ -3691,7 +3726,14 @@ const VocabBuilder = {
   // set the word originally came from. Everything between those two facts is
   // identical, and when it was only wired up on one of them the button sat
   // there on the other doing nothing at all.
-  async swapWord({ lang, list, index, btn, setNumber, scope, rerender }) {
+  //
+  // THE CARD CHANGES THE MOMENT THE WORD ARRIVES. Saving it does not hold the
+  // paint. It used to: after the model answered in about two seconds, eleven
+  // sequential Firestore round trips ran before anything moved on screen, with
+  // the button still reading "Finding a harder one…" throughout. That is why
+  // this felt slow, and why it read as broken rather than slow.
+  async swapWord(ctx) {
+    const { lang, list, index, btn, setNumber, onSwapped } = ctx;
     const old = list[index];
     if (!lang || !old || btn.disabled) return;
 
@@ -3699,78 +3741,116 @@ const VocabBuilder = {
     const label = btn.textContent;
     btn.textContent = 'Finding a harder one…';
 
+    let replacement;
     try {
       const known = [...(lang.knownWords || []), ...list.map(w => w.word)];
       const theme = document.getElementById('vocab-theme')?.value.trim() || '';
-      const replacement = AppState.mode === 'demo'
+      replacement = AppState.mode === 'demo'
         ? demoSimilarWord(lang, old)
         : await callSimilarWord(lang, lang.tier || 'articulate', old.word, old.meaning,
                                 known, theme);
-
-      const target = setNumber(old);
-      list[index] = { ...replacement, _setNumber: target };
-
-      // Known, so never offered again — and its card leaves the deck.
-      lang.knownWords = [...new Set([...(lang.knownWords || []), old.word, replacement.word])]
-        .slice(-400);
-      // The two deck writes must NOT run together. Both read every batch, edit
-      // it and write it back, so in parallel the second one's read predates the
-      // first one's write and silently undoes it — the removed card came back.
-      await dbRemoveLangCardsByFront(lang.id, old.word);
-      await dbAppendLangCards(lang.id, [{
-        front: replacement.word,
-        back: [replacement.meaning,
-               replacement.example ? `\n\n"${replacement.example}"` : '',
-               replacement.exampleRomanization ? `\n${replacement.exampleRomanization}` : '',
-               replacement.exampleTranslation ? `\n${replacement.exampleTranslation}` : ''].join(''),
-        word: replacement.word,
-        romanization: replacement.pronunciation || null,
-        type: 'precision'
-      }]);
-
-      // Only the set the word actually belonged to is rewritten, and only that
-      // one word inside it. The list on screen in Saved vocab spans several
-      // sets and has had duplicates folded out of it, so writing it back
-      // wholesale would collapse the history into one set and drop words the
-      // view had merely hidden.
-      if (target != null) {
-        const stored = await dbGetVocabSet(lang.id, target);
-        // No stored copy means this batch was never written — fall back to what
-        // is on screen rather than replacing the set with a single word.
-        const base = stored?.words?.length
-          ? stored.words
-          : list.map(({ _setNumber, _learnedAt, ...w }) => w);
-        const members = base.map(w =>
-          String(w.word).trim() === String(old.word).trim() ? replacement : w);
-        if (!members.some(w => w.word === replacement.word)) members.push(replacement);
-        await dbPutVocabSet(lang.id, target, members,
-          { langName: lang.name, script: lang.script });
-      }
-      await dbPutLanguage(lang);
-
-      // The card you pressed leaves, and the new one arrives in its place —
-      // so the swap is something you watch happen rather than a list that
-      // silently says something different than it did a moment ago.
-      const card = btn.closest('.vocab-card');
-      const animate = !prefersReducedMotion();
-      if (card && animate) {
-        card.classList.add('vocab-card-leaving');
-        await new Promise(r => setTimeout(r, 220));
-      }
-      await rerender();
-      const arrived = document.querySelector(`${scope} .vocab-card[data-idx="${index}"]`);
-      if (arrived && animate) {
-        arrived.classList.add('vocab-card-arriving');
-        arrived.addEventListener('animationend',
-          () => arrived.classList.remove('vocab-card-arriving'), { once: true });
-      }
-      showToast(`"${old.word}" swapped for "${replacement.word}".`, 'success', 3500);
     } catch (err) {
+      // Nothing has changed yet, so there is nothing to undo — put the button
+      // back and say why.
       console.warn('Word swap failed:', err.message);
       btn.disabled = false;
       btn.textContent = label;
       showToast('Could not find a replacement: ' + err.message, 'error', 5000);
+      return;
     }
+
+    const target = setNumber(old);
+    list[index] = { ...replacement, _setNumber: target };
+    lang.knownWords = [...new Set([...(lang.knownWords || []), old.word, replacement.word])]
+      .slice(-400);
+    onSwapped?.();
+
+    // ── On screen, now ────────────────────────────────────────────────────
+    // One card is replaced in place rather than the list being re-rendered.
+    // Re-rendering Saved vocab means re-reading every set of every language
+    // from Firestore, which is the single most expensive thing in this path
+    // and buys nothing — we already know what the card should say.
+    await this.replaceCardNode(btn.closest('.vocab-card'), replacement, ctx);
+    showToast(`"${old.word}" swapped for "${replacement.word}".`, 'success', 3500);
+
+    // ── In the database, behind it ────────────────────────────────────────
+    this.persistSwap(lang, old, replacement, target, list)
+      .catch(err => {
+        console.warn('Swap did not save:', err.message);
+        showToast(`"${replacement.word}" is on screen but didn't save — it may be back next time.`,
+          'error', 6000);
+      });
+  },
+
+  // Swap one card's markup for another's, with the leaving and arriving
+  // animation around it. The replacement is wired up from the SAME context the
+  // card it replaced was wired from — the Learn tab and Saved vocab swap
+  // against different lists and write to different sets, so a card rebound
+  // with the wrong one would quietly edit the wrong word.
+  async replaceCardNode(card, word, ctx) {
+    if (!card) return;
+    const { lang, index } = ctx;
+    const animate = !prefersReducedMotion();
+    if (animate) {
+      card.classList.add('vocab-card-leaving');
+      await new Promise(r => setTimeout(r, 220));
+    }
+
+    const holder = document.createElement('div');
+    holder.innerHTML = vocabCardHtml(word, index, lang, { swappable: true });
+    const fresh = holder.firstElementChild;
+    if (!fresh) return;
+    card.replaceWith(fresh);
+
+    fresh.querySelector('.vocab-speak')?.addEventListener('click', () => {
+      if (!NarrationEngine.speakLang(word.word, lang.ttsLangCode || lang.code, 0.85)) {
+        showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+      }
+    });
+    fresh.querySelector('[data-know]')?.addEventListener('click', (e) =>
+      this.swapWord({ ...ctx, btn: e.currentTarget }));
+
+    if (animate) {
+      fresh.classList.add('vocab-card-arriving');
+      fresh.addEventListener('animationend',
+        () => fresh.classList.remove('vocab-card-arriving'), { once: true });
+    }
+  },
+
+  // Everything the swap has to write down. Sequential on purpose — these read
+  // and rewrite the same documents, so running them together loses one of the
+  // edits — but nothing on screen is waiting for any of it.
+  async persistSwap(lang, old, replacement, target, list) {
+    await dbReplaceLangCard(lang.id, old.word, {
+      front: replacement.word,
+      back: [replacement.meaning,
+             replacement.example ? `\n\n"${replacement.example}"` : '',
+             replacement.exampleRomanization ? `\n${replacement.exampleRomanization}` : '',
+             replacement.exampleTranslation ? `\n${replacement.exampleTranslation}` : ''].join(''),
+      word: replacement.word,
+      romanization: replacement.pronunciation || null,
+      type: 'precision'
+    });
+
+    // Only the set the word actually belonged to is rewritten, and only that
+    // one word inside it. The list on screen in Saved vocab spans several
+    // sets and has had duplicates folded out of it, so writing it back
+    // wholesale would collapse the history into one set and drop words the
+    // view had merely hidden.
+    if (target != null) {
+      const stored = await dbGetVocabSet(lang.id, target);
+      // No stored copy means this batch was never written — fall back to what
+      // is on screen rather than replacing the set with a single word.
+      const base = stored?.words?.length
+        ? stored.words
+        : list.map(({ _setNumber, _learnedAt, ...w }) => w);
+      const members = base.map(w =>
+        String(w.word).trim() === String(old.word).trim() ? replacement : w);
+      if (!members.some(w => w.word === replacement.word)) members.push(replacement);
+      await dbPutVocabSet(lang.id, target, members,
+        { langName: lang.name, script: lang.script });
+    }
+    await dbPutLanguage(lang);
   },
 
   // ── THE ROOT LIST ──
