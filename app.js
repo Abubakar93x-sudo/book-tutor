@@ -980,18 +980,24 @@ async function dbPutVocabSet(langId, setNumber, words, meta = {}) {
 // A root's five commonest Quranic words never change, so they are generated
 // once and read back forever. Same shape as the syllabus cache: curated data
 // picks the root, the model writes what goes with it, Firestore keeps it.
+// Cached lemmas are stamped with WHO wrote them. Switching the app from one
+// provider to the other is a request for its work, not just its future work —
+// so anything the other one wrote is treated as stale and asked for again.
 async function dbGetQuranLemmas(rootId) {
   const col = userCol('quranLemmas');
   if (!col) return null;
   const snap = await col.doc(rootId).get();
   const data = snap.exists ? snap.data() : null;
-  return data?.lemmas?.length ? data.lemmas : null;
+  if (!data?.lemmas?.length) return null;
+  if (!isCurrentGeneration(data)) return null;
+  return data.lemmas;
 }
 
 async function dbPutQuranLemmas(rootId, lemmas) {
   const col = userCol('quranLemmas');
   if (!col) return;
-  await col.doc(rootId).set({ rootId, lemmas, createdAt: Date.now() }, { merge: true });
+  await col.doc(rootId).set(
+    { rootId, lemmas, ...generationStamp(), createdAt: Date.now() }, { merge: true });
 }
 
 // The tutor's transcript, one per language + unit + mode. Kept apart from the
@@ -1146,19 +1152,49 @@ function unitKey(unitIndex) {
 //   5 — Quranic lessons were written under a rule that preferred famous short
 //       surahs, so their examples all come from the same handful of verses.
 //       The rule now opens the whole muṣḥaf; the cached lessons have to go.
-const LESSON_SCHEMA_VERSION = 5;
+//   6 — the teaching section was capped at "3-5 sentences" and is now allowed
+//       to run as long as the structure needs. Every cached lesson is a short
+//       one written under the old cap.
+const LESSON_SCHEMA_VERSION = 6;
+
+// Generated content is stamped with the schema it was written for AND the
+// provider that wrote it. Switching the app from DeepSeek to ChatGPT is a
+// request for ITS work, not merely its future work — so everything the other
+// one wrote is stale and gets asked for again, lesson by lesson and root by
+// root, as you reach it. Nothing is regenerated up front; you pay for a lesson
+// when you open it.
+//
+// There is ONE cached copy per lesson, not one per provider: the new version
+// replaces the old at the same key. So switching back and forth rewrites each
+// time rather than restoring an earlier copy. That is the honest trade — two
+// copies of everything to make a rare switch cheap is not worth the storage,
+// and a rebuild is what switching provider is asking for anyway.
+function generationStamp() {
+  return { schemaVersion: LESSON_SCHEMA_VERSION, provider: activeProvider() };
+}
+
+function isCurrentGeneration(doc) {
+  if (!doc) return false;
+  if ((doc.schemaVersion || 0) < LESSON_SCHEMA_VERSION) return false;
+  // Documents written before the stamp existed carry no provider. They were
+  // all DeepSeek's, which is what the app ran on at the time.
+  return (doc.provider || 'deepseek') === activeProvider();
+}
 
 async function dbGetLangLesson(langId, key) {
   const col = userCol('langLessons');
   if (!col) return null;
   const snap = await col.doc(`${langId}_${key}`).get();
-  return snap.exists ? snap.data() : null;
+  const data = snap.exists ? snap.data() : null;
+  return data && isCurrentGeneration(data) ? data : null;
 }
 
 async function dbPutLangLesson(langId, key, lesson) {
   const col = userCol('langLessons');
   if (!col) return;
-  await col.doc(`${langId}_${key}`).set({ ...lesson, langId, lessonKey: key, updatedAt: Date.now() }, { merge: true });
+  await col.doc(`${langId}_${key}`).set(
+    { ...lesson, ...generationStamp(), langId, lessonKey: key, updatedAt: Date.now() },
+    { merge: true });
 }
 
 // langSyllabus/{langId} — the grammar ladder for a language, generated ONCE by
@@ -1168,14 +1204,15 @@ async function dbGetSyllabus(langId) {
   const col = userCol('langSyllabus');
   if (!col) return null;
   const snap = await col.doc(langId).get();
-  return snap.exists ? snap.data() : null;
+  const data = snap.exists ? snap.data() : null;
+  return data && isCurrentGeneration(data) ? data : null;
 }
 
 async function dbPutSyllabus(langId, units) {
   const col = userCol('langSyllabus');
   if (!col) return;
   await col.doc(langId).set(
-    { langId, units, schemaVersion: LESSON_SCHEMA_VERSION, updatedAt: Date.now() },
+    { langId, units, ...generationStamp(), updatedAt: Date.now() },
     { merge: true }
   );
 }
@@ -8430,19 +8467,53 @@ function renderChapterUI(chapter) {
 
 // ── 11. RENDER MARKDOWN (simple parser) ───────────────────────────────────────
 // Converts a basic subset of Markdown to HTML for rendering in the UI.
+// Headings, bold, italic, paragraphs — and lists, which it used to render as
+// literal "- " lines with a <br> after each. A lesson's teaching section is
+// allowed to be long now, and long prose without lists is a wall.
 function renderMarkdown(text) {
   if (!text) return '';
-  return text
-    .replace(/### (.*?)$/gm, '<h3>$1</h3>')
-    .replace(/## (.*?)$/gm, '<h2>$1</h2>')
+
+  const inline = (t) => t
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(.+)$/gm, (match) => {
-      if (match.startsWith('<')) return match;
-      return match;
-    })
-    .replace(/\n/g, '<br>');
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+
+  const out = [];
+  let list = null;                       // 'ul' | 'ol' while one is open
+  let para = [];
+
+  const flushPara = () => {
+    if (para.length) { out.push(`<p>${inline(para.join('<br>'))}</p>`); para = []; }
+  };
+  const flushList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+
+    if (!line) { flushPara(); flushList(); continue; }
+
+    const heading = line.match(/^(#{2,3})\s+(.*)$/);
+    if (heading) {
+      flushPara(); flushList();
+      const tag = heading[1].length === 2 ? 'h2' : 'h3';
+      out.push(`<${tag}>${inline(heading[2])}</${tag}>`);
+      continue;
+    }
+
+    const bullet = line.match(/^[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+    if (bullet || numbered) {
+      flushPara();
+      const want = bullet ? 'ul' : 'ol';
+      if (list !== want) { flushList(); out.push(`<${want}>`); list = want; }
+      out.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+      continue;
+    }
+
+    flushList();
+    para.push(line);
+  }
+  flushPara(); flushList();
+  return out.join('');
 }
 
 // ── 12. CONCEPT MAP RENDERING ────────────────────────────────────────────────

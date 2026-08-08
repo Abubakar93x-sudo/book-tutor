@@ -1352,9 +1352,18 @@ ${quranBlock}
     ${knownList || '(near-beginner — use only the most universal starter words)'}
 
     Write:
-    1. "explanation" — how this works, in plain English, 3-5 sentences. Compare
-       to English when it helps. If you must use a grammatical term, define it
-       in the same breath. Never assume they know jargon.
+    1. "explanation" — the teaching. This is the part of the page a learner
+       actually reads to understand the structure, and it should be AS LONG AS
+       IT NEEDS TO BE. Do not summarise; teach. Cover, in this order:
+         - what the structure IS, in plain English
+         - how to RECOGNISE it on the page — what to look for, in what order
+         - what CHANGES when it applies, part by part
+         - where a beginner goes wrong, and how to tell the difference
+       Compare to English wherever it helps. If you must use a grammatical
+       term, define it in the same breath — never assume they know jargon.
+       Aim for 300-600 words. Do not pad it, and do not cut it short.
+       Write markdown: "## " for a sub-heading, "- " for a list item,
+       "**bold**" for the thing being named. Short paragraphs.
     2. "patternTable" — the pattern laid out concretely (the conjugation set,
        the word-order slots, the case endings — whatever fits). 3-8 rows.
     3. "examples" — 4 full sentences using the structure, each with an English
