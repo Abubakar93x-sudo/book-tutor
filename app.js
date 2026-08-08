@@ -23,7 +23,10 @@ const AppState = {
   reviewStats: { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 },
   currentUser: null,        // Firebase Auth user object (null = not signed in)
   settings: {
-    apiKey: '',                  // DeepSeek — runs everything
+    provider: 'deepseek',        // 'deepseek' | 'openai' — which one runs the app
+    apiKey: '',                  // DeepSeek
+    openaiKey: '',               // OpenAI (ChatGPT)
+    openaiModel: '',             // discovered from the account, not assumed
     geminiKey: ''                // optional; only for attachments (video, PDF)
   }
 };
@@ -2334,6 +2337,14 @@ async function renderLanguages() {
   // itself, and studying roots still visibly moves the course forward.
   const rootTrack = all.find(l => l.id === QURAN_VOCAB_ID);
 
+  // Passing through here is enough to get a course's finished lessons into the
+  // deck — you should not have to reopen a lesson to make its cards appear.
+  languages.forEach(l => {
+    if (getRecipe(l).ui?.staticSyllabus === 'QURAN_GRAMMAR') {
+      backfillLessonCards(l, quranGrammarUnits()).catch(() => {});
+    }
+  });
+
   languages.forEach((lang, li) => {
     const due = dueCounts[li];
     const recipe = getRecipe(lang);
@@ -3055,6 +3066,73 @@ async function recoverLangProgress(lang, syllabus) {
     console.warn('Progress recovery save failed:', err.message);
   }
   return lang;
+}
+
+// ── LESSONS ALREADY READ, TURNED INTO CARDS ──────────────────────────────────
+// Lessons file cards as you finish them, but a learner part-way through a
+// course read those lessons before that was true — so their course deck is
+// empty and the course shows up nowhere in Flashcards. This fills it in from
+// the lessons already cached: no generation, no API calls, just what is on disk
+// for the units they have finished. Runs once per language.
+const LESSON_CARDS_VERSION = 1;
+
+async function backfillLessonCards(lang, syllabus) {
+  if (!lang || !syllabus?.length) return 0;
+  if ((lang.lessonCardsVersion || 0) >= LESSON_CARDS_VERSION) return 0;
+
+  const done = new Set(lang.unitsMastered || []);
+  if (!done.size) {
+    // Nothing read yet — nothing to backfill, and nothing to come back for.
+    lang.lessonCardsVersion = LESSON_CARDS_VERSION;
+    dbPatchLanguage(lang.id, { lessonCardsVersion: LESSON_CARDS_VERSION }).catch(() => {});
+    return 0;
+  }
+
+  const have = new Set();
+  try {
+    for (const batch of await dbGetLangCardBatches(lang.id)) {
+      for (const c of batch.flashcards || []) have.add(String(c.front).trim());
+    }
+  } catch (err) {
+    console.warn('Could not read the deck to backfill it:', err.message);
+    return 0;
+  }
+
+  const cards = [];
+  await Promise.all(syllabus.map(async (unit, i) => {
+    if (!done.has(unit.id)) return;
+    let lesson = null;
+    try { lesson = await dbGetLangLesson(lang.id, unitKey(i)); } catch (_) { return; }
+    const rows = [];
+    if (unit.structure) rows.push({ front: unit.title, back: unit.structure, word: '' });
+    for (const ex of (lesson?.grammar?.examples || []).slice(0, 4)) {
+      if (ex.text && ex.gloss) {
+        rows.push({ front: ex.text, back: ex.gloss, word: ex.text,
+                    romanization: ex.romanization || null });
+      }
+    }
+    for (const r of rows) {
+      if (have.has(String(r.front).trim())) continue;
+      have.add(String(r.front).trim());
+      cards.push({ romanization: null, ...r, type: 'grammar', unitId: unit.id });
+    }
+  }));
+
+  if (cards.length) {
+    try {
+      await dbAppendLangCards(lang.id, cards);
+      console.log(`Backfilled ${cards.length} card(s) from lessons already read in ${lang.name}.`);
+      showToast(`${cards.length} cards from your ${lang.name} lessons are now in your deck.`,
+        'success', 5000);
+    } catch (err) {
+      console.warn('Lesson card backfill failed:', err.message);
+      return 0;
+    }
+  }
+
+  lang.lessonCardsVersion = LESSON_CARDS_VERSION;
+  dbPatchLanguage(lang.id, { lessonCardsVersion: LESSON_CARDS_VERSION }).catch(() => {});
+  return cards.length;
 }
 
 // Checked before its own script, so kanji doesn't get read as Chinese and
@@ -5659,6 +5737,8 @@ const LessonView = {
       // Progress lost to a reset course document is rebuilt from the tutor
       // transcripts, which outlive it. Only ever restores; runs once.
       await recoverLangProgress(lang, this.syllabus).catch(() => {});
+      // Lessons finished before lessons filed cards still belong in the deck
+      backfillLessonCards(lang, this.syllabus).catch(() => {});
       if (unitIndex == null) this.unitIndex = lang.unitIndex || 0;
       // A syllabus can get shorter — clamp rather than index off the end.
       if (this.syllabus.length) {
@@ -5878,6 +5958,64 @@ const LessonView = {
     if (Object.keys(patch).length) {
       try { await dbPatchLanguage(lang.id, patch); }
       catch (err) { console.warn('Lesson progress save failed:', err.message); }
+    }
+
+    // A lesson you have read becomes cards. Without this the course had no
+    // deck at all — it appeared nowhere in Flashcards, because there was
+    // nothing in it to review.
+    await this.fileLessonCards();
+  },
+
+  // Cards from the lesson just read: the rule itself, and each example the
+  // lesson used. Filed on markRead rather than on generation, so a lesson
+  // written ahead by the prefetch does not put cards in your deck for something
+  // you have not looked at yet.
+  async fileLessonCards() {
+    const { lang, unit, lesson } = this;
+    const g = lesson?.grammar;
+    if (!lang || !unit || !g) return;
+
+    const cards = [];
+    // The rule, in the unit's own words — curated, so it is worth having even
+    // when the written half is thin.
+    if (unit.structure) {
+      cards.push({
+        front: unit.title,
+        back: unit.structure,
+        word: '',
+        romanization: null,
+        type: 'grammar',
+        unitId: unit.id
+      });
+    }
+    // Each example: the Arabic on the front, what it means on the back.
+    for (const ex of (g.examples || []).slice(0, 4)) {
+      if (!ex.text || !ex.gloss) continue;
+      cards.push({
+        front: ex.text,
+        back: ex.gloss,
+        word: ex.text,
+        romanization: ex.romanization || null,
+        type: 'grammar',
+        unitId: unit.id
+      });
+    }
+    if (!cards.length) return;
+
+    try {
+      // Re-reading a lesson must not file it twice, so anything already in the
+      // deck with the same front is skipped.
+      const have = new Set();
+      for (const batch of await dbGetLangCardBatches(lang.id)) {
+        for (const c of batch.flashcards || []) have.add(String(c.front).trim());
+      }
+      const fresh = cards.filter(c => !have.has(String(c.front).trim()));
+      if (fresh.length) {
+        await dbAppendLangCards(lang.id, fresh);
+        console.log(`Filed ${fresh.length} card(s) from "${unit.title}".`);
+      }
+    } catch (err) {
+      console.warn('Could not file lesson cards:', err.message);
     }
   },
 
@@ -7669,11 +7807,14 @@ function initNavReveal() {
 }
 
 // ── 6. SETTINGS LOAD/SAVE ─────────────────────────────────────────────────────
-// Two keys: DeepSeek runs the app, Gemini is optional and only reached for
-// attachments (a video to watch, a PDF to read directly).
+// Two providers can run the app — DeepSeek or OpenAI — and Gemini is optional
+// and only reached for attachments (a video to watch, a PDF to read directly).
 async function loadSettings() {
   const apiKeyRecord = await dbGet('settings', 'apiKey');
   const geminiRecord = await dbGet('settings', 'geminiKey');
+  const openaiRecord = await dbGet('settings', 'openaiKey');
+  const providerRecord = await dbGet('settings', 'provider');
+  const openaiModelRecord = await dbGet('settings', 'openaiModel');
   const demoRecord   = await dbGet('settings', 'demoMode');
   const scopeRecord  = await dbGet('settings', 'tutorScope');
 
@@ -7692,6 +7833,11 @@ async function loadSettings() {
     AppState.mode = isDemoMode ? 'demo' : 'live';
   }
   AppState.settings.geminiKey = geminiRecord?.value || '';
+  AppState.settings.openaiKey = openaiRecord?.value || '';
+  AppState.settings.openaiModel = openaiModelRecord?.value || '';
+  // DeepSeek unless OpenAI was explicitly chosen — nobody's existing setup
+  // should change provider because a second one became available.
+  AppState.settings.provider = providerRecord?.value === 'openai' ? 'openai' : 'deepseek';
 
   // Anyone who used this before the switch has a GEMINI key sitting in the main
   // field. Google's keys start with AIza and DeepSeek's with sk-, so they can be
@@ -7720,8 +7866,13 @@ async function loadSettings() {
   // Sync the settings UI
   if (document.getElementById('input-api-key'))
     document.getElementById('input-api-key').value = AppState.settings.apiKey;
+  if (document.getElementById('input-openai-key'))
+    document.getElementById('input-openai-key').value = AppState.settings.openaiKey;
+  if (document.getElementById('select-provider'))
+    document.getElementById('select-provider').value = AppState.settings.provider || 'deepseek';
   if (document.getElementById('input-gemini-key'))
     document.getElementById('input-gemini-key').value = AppState.settings.geminiKey;
+  syncProviderFields();
   if (document.getElementById('toggle-demo-mode'))
     document.getElementById('toggle-demo-mode').checked = isDemoMode;
 
@@ -7730,16 +7881,46 @@ async function loadSettings() {
   }
 }
 
+// The chosen provider's key field is the one that matters; the other stays
+// visible but plays down, so switching back later doesn't mean re-typing a key
+// you already gave.
+function syncProviderFields() {
+  const provider = document.getElementById('select-provider')?.value
+    || AppState.settings.provider || 'deepseek';
+  const ds = document.getElementById('group-deepseek-key');
+  const oa = document.getElementById('group-openai-key');
+  if (ds) ds.classList.toggle('form-group-idle', provider !== 'deepseek');
+  if (oa) oa.classList.toggle('form-group-idle', provider !== 'openai');
+  const note = document.getElementById('openai-model-note');
+  if (note) {
+    note.textContent = AppState.settings.openaiModel
+      ? `Using ${AppState.settings.openaiModel} — picked from what your account offers.` : '';
+  }
+}
+
 async function saveSettings() {
   const apiKey = document.getElementById('input-api-key').value.trim();
+  const openaiKey = document.getElementById('input-openai-key')?.value.trim() || '';
   const geminiKey = document.getElementById('input-gemini-key')?.value.trim() || '';
+  const provider = document.getElementById('select-provider')?.value || 'deepseek';
   const isDemoMode = document.getElementById('toggle-demo-mode').checked;
 
+  // A new key may belong to a different account with a different model list,
+  // so the discovered model is forgotten and picked again on the next call.
+  if (openaiKey !== AppState.settings.openaiKey) {
+    AppState.settings.openaiModel = '';
+    await dbPut('settings', { key: 'openaiModel', value: '' });
+  }
+
   AppState.settings.apiKey = apiKey;
+  AppState.settings.openaiKey = openaiKey;
+  AppState.settings.provider = provider;
   AppState.settings.geminiKey = geminiKey;
   AppState.mode = isDemoMode ? 'demo' : 'live';
 
   await dbPut('settings', { key: 'apiKey', value: apiKey });
+  await dbPut('settings', { key: 'openaiKey', value: openaiKey });
+  await dbPut('settings', { key: 'provider', value: provider });
   await dbPut('settings', { key: 'geminiKey', value: geminiKey });
   await dbPut('settings', { key: 'demoMode', value: isDemoMode });
 
@@ -10670,6 +10851,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('modal-settings').style.display = 'none';
   });
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+  document.getElementById('select-provider')?.addEventListener('change', syncProviderFields);
   document.getElementById('btn-reset-db').addEventListener('click', resetDatabase);
 
   // ── CHAT TABS ──

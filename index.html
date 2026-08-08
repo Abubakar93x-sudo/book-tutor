@@ -1036,14 +1036,27 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
+          <label for="select-provider">Which AI runs the app</label>
+          <select id="select-provider" class="form-input">
+            <option value="deepseek">DeepSeek</option>
+            <option value="openai">ChatGPT (OpenAI)</option>
+          </select>
+          <p class="form-hint">Both do everything except reading video, which always uses Gemini. Keys are stored locally and never leave your device.</p>
+        </div>
+        <div class="form-group mt-4" id="group-deepseek-key">
           <label for="input-api-key">DeepSeek API Key</label>
           <input type="password" id="input-api-key" class="form-input" placeholder="sk-…">
-          <p class="form-hint">Get one at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>. It's stored locally and never leaves your device.</p>
+          <p class="form-hint">Get one at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>.</p>
+        </div>
+        <div class="form-group mt-4" id="group-openai-key">
+          <label for="input-openai-key">OpenAI API Key</label>
+          <input type="password" id="input-openai-key" class="form-input" placeholder="sk-…">
+          <p class="form-hint">Get one at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>. Billed separately from a ChatGPT subscription — a Plus plan does not include API credit. <span id="openai-model-note"></span></p>
         </div>
         <div class="form-group mt-4">
           <label for="input-gemini-key">Google Gemini API Key <span class="form-optional">— for video only</span></label>
           <input type="password" id="input-gemini-key" class="form-input" placeholder="AIza… (optional)">
-          <p class="form-hint">Only needed to add a book from a video, or to have a PDF read directly — DeepSeek can't watch video. Free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>. Leave blank if you don't use those.</p>
+          <p class="form-hint">Only needed to add a book from a video, or to have a PDF read directly — neither DeepSeek nor ChatGPT can watch video here. Free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>. Leave blank if you don't use those.</p>
         </div>
         <div class="form-group mt-4">
           <div class="toggle-row">

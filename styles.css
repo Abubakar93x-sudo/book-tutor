@@ -5318,6 +5318,11 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   color: var(--text-secondary);
 }
 
+/* The key for the provider you are not using: still there, still editable,
+   just not the thing being asked for. */
+.form-group-idle { opacity: 0.55; }
+.form-group-idle:focus-within { opacity: 1; }
+
 .root-deck-offer {
   display: flex;
   align-items: center;

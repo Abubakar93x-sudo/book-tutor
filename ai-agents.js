@@ -44,6 +44,103 @@ const DEEPSEEK_URL   = 'https://api.deepseek.com/chat/completions';
 function modelFor() { return DEEPSEEK_MODEL; }
 const tierThinks = (tier) => tier === 'deep';
 
+// ── OPENAI ───────────────────────────────────────────────────────────────────
+// The second provider. Its /v1/chat/completions is the API DeepSeek copied, so
+// the request and the SSE stream have the same shape and share one code path
+// below — only the URL, the key, the body extras and the error wording differ.
+//
+// Verified before writing any of it: a CORS preflight from a browser origin
+// returns access-control-allow-origin for that origin and allows the
+// authorization header, so this works from the page with no backend, exactly
+// like DeepSeek.
+const OPENAI_URL        = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
+
+// Best first. Which of these an account can actually reach depends on the
+// account, and the list of what exists moves, so the model is DISCOVERED from
+// /v1/models rather than assumed — see resolveOpenAIModel. This is a
+// preference order, not a claim about what is available.
+const OPENAI_PREFERRED = [
+  'gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini',
+  'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'
+];
+
+// Which provider runs the app. DeepSeek unless ChatGPT is both chosen AND has
+// a key — a provider set without a key would fail every call instead of
+// falling back to the one that works.
+function activeProvider() {
+  const chosen = AppState.settings.provider;
+  if (chosen === 'openai' && (AppState.settings.openaiKey || '').trim()) return 'openai';
+  return 'deepseek';
+}
+
+function getOpenAIKey() {
+  const key = AppState.settings.openaiKey
+    || document.getElementById('input-openai-key')?.value?.trim();
+  if (!key) throw new Error('OpenAI API key is missing. Add it in Settings.');
+  if (key && !AppState.settings.openaiKey) AppState.settings.openaiKey = key;
+  return key;
+}
+
+// Ask the account what it can actually run, and take the best of ours that it
+// offers. Cached on the settings object; a 404 from a chat call clears it so
+// the next call asks again.
+async function resolveOpenAIModel() {
+  if (AppState.settings.openaiModel) return AppState.settings.openaiModel;
+
+  let ids = [];
+  try {
+    const res = await fetch(OPENAI_MODELS_URL, {
+      headers: { 'Authorization': `Bearer ${getOpenAIKey()}` }
+    });
+    if (res.ok) ids = ((await res.json()).data || []).map(m => m.id);
+    else console.warn(`OpenAI model list unavailable (${res.status}); falling back.`);
+  } catch (err) {
+    console.warn('OpenAI model list unreachable:', err.message);
+  }
+
+  const pick = OPENAI_PREFERRED.find(m => ids.includes(m))
+    // Nothing from the preference list: take the plainest gpt-* chat model on
+    // offer, skipping the ones that are not chat at all.
+    || ids.filter(id => /^gpt-/.test(id) &&
+         !/audio|realtime|search|transcribe|tts|image|embedding|moderation/.test(id))
+         .sort((a, b) => a.length - b.length)[0]
+    // Or nothing at all — the list call failed. Try the safest name we know and
+    // let the chat call report properly if the account cannot run it.
+    || 'gpt-4o-mini';
+
+  AppState.settings.openaiModel = pick;
+  console.log(`OpenAI model: ${pick}${ids.length ? '' : ' (guessed — model list unavailable)'}`);
+  dbPut('settings', { key: 'openaiModel', value: pick }).catch(() => {});
+  return pick;
+}
+
+// OpenAI's own messages are usable but say nothing about what to do next, and
+// the quota one in particular reads like a fault rather than an errand.
+function openaiError(status, errData) {
+  const raw = errData?.error?.message || '';
+  const code = errData?.error?.code || '';
+  if (status === 401 || code === 'invalid_api_key') {
+    return new Error('OpenAI rejected that API key. Check it in Settings — it should '
+      + 'start with "sk-" and be copied whole.');
+  }
+  if (status === 429 && /quota|billing/i.test(raw + code)) {
+    return new Error('Your OpenAI account has no credit. The API is billed separately '
+      + 'from a ChatGPT subscription — add credit at platform.openai.com (Billing).');
+  }
+  if (status === 429) {
+    return new Error('OpenAI is rate-limiting the account. Wait a moment and try again.');
+  }
+  if (status === 404 || code === 'model_not_found') {
+    // The stored model is not one this account can run — forget it and re-pick
+    AppState.settings.openaiModel = '';
+    dbPut('settings', { key: 'openaiModel', value: '' }).catch(() => {});
+    return new Error(`Your OpenAI account cannot use that model. Trying a different one — `
+      + `ask again.`);
+  }
+  return new Error(raw || `OpenAI request failed (${status}).`);
+}
+
 function geminiUrl(model, stream = false) {
   const method = stream ? 'streamGenerateContent' : 'generateContent';
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}`;
@@ -69,7 +166,8 @@ function getGeminiKey() {
     || document.getElementById('input-gemini-key')?.value?.trim();
   if (!key) {
     throw new Error('Reading a video or a PDF directly needs a Google Gemini key — '
-      + 'DeepSeek cannot watch video. Add one in Settings, under "For video".');
+      + 'neither DeepSeek nor ChatGPT watches video here. Add one in Settings, '
+      + 'under "For video only".');
   }
   if (key && !AppState.settings.geminiKey) AppState.settings.geminiKey = key;
   return key;
@@ -124,26 +222,37 @@ function parseModelJson(textResponse) {
 async function queryAI(prompt, responseJson = false, fileUri = null, tier = 'fast') {
   return fileUri
     ? geminiRequest(prompt, responseJson, fileUri)
-    : deepseekRequest(prompt, responseJson, tier);
+    : chatRequest(prompt, responseJson, tier);
 }
 
 async function queryAIStream(prompt, onChunk, tier = 'fast') {
-  return deepseekStreamRequest(prompt, onChunk, tier);
+  return chatStreamRequest(prompt, onChunk, tier);
 }
 
-// ── DEEPSEEK ──────────────────────────────────────────────────────────────────
-// OpenAI-compatible /chat/completions. Called straight from the browser: the
-// API sends CORS headers reflecting the origin, so this app needs no backend.
-function deepseekBody(prompt, responseJson, tier, stream = false) {
+// ── ONE CHAT PATH, TWO PROVIDERS ─────────────────────────────────────────────
+// DeepSeek's API is a copy of OpenAI's, down to the SSE frames, so there is one
+// implementation and a small description of each provider rather than two
+// near-identical halves that drift apart.
+async function chatConfig(responseJson, tier, stream) {
   const messages = [];
 
-  // response_format REQUIRES the word "json" to appear in the messages. One
-  // system line beats editing thirty prompts. Verified working alongside
-  // thinking, so every JSON call gets it whatever the tier.
+  // response_format REQUIRES the word "json" to appear in the messages, on both
+  // providers. One system line beats editing thirty prompts.
   if (responseJson) {
     messages.push({ role: 'system', content: 'Reply with a single valid json object and nothing else.' });
   }
-  messages.push({ role: 'user', content: prompt });
+
+  if (activeProvider() === 'openai') {
+    const body = { model: await resolveOpenAIModel(), messages, stream };
+    if (responseJson) body.response_format = { type: 'json_object' };
+    // Deliberately no max_tokens and no temperature. OpenAI's newer models
+    // reject `max_tokens` in favour of `max_completion_tokens`, and reject a
+    // non-default temperature outright — and since the model here is whatever
+    // the account happens to offer, sending neither is the only setting that
+    // works across all of them. Our prompts are short-output anyway.
+    return { name: 'OpenAI', url: OPENAI_URL, key: getOpenAIKey(), body,
+             mapError: openaiError };
+  }
 
   const body = { model: modelFor(), messages, stream };
   if (responseJson) body.response_format = { type: 'json_object' };
@@ -157,71 +266,52 @@ function deepseekBody(prompt, responseJson, tier, stream = false) {
   // mid-thought returns NOTHING (seen on deepseek-v4-pro at 500). Deep calls
   // get room for both halves.
   body.max_tokens = tierThinks(tier) ? 16384 : 8192;
-  return body;
+  return { name: 'DeepSeek', url: DEEPSEEK_URL, key: getApiKey(), body,
+           mapError: deepseekError };
 }
 
-// DeepSeek's own error strings are terse, and two of them are what every new
-// user meets first. Verified against the live API: a bad key returns 401
-// "Authentication Fails", and a valid key with no credit returns 402
-// "Insufficient Balance" — which sounds like a fault rather than an errand.
-// Both get turned into something that says what to do about it.
-function deepseekError(status, errData) {
-  const raw = errData?.error?.message || '';
-  if (status === 402 || /insufficient balance/i.test(raw)) {
-    return new Error('Your DeepSeek account has no credit. The API is pay-as-you-go — '
-      + 'top up at platform.deepseek.com (Billing) and try again. Your key is fine.');
-  }
-  if (status === 401 || /authentication fails/i.test(raw)) {
-    return new Error('DeepSeek rejected that API key. Check it in Settings — it should '
-      + 'start with "sk-" and be copied whole.');
-  }
-  if (status === 429) {
-    return new Error('DeepSeek is rate-limiting the account. Wait a moment and try again.');
-  }
-  return new Error(raw || `DeepSeek request failed (${status}).`);
-}
+async function chatRequest(prompt, responseJson, tier) {
+  const cfg = await chatConfig(responseJson, tier, false);
+  cfg.body.messages.push({ role: 'user', content: prompt });
 
-async function deepseekRequest(prompt, responseJson, tier) {
-  const response = await fetch(DEEPSEEK_URL, {
+  const response = await fetch(cfg.url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getApiKey()}`
-    },
-    body: JSON.stringify(deepseekBody(prompt, responseJson, tier))
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.key}` },
+    body: JSON.stringify(cfg.body)
   });
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    console.error('DeepSeek API Error:', errData);
-    throw deepseekError(response.status, errData);
+    console.error(`${cfg.name} API Error:`, errData);
+    throw cfg.mapError(response.status, errData);
   }
 
   const result = await response.json();
   const textResponse = result.choices?.[0]?.message?.content;
-  if (!textResponse) throw new Error('Received empty response from DeepSeek.');
+  if (!textResponse) throw new Error(`Received empty response from ${cfg.name}.`);
 
   if (!responseJson) return textResponse;
-  console.log('Raw DeepSeek response:', textResponse.trim());
+  console.log(`Raw ${cfg.name} response:`, textResponse.trim());
   return parseModelJson(textResponse);
 }
 
-// Streaming, OpenAI SSE. The reasoner streams its chain of thought first, as
-// `reasoning_content` deltas — those are deliberately dropped, or the learner
-// would watch the model think out loud before it says anything to them.
-async function deepseekStreamRequest(prompt, onChunk, tier) {
-  const response = await fetch(DEEPSEEK_URL, {
+// Streaming, OpenAI SSE — the same frames from both. DeepSeek's reasoner
+// streams its chain of thought first as `reasoning_content` deltas; those are
+// deliberately dropped, or the learner would watch the model think out loud
+// before it says anything to them.
+async function chatStreamRequest(prompt, onChunk, tier) {
+  const cfg = await chatConfig(false, tier, true);
+  cfg.body.messages.push({ role: 'user', content: prompt });
+
+  const response = await fetch(cfg.url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getApiKey()}`
-    },
-    body: JSON.stringify(deepseekBody(prompt, false, tier, true))
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.key}` },
+    body: JSON.stringify(cfg.body)
   });
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw deepseekError(response.status, errData);
+    throw cfg.mapError(response.status, errData);
   }
 
   const reader = response.body.getReader();
@@ -252,8 +342,34 @@ async function deepseekStreamRequest(prompt, onChunk, tier) {
     }
   }
 
-  if (!fullText) throw new Error('Received empty response from DeepSeek.');
+  if (!fullText) throw new Error(`Received empty response from ${cfg.name}.`);
   return fullText;
+}
+
+// ── DEEPSEEK ──────────────────────────────────────────────────────────────────
+// OpenAI-compatible /chat/completions, which is why it shares chatRequest with
+// OpenAI above. Called straight from the browser: the API sends CORS headers
+// reflecting the origin, so this app needs no backend.
+//
+// DeepSeek's own error strings are terse, and two of them are what every new
+// user meets first. Verified against the live API: a bad key returns 401
+// "Authentication Fails", and a valid key with no credit returns 402
+// "Insufficient Balance" — which sounds like a fault rather than an errand.
+// Both get turned into something that says what to do about it.
+function deepseekError(status, errData) {
+  const raw = errData?.error?.message || '';
+  if (status === 402 || /insufficient balance/i.test(raw)) {
+    return new Error('Your DeepSeek account has no credit. The API is pay-as-you-go — '
+      + 'top up at platform.deepseek.com (Billing) and try again. Your key is fine.');
+  }
+  if (status === 401 || /authentication fails/i.test(raw)) {
+    return new Error('DeepSeek rejected that API key. Check it in Settings — it should '
+      + 'start with "sk-" and be copied whole.');
+  }
+  if (status === 429) {
+    return new Error('DeepSeek is rate-limiting the account. Wait a moment and try again.');
+  }
+  return new Error(raw || `DeepSeek request failed (${status}).`);
 }
 
 // ── GEMINI: ATTACHMENTS ONLY ──────────────────────────────────────────────────
