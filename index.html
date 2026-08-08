@@ -1052,6 +1052,8 @@
           <label for="input-openai-key">OpenAI API Key</label>
           <input type="password" id="input-openai-key" class="form-input" placeholder="sk-…">
           <p class="form-hint">Get one at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>. Billed separately from a ChatGPT subscription — a Plus plan does not include API credit. <span id="openai-model-note"></span></p>
+          <input type="text" id="input-openai-model" class="form-input mt-2" placeholder="Model — leave blank to pick the fastest good one automatically">
+          <p class="form-hint">Only fill this in if you want a specific model. Reasoning models are slower here for no gain — the lesson timings are in ai-agents.js.</p>
         </div>
         <div class="form-group mt-4">
           <label for="input-gemini-key">Google Gemini API Key <span class="form-optional">— for video only</span></label>

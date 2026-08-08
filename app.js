@@ -27,6 +27,7 @@ const AppState = {
     apiKey: '',                  // DeepSeek
     openaiKey: '',               // OpenAI (ChatGPT)
     openaiModel: '',             // discovered from the account, not assumed
+    openaiModelChoice: '',       // typed in Settings; overrides the discovery
     geminiKey: ''                // optional; only for attachments (video, PDF)
   }
 };
@@ -1044,6 +1045,26 @@ async function dbGetAllVocabSets(langId) {
     console.warn('Vocab set history read failed:', err.message);
     return [];
   }
+}
+
+// A word the learner has told us they already know should not come back as a
+// card. Rewrites only the batches that actually held it.
+async function dbRemoveLangCardsByFront(langId, front) {
+  const target = String(front).trim();
+  if (!target) return 0;
+  let removed = 0;
+  for (const batch of await dbGetLangCardBatches(langId)) {
+    const kept = (batch.flashcards || []).filter(c => String(c.front).trim() !== target);
+    if (kept.length === (batch.flashcards || []).length) continue;
+    removed += (batch.flashcards || []).length - kept.length;
+    await dbPutLangCardBatch(langId, batch.batch, kept);
+  }
+  if (removed) {
+    const total = (await dbGetLangCardBatches(langId))
+      .reduce((n, b) => n + (b.flashcards || []).length, 0);
+    await dbPatchLanguage(langId, { cardCount: total }).catch(() => {});
+  }
+  return removed;
 }
 
 // The root track keeps ONE set — the corpus. Anything left over from when it
@@ -3531,8 +3552,75 @@ const VocabBuilder = {
         }
       });
     });
+    this.bindKnowButtons(panel);
     document.getElementById('btn-vocab-more').addEventListener('click', () => this.loadWords());
     document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
+  },
+
+  bindKnowButtons(scope) {
+    scope.querySelectorAll('[data-know]').forEach(btn => {
+      btn.addEventListener('click', () => this.swapKnownWord(parseInt(btn.dataset.know), btn));
+    });
+  },
+
+  // "I know this" is a request for a harder word in the same area of meaning,
+  // and a statement that this one should stop coming round. So it does three
+  // things: swaps the card, adds the word to the never-offer-again list, and
+  // takes its flashcard out of the review deck — a word you know is not a card
+  // you want back next week.
+  async swapKnownWord(index, btn) {
+    const lang = this.lang;
+    const old = this.words[index];
+    if (!lang || !old || btn.disabled) return;
+
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Finding a harder one…';
+
+    try {
+      const known = [...(lang.knownWords || []), ...this.words.map(w => w.word)];
+      const theme = document.getElementById('vocab-theme')?.value.trim() || '';
+      const replacement = AppState.mode === 'demo'
+        ? demoSimilarWord(lang, old)
+        : await callSimilarWord(lang, lang.tier || 'articulate', old.word, old.meaning,
+                                known, theme);
+
+      this.words[index] = replacement;
+
+      // Known, so never offered again — and its card leaves the deck.
+      lang.knownWords = [...new Set([...(lang.knownWords || []), old.word, replacement.word])]
+        .slice(-400);
+      // The two deck writes must NOT run together. Both read every batch, edit
+      // it and write it back, so in parallel the second one's read predates the
+      // first one's write and silently undoes it — the removed card came back.
+      await dbRemoveLangCardsByFront(lang.id, old.word);
+      await dbAppendLangCards(lang.id, [{
+        front: replacement.word,
+        back: [replacement.meaning,
+               replacement.example ? `\n\n"${replacement.example}"` : '',
+               replacement.exampleRomanization ? `\n${replacement.exampleRomanization}` : '',
+               replacement.exampleTranslation ? `\n${replacement.exampleTranslation}` : ''].join(''),
+        word: replacement.word,
+        romanization: replacement.pronunciation || null,
+        type: 'precision'
+      }]);
+
+      // These touch different documents, so they can go together.
+      await Promise.all([
+        dbPutVocabSet(lang.id, this.setNumber, this.words,
+          { langName: lang.name, script: lang.script }),
+        dbPutLanguage(lang)
+      ]);
+
+      this.quiz = null;                  // the set changed under it
+      this.renderLearn();
+      showToast(`"${old.word}" swapped for "${replacement.word}".`, 'success', 3500);
+    } catch (err) {
+      console.warn('Word swap failed:', err.message);
+      btn.disabled = false;
+      btn.textContent = label;
+      showToast('Could not find a replacement: ' + err.message, 'error', 5000);
+    }
   },
 
   // ── THE ROOT LIST ──
@@ -4020,6 +4108,9 @@ function vocabCardHtml(w, i, lang) {
         ${w.exampleTranslation ? `<span class="vocab-ex-trans">${escapeAttr(w.exampleTranslation)}</span>` : ''}
       </blockquote>
       ${w.contrast ? `<p class="vocab-contrast">${escapeAttr(w.contrast)}</p>` : ''}
+      <div class="vocab-card-foot">
+        <button class="vocab-know" data-know="${i}">I know this — swap it</button>
+      </div>
     </article>`;
 }
 
@@ -4201,6 +4292,28 @@ function demoQuranLemmas(entry) {
     { word: `${entry.root.replace(/ /g, '')}ِين`, romanization: `${r}īn`, meaning: `those who do ${entry.gloss}`, form: 'plural doer noun' },
     { word: `يَ${entry.root.replace(/ /g, '')}`, romanization: `ya-${r}`, meaning: `he does ${entry.gloss}`, form: 'verb (Form I), present' }
   ];
+}
+
+// Demo mode: a shaped stand-in so "I know this" works without an API key.
+function demoSimilarWord(lang, old) {
+  const harder = {
+    'interesting': { word: 'compelling', meaning: 'so interesting you cannot look away' },
+    'دلچسپ': { word: 'دلکش', meaning: 'captivating; it pulls you in' }
+  };
+  const pick = harder[String(old.word)] || {
+    word: `${old.word}-er`, meaning: `a sharper version of ${old.meaning}`
+  };
+  return {
+    word: pick.word,
+    partOfSpeech: old.partOfSpeech || 'adjective',
+    pronunciation: old.pronunciation || '',
+    meaning: pick.meaning,
+    example: `A ${pick.word} case, and no one looked away.`,
+    exampleRomanization: '',
+    exampleTranslation: '',
+    cloze: '',
+    contrast: `Stronger than "${old.word}".`
+  };
 }
 
 function demoVocabBuilderWords(lang, tier) {
@@ -5654,13 +5767,16 @@ const LangSession = {
 function grammarUnitHtml(unit, g, lang, formMarkers = null) {
   if (!unit) return '';
   if (!g) {
+    // The explanation element is here, empty, because the teaching STREAMS into
+    // it — see LessonView.open. The note below it is removed by the first chunk.
     return `
       <h3 class="consolidate-title grammar-title">${escapeAttr(unit.title)}</h3>
       <p class="grammar-structure">${unit.structure}</p>
       ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
+      <div class="grammar-explanation" id="lesson-explanation"></div>
       <div class="lesson-pending">
         <span class="cp-spinner"></span>
-        <span>Writing this lesson — the explanation, the pattern and the examples.</span>
+        <span>Writing this lesson…</span>
       </div>`;
   }
 
@@ -5715,7 +5831,7 @@ function grammarUnitHtml(unit, g, lang, formMarkers = null) {
     <p class="grammar-structure">${unit.structure}</p>
     ${markersHtml}
     ${unit.whyItMatters ? `<p class="story-title-gloss">${unit.whyItMatters}</p>` : ''}
-    <div class="grammar-explanation">${renderMarkdown(g.explanation || '')}</div>
+    <div class="grammar-explanation" id="lesson-explanation">${renderMarkdown(g.explanation || '')}</div>
     ${tableHtml}
     ${examplesHtml ? `
       <div class="recall-col-head" style="color:var(--purple)"><i style="background:var(--purple)"></i>See it working</div>
@@ -5795,7 +5911,15 @@ const LessonView = {
       this.lesson = { grammar: null, unit: this.unit, formMarkers: QURAN_FORM_MARKERS };
       this.render();
 
-      const lesson = await this.lessonFor(this.unitIndex);
+      // The teaching streams straight into the page it is already rendered on,
+      // so a learner starts reading long before the lesson is finished.
+      const lesson = await this.lessonFor(this.unitIndex, (piece, full) => {
+        if (!mine()) return;
+        const el = document.getElementById('lesson-explanation');
+        if (!el) return;
+        document.querySelector('#lesson-column .lesson-pending')?.remove();
+        el.innerHTML = renderMarkdown(full);
+      });
       if (!mine()) return;
       this.lesson = lesson;
       this.render();
@@ -5863,7 +5987,7 @@ const LessonView = {
   // paying for two.
   _inflight: {},
 
-  async lessonFor(index) {
+  async lessonFor(index, onChunk = null) {
     const unit = this.syllabus[index];
     if (!unit) return null;
     const lang = this.lang;
@@ -5889,9 +6013,20 @@ const LessonView = {
         }
       }
 
-      const grammar = AppState.mode === 'demo'
-        ? demoQuranGrammarUnit(unit)
-        : await callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses);
+      let grammar;
+      if (AppState.mode === 'demo') {
+        grammar = demoQuranGrammarUnit(unit);
+      } else {
+        // Both halves at once. The teaching streams onto the page as it is
+        // written; the table, examples and drills arrive whenever they arrive.
+        // The wall clock is the slower of the two, not the sum, and the first
+        // sentence is readable in about a second either way.
+        const [explanation, mechanics] = await Promise.all([
+          callLessonExplanation(lang, unit, lang.knownWords || [], verses, onChunk),
+          callGrammarUnitGenerator(lang, unit, lang.knownWords || [], verses)
+        ]);
+        grammar = { explanation, ...mechanics };
+      }
 
       lesson = { grammar, unit, formMarkers: QURAN_FORM_MARKERS,
                  schemaVersion: LESSON_SCHEMA_VERSION };
@@ -7852,6 +7987,7 @@ async function loadSettings() {
   const openaiRecord = await dbGet('settings', 'openaiKey');
   const providerRecord = await dbGet('settings', 'provider');
   const openaiModelRecord = await dbGet('settings', 'openaiModel');
+  const openaiChoiceRecord = await dbGet('settings', 'openaiModelChoice');
   const demoRecord   = await dbGet('settings', 'demoMode');
   const scopeRecord  = await dbGet('settings', 'tutorScope');
 
@@ -7872,6 +8008,7 @@ async function loadSettings() {
   AppState.settings.geminiKey = geminiRecord?.value || '';
   AppState.settings.openaiKey = openaiRecord?.value || '';
   AppState.settings.openaiModel = openaiModelRecord?.value || '';
+  AppState.settings.openaiModelChoice = openaiChoiceRecord?.value || '';
   // DeepSeek unless OpenAI was explicitly chosen — nobody's existing setup
   // should change provider because a second one became available.
   AppState.settings.provider = providerRecord?.value === 'openai' ? 'openai' : 'deepseek';
@@ -7905,6 +8042,8 @@ async function loadSettings() {
     document.getElementById('input-api-key').value = AppState.settings.apiKey;
   if (document.getElementById('input-openai-key'))
     document.getElementById('input-openai-key').value = AppState.settings.openaiKey;
+  if (document.getElementById('input-openai-model'))
+    document.getElementById('input-openai-model').value = AppState.settings.openaiModelChoice;
   if (document.getElementById('select-provider'))
     document.getElementById('select-provider').value = AppState.settings.provider || 'deepseek';
   if (document.getElementById('input-gemini-key'))
@@ -7938,6 +8077,7 @@ function syncProviderFields() {
 async function saveSettings() {
   const apiKey = document.getElementById('input-api-key').value.trim();
   const openaiKey = document.getElementById('input-openai-key')?.value.trim() || '';
+  const openaiModelChoice = document.getElementById('input-openai-model')?.value.trim() || '';
   const geminiKey = document.getElementById('input-gemini-key')?.value.trim() || '';
   const provider = document.getElementById('select-provider')?.value || 'deepseek';
   const isDemoMode = document.getElementById('toggle-demo-mode').checked;
@@ -7951,12 +8091,14 @@ async function saveSettings() {
 
   AppState.settings.apiKey = apiKey;
   AppState.settings.openaiKey = openaiKey;
+  AppState.settings.openaiModelChoice = openaiModelChoice;
   AppState.settings.provider = provider;
   AppState.settings.geminiKey = geminiKey;
   AppState.mode = isDemoMode ? 'demo' : 'live';
 
   await dbPut('settings', { key: 'apiKey', value: apiKey });
   await dbPut('settings', { key: 'openaiKey', value: openaiKey });
+  await dbPut('settings', { key: 'openaiModelChoice', value: openaiModelChoice });
   await dbPut('settings', { key: 'provider', value: provider });
   await dbPut('settings', { key: 'geminiKey', value: geminiKey });
   await dbPut('settings', { key: 'demoMode', value: isDemoMode });

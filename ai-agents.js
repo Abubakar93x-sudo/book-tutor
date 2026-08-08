@@ -56,13 +56,20 @@ const tierThinks = (tier) => tier === 'deep';
 const OPENAI_URL        = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
 
-// Best first. Which of these an account can actually reach depends on the
-// account, and the list of what exists moves, so the model is DISCOVERED from
-// /v1/models rather than assumed — see resolveOpenAIModel. This is a
-// preference order, not a claim about what is available.
+// Preference order, not a claim about what is available: which of these an
+// account can reach depends on the account, and the list of what exists moves,
+// so the model is DISCOVERED from /v1/models — see resolveOpenAIModel.
+//
+// The order leads with the strong models that ANSWER rather than the ones that
+// reason first. That is the same lesson the DeepSeek timings taught: on this
+// app's work — short structured JSON and a page of teaching prose — reasoning
+// bought a ten-fold wait and no more quality (107.6s against 13.1s, for a
+// smaller table). These are flagship models, not cut-down ones, so leading
+// with them costs nothing in quality and a great deal less in time. Anyone who
+// wants a reasoning model can name it in Settings and it will be used as given.
 const OPENAI_PREFERRED = [
-  'gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini',
-  'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'
+  'gpt-4.1', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4o-mini',
+  'gpt-5', 'gpt-5-mini', 'gpt-4-turbo'
 ];
 
 // Which provider runs the app. DeepSeek unless ChatGPT is both chosen AND has
@@ -86,6 +93,11 @@ function getOpenAIKey() {
 // offers. Cached on the settings object; a 404 from a chat call clears it so
 // the next call asks again.
 async function resolveOpenAIModel() {
+  // A model typed into Settings is used exactly as given — no discovery, no
+  // second-guessing. That is the escape hatch for anyone who wants a specific
+  // model, including a slower reasoning one.
+  const chosen = (AppState.settings.openaiModelChoice || '').trim();
+  if (chosen) return chosen;
   if (AppState.settings.openaiModel) return AppState.settings.openaiModel;
 
   let ids = [];
@@ -1330,46 +1342,79 @@ async function callSyllabusArchitect(langProfile, startLevel = 'A0') {
 // ── AGENT: GRAMMAR UNIT GENERATOR ────────────────────────────────────────────
 // One unit's teaching content, generated on demand and cached with the lesson.
 // Explanation → pattern table → worked examples → the pitfall → drills.
-async function callGrammarUnitGenerator(langProfile, unit, knownWords = [], verses = []) {
-  const nonLatin = langProfile.script !== 'latin';
+// A lesson is written in TWO calls, fired together, because it is read in two
+// parts and they do not need each other. The teaching is prose and STREAMS, so
+// the first sentences are on the page in about a second; the pattern table,
+// examples, pitfall and drills are structured JSON and arrive when they arrive.
+//
+// It used to be one call for all of it, which meant nothing appeared until the
+// slowest part finished — measured at 21s on DeepSeek for a full lesson, and
+// worse on a provider whose model reasons before answering. Splitting costs
+// nothing in quality: each half gets the same instructions it had, at the same
+// length, and the two run in parallel so the wall clock is the slower of the
+// two rather than the sum.
+function lessonContext(langProfile, unit, knownWords, verses) {
   const knownList = knownWords.slice(-200).join(', ');
-
-  // The Quranic course has a closed corpus: its sentences are not invented to
-  // fit the grammar, they are verses. Every other language writes its own.
   const quranBlock = langProfile.code === 'ar-quran'
     ? `\n    THE EXAMPLES ARE NOT YOURS TO WRITE — they are verses.\n${QURAN_SOURCE_RULE}${quranVerseBlock(verses)}\n`
     : '';
-
-  const prompt = `
-    You are a patient grammar teacher explaining ONE structure in
-    ${langProfile.name} to an adult English speaker.
-
+  return `
     THE UNIT: ${unit.title}
     THE STRUCTURE: ${unit.structure}
 ${quranBlock}
-
     WORDS THEY ALREADY KNOW (build examples from these where you can):
     ${knownList || '(near-beginner — use only the most universal starter words)'}
+`;
+}
 
+// The half a learner reads first. Prose, streamed, and deliberately unbounded —
+// same brief it had when it was one field of a JSON blob.
+async function callLessonExplanation(langProfile, unit, knownWords = [], verses = [], onChunk = null) {
+  const prompt = `
+    You are a patient grammar teacher explaining ONE structure in
+    ${langProfile.name} to an adult English speaker.
+${lessonContext(langProfile, unit, knownWords, verses)}
+    Write THE TEACHING — the part of the page a learner actually reads to
+    understand this structure. It should be AS LONG AS IT NEEDS TO BE. Do not
+    summarise; teach. Cover, in this order:
+      - what the structure IS, in plain English
+      - how to RECOGNISE it on the page — what to look for, in what order
+      - what CHANGES when it applies, part by part
+      - where a beginner goes wrong, and how to tell the difference
+
+    Compare to English wherever it helps. If you must use a grammatical term,
+    define it in the same breath — never assume they know jargon.
+    Aim for 300-600 words. Do not pad it, and do not cut it short.
+
+    Write markdown: "## " for a sub-heading, "- " for a list item, "**bold**"
+    for the thing being named. Short paragraphs.
+
+    Output the teaching itself and NOTHING else — no preamble, no JSON, no
+    fences, no closing remark about what comes next on the page.
+  `;
+  const text = onChunk
+    ? await queryAIStream(prompt, onChunk, 'fast')
+    : await queryAI(prompt, false, null, 'fast');
+  return String(text || '').trim();
+}
+
+// Everything with a shape: the table, the examples, the pitfall, the drills.
+// No "explanation" field any more — that is the streamed half above, and asking
+// for it here would double the cost of the slowest call for nothing.
+async function callGrammarUnitGenerator(langProfile, unit, knownWords = [], verses = []) {
+  const nonLatin = langProfile.script !== 'latin';
+  const prompt = `
+    You are a patient grammar teacher laying out ONE structure in
+    ${langProfile.name} for an adult English speaker. The prose explanation is
+    being written separately — your job is the parts with a shape.
+${lessonContext(langProfile, unit, knownWords, verses)}
     Write:
-    1. "explanation" — the teaching. This is the part of the page a learner
-       actually reads to understand the structure, and it should be AS LONG AS
-       IT NEEDS TO BE. Do not summarise; teach. Cover, in this order:
-         - what the structure IS, in plain English
-         - how to RECOGNISE it on the page — what to look for, in what order
-         - what CHANGES when it applies, part by part
-         - where a beginner goes wrong, and how to tell the difference
-       Compare to English wherever it helps. If you must use a grammatical
-       term, define it in the same breath — never assume they know jargon.
-       Aim for 300-600 words. Do not pad it, and do not cut it short.
-       Write markdown: "## " for a sub-heading, "- " for a list item,
-       "**bold**" for the thing being named. Short paragraphs.
-    2. "patternTable" — the pattern laid out concretely (the conjugation set,
+    1. "patternTable" — the pattern laid out concretely (the conjugation set,
        the word-order slots, the case endings — whatever fits). 3-8 rows.
-    3. "examples" — 4 full sentences using the structure, each with an English
+    2. "examples" — 4 full sentences using the structure, each with an English
        gloss and a per-word gloss so every word can be tapped.
-    4. "pitfall" — the ONE mistake English speakers reliably make here.
-    5. "drills" — 6 practice items, mixed across these kinds:
+    3. "pitfall" — the ONE mistake English speakers reliably make here.
+    4. "drills" — 6 practice items, mixed across these kinds:
        - "cloze": prompt has a ___ blank; "answer" is the missing word only
        - "build": "options" are the sentence's words scrambled; "answer" is the
          correctly ordered sentence
@@ -1382,7 +1427,6 @@ ${quranBlock}
 
     Return ONLY valid JSON, no markdown fences:
     {
-      "explanation": "...",
       "patternTable": { "caption": "...", "rows": [{ "form": "...", "example": "...", "gloss": "..." }] },
       "examples": [{ "text": "...", ${nonLatin ? '"romanization": "...", ' : ''}"gloss": "...", "wordGlosses": [{ "word": "...", "gloss": "..." }] }],
       "pitfall": "...",
@@ -1390,9 +1434,9 @@ ${quranBlock}
     }
   `;
   // 'fast', on evidence. This used to be 'deep' on the reasoning that a lesson
-  // is generated once and cached, so being right beat being quick. Timed against
-  // the live API on a real lesson prompt, that reasoning does not survive
-  // contact:
+  // is generated once and cached, so being right beat being quick. Timed
+  // against the live API on a real lesson prompt, that reasoning does not
+  // survive contact:
   //
   //   thinking on   107.6s   12,310 reasoning tokens   4 table rows
   //   thinking off   13.1s        0 reasoning tokens   6 table rows
@@ -1408,18 +1452,18 @@ ${quranBlock}
 
   // One retry before giving up: a JSON call that comes back empty is usually a
   // one-off, and failing a lesson outright is much worse than asking twice.
-  if (!result.explanation && !drills.length) {
-    console.warn('Lesson generation came back empty — retrying once.');
+  const empty = (r, d) => !d.length && !r.patternTable?.rows?.length && !(r.examples || []).length;
+  if (empty(result, drills)) {
+    console.warn('Lesson mechanics came back empty — retrying once.');
     result = await queryAI(prompt, true, null, 'fast');
     drills = Array.isArray(result.drills)
       ? result.drills.filter(d => d.prompt && d.answer).slice(0, 8)
       : [];
   }
-  if (!result.explanation && !drills.length) {
+  if (empty(result, drills)) {
     throw new Error('Grammar unit generation returned nothing usable.');
   }
   return {
-    explanation: result.explanation || '',
     patternTable: result.patternTable && Array.isArray(result.patternTable.rows)
       ? { caption: result.patternTable.caption || '', rows: result.patternTable.rows.filter(r => r.form).slice(0, 8) }
       : null,
@@ -2119,6 +2163,68 @@ ${intent === 'explain' ? `
     console.error('Quran tutor call failed:', error);
     return `[Tutor] Couldn't reach the API. ${error.message}`;
   }
+}
+
+// ── AGENT: A WORD YOU ALREADY KNOW, SWAPPED ─────────────────────────────────
+// "I know this one" is information, not a complaint: it says the set is pitched
+// slightly below them. So the replacement is not just any other word — it is a
+// word in the SAME area of meaning, which is where the next useful one lives.
+// Same shape as callVocabWords returns, so the card renders identically.
+async function callSimilarWord(langProfile, tier, word, meaning, known = [], theme = '') {
+  const nonLatin = langProfile.script && langProfile.script !== 'latin';
+  const bannedList = known.slice(-200).join(', ');
+
+  const prompt = `
+    A learner of ${langProfile.name} says they already know "${word}"
+    (${meaning}). Give them ONE different word to learn instead.
+
+    THE REPLACEMENT MUST:
+    - sit in the SAME area of meaning as "${word}" — a near-synonym, a sharper
+      or more specific version, or a word they would use in the same situation.
+      They asked for more of this, not a change of subject.
+    - be a DIFFERENT word, not a form or spelling of "${word}" itself.
+    - be HARDER than "${word}" — if they know that one, the useful next word is
+      the one just past it, not one beside it at the same level.
+    ${theme ? `- stay within the theme: ${theme}.` : ''}
+
+    NEVER return any of these, which they have already had:
+    ${bannedList || '(nothing yet)'}
+
+    ${nonLatin ? `Write the word in ${langProfile.name}'s own script. Give
+    "${langProfile.romanizationName}" for the word and for the example.` : ''}
+
+    Return ONLY valid JSON, no markdown fences:
+    {
+      "word": "...",
+      "partOfSpeech": "...",
+      ${nonLatin ? '"pronunciation": "...",' : '"pronunciation": "...",'}
+      "meaning": "a precise definition, one sentence",
+      "example": "one sentence using it naturally",
+      ${nonLatin ? '"exampleRomanization": "...", "exampleTranslation": "...",' : ''}
+      "contrast": "how it differs from ${word}, in one line"
+    }
+  `;
+
+  // 'quick' — the learner is looking at the card, waiting for it to change.
+  const w = await queryAI(prompt, true, null, 'quick');
+  if (!w?.word) throw new Error('No replacement word came back.');
+  if (!wordMatchesScript(w.word, langProfile.script)) {
+    throw new Error(`"${w.word}" is not written in ${langProfile.name}.`);
+  }
+  if (String(w.word).trim().toLowerCase() === String(word).trim().toLowerCase()) {
+    throw new Error('The same word came back — try once more.');
+  }
+  return {
+    word: w.word,
+    partOfSpeech: w.partOfSpeech || '',
+    pronunciation: w.pronunciation || '',
+    meaning: w.meaning || '',
+    example: w.example || '',
+    exampleRomanization: w.exampleRomanization || '',
+    exampleTranslation: w.exampleTranslation || '',
+    cloze: '',
+    contrast: w.contrast || ''
+  };
 }
 
 // ── AGENT: QURANIC LEMMAS, IN BULK ───────────────────────────────────────────

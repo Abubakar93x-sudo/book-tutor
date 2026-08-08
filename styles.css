@@ -5323,6 +5323,33 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .form-group-idle { opacity: 0.55; }
 .form-group-idle:focus-within { opacity: 1; }
 
+/* "I know this" sits at the foot of a vocabulary card — available, not loud */
+.vocab-card-foot {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+.vocab-know {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease-out;
+}
+.vocab-know:hover:not(:disabled) {
+  color: var(--purple);
+  border-color: var(--border-light);
+  background: var(--purple-dim);
+}
+.vocab-know:disabled { opacity: 0.6; cursor: default; }
+
 .root-deck-offer {
   display: flex;
   align-items: center;
