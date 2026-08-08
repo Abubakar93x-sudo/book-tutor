@@ -1162,6 +1162,13 @@
   <script src="lang-recipes.js"></script>
   <script src="quran-roots-data.js"></script>
   <script src="quran-grammar-data.js"></script>
+  <!-- The forty lessons, written out. Loaded up front rather than lazily: it
+       is a few hundred KB against the megabyte of Qur'anic text, and a lesson
+       that is already in memory is a lesson with no loading state at all. -->
+  <script src="quran-course-data.js"></script>
+  <!-- One card per root: a real Quranic wordform on the front, the root and its
+       family on the back. Every Arabic string in it was checked to occur. -->
+  <script src="quran-vocab-data.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script src="app.js"></script>
 </body>

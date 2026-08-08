@@ -1214,7 +1214,7 @@ function unitKey(unitIndex) {
 //   6 — the teaching section was capped at "3-5 sentences" and is now allowed
 //       to run as long as the structure needs. Every cached lesson is a short
 //       one written under the old cap.
-const LESSON_SCHEMA_VERSION = 6;
+const LESSON_SCHEMA_VERSION = 7;
 
 // Generated content is stamped with the schema it was written for AND the
 // provider that wrote it. Switching the app from DeepSeek to ChatGPT is a
@@ -3009,6 +3009,45 @@ const VOCAB_CATALOGUE = [
 // The root-vocabulary track is driven by curated data rather than the model.
 const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
 
+// ── THE EIGHT-UNIT COURSE BECOMES FORTY ──────────────────────────────────────
+// The old course had eight units and the new one has forty, so a learner who
+// had finished five of eight is not five-fortieths of the way through the new
+// one — they are past whichever new lessons cover the same ground.
+//
+// Four of the eight ids survive unchanged because the lesson still exists under
+// the same name. The other four were split or merged, and each maps to the new
+// lesson that now teaches it. Progress can only ever be preserved by this, never
+// invented: a unit that has no successor is simply dropped.
+const QURAN_UNIT_MOVES = {
+  // Renamed or resited, same subject
+  'q-attached-pronouns': 'q-pronouns-nouns',  // split three ways; the noun one is first
+  'q-particles':         'q-prepositions',    // became eight lessons; this is the first
+  'q-forms-1-2-3':       'q-form-3'           // three lessons now; credit through Form III
+  // q-find-root, q-verb-chart, q-case-endings, q-idafa and q-noun-adjective
+  // all still exist under their own ids and need no move.
+};
+
+// Rewrites a language's mastered list onto the new syllabus, and puts the
+// learner on the lesson after the furthest one they had finished. Runs once.
+function migrateQuranProgress(lang, syllabus) {
+  if (!lang || lang.recipeId !== 'quranic' || lang.unitsMigratedV7) return null;
+  const valid = new Set(syllabus.map(u => u.id));
+  const moved = (lang.unitsMastered || [])
+    .map(id => QURAN_UNIT_MOVES[id] || id)
+    .filter(id => valid.has(id));
+
+  const mastered = [...new Set(moved)];
+  // The lesson after the furthest one they had actually finished. Their old
+  // unitIndex means nothing now — index 5 of 8 is a different subject from
+  // index 5 of 40 — so it is recomputed from what they mastered, not carried.
+  const lastDone = syllabus.reduce((n, u, i) => mastered.includes(u.id) ? i : n, -1);
+  return {
+    unitsMastered: mastered,
+    unitIndex: Math.min(lastDone + 1, syllabus.length - 1),
+    unitsMigratedV7: true
+  };
+}
+
 // Anyone who added Quranic vocabulary before the ids were separated has it
 // filed under 'ar-quran' — the course's id — with `recipeId: 'vocabBuilder'`
 // merged on top, which hid their course. Move it to its own document and hand
@@ -3162,16 +3201,28 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
     for (const c of batch.flashcards || []) if (c.rootId) have.add(c.rootId);
   }
 
-  const cards = entries.filter(e => !have.has(e.id)).map(e => ({
-    front: e.root,                       // the root alone, in Arabic
-    back: e.gloss,
-    word: e.root,
+  const cards = entries.filter(e => !have.has(e.id)).map(e => {
+    const card = typeof quranVocabCard === 'function' ? quranVocabCard(e.id) : null;
+    return {
+    // A real Quranic word on the front, not the three root letters. The root
+    // goes on the back with the family — see rootEntryHtml for the reasoning.
+    front: card?.headword || e.root,
+    back: card?.meaning || e.gloss,
+    word: card?.headword || e.root,
+    root: e.root,
     romanization: e.translit,
+    headwordGloss: card?.headwordGloss || '',
+    verse: card?.verse || null,
     type: 'root',
     rootId: e.id,
     quranCount: e.count,
-    lemmas: lemmasFor.get(e.id) || []
-  }));
+    // The verified family from quran-vocab-data.js when there is one; the
+    // generated lemmas otherwise, for a root the builder could not verify.
+    lemmas: card?.family?.length
+      ? card.family.map(f => ({ word: f.word, meaning: f.gloss }))
+      : (lemmasFor.get(e.id) || [])
+    };
+  });
 
   if (cards.length) await dbAppendLangCards(lang.id, cards);
 
@@ -3931,25 +3982,45 @@ const VocabBuilder = {
     document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
   },
 
-  // One corpus entry as a vocabulary word. The root itself, its meaning and its
-  // frequency are curated data — nothing is asked of a model for them. Only the
-  // lemmas are generated, and those are cached per root, not per learner.
+  // One corpus entry as a vocabulary word.
+  //
+  // THE WORD IS A WORD, not three letters. ك ت ب is not something anyone ever
+  // sees in the muṣḥaf — ٱلْكِتَٰبِ is — so the front of the card is a real
+  // vowelled Quranic wordform and the root moves to the back, where it does its
+  // actual job of unifying the family. Every headword and family form in
+  // quran-vocab-data.js was checked to occur in the text before it shipped.
+  //
+  // Frequency and the root's meaning stay curated: nothing is asked of a model
+  // for a number.
   quranWord(entry, lemmas = []) {
+    const card = typeof quranVocabCard === 'function' ? quranVocabCard(entry.id) : null;
+    // The verified family when there is one; the curated word list for the
+    // particle groups, which are not roots and so have no card — the set IS the
+    // entry, and it is sitting right there in quran-roots-data.js; the cached
+    // lemmas otherwise.
+    const family = card?.family?.length
+      ? card.family.map(f => ({ word: f.word, meaning: f.gloss, romanization: '' }))
+      : (lemmas.length ? lemmas
+        : (entry.words || []).map(w => ({ word: w, meaning: '', romanization: '' })));
+
     return {
-      word: entry.root,
+      // A particle group has no single headword — it IS a set of words — so it
+      // keeps showing its set. Every root shows one real word.
+      word: card?.headword || entry.root,
+      headwordGloss: card?.headwordGloss || '',
+      root: entry.root,
       rootId: entry.id,
       partOfSpeech: entry.kind === 'particles' ? 'function words' : 'root',
       pronunciation: entry.translit,
-      meaning: entry.gloss,
-      // The example is the commonest real word built from it — for a root,
-      // the word IS the example, which is the whole point of learning roots.
-      example: lemmas[0]?.word || '',
-      exampleRomanization: lemmas[0]?.romanization || '',
-      exampleTranslation: lemmas[0]?.meaning || '',
+      meaning: card?.meaning || entry.gloss,
+      verse: card?.verse || null,
+      example: family[0]?.word || '',
+      exampleRomanization: family[0]?.romanization || '',
+      exampleTranslation: family[0]?.meaning || '',
       cloze: '',
       contrast: '',
       quranCount: entry.count,
-      lemmas
+      lemmas: family
     };
   },
 
@@ -4147,9 +4218,12 @@ const VocabBuilder = {
         // paragraph. See showNextCard's `#card-back-lemmas`.
         if (w.lemmas?.length) {
           return {
-            front: w.word,
+            front: w.word,                 // a real wordform, not root letters
             back: w.meaning,
             word: w.word,
+            root: w.root || null,
+            headwordGloss: w.headwordGloss || '',
+            verse: w.verse || null,
             romanization: w.pronunciation || null,
             type: 'root',
             rootId: w.rootId || null,
@@ -4386,8 +4460,13 @@ function rootCardHtml(w, i) {
 // meaningful — it is frequency order, and #7 really is worth more than #250.
 // A root whose lemmas have not arrived yet still shows: the root, its sound and
 // its meaning are curated data and never needed a model.
+// One entry in the full list. The WORD leads — a real vowelled form from the
+// muṣḥaf — with the root underneath it as the thing that ties the family
+// together. It used to be the other way round, which taught the eye to look for
+// something the page never shows.
 function rootEntryHtml(w, i, withLemmas) {
   const lemmas = w.lemmas || [];
+  const isParticles = w.partOfSpeech === 'function words';
   return `
     <article class="vocab-card vocab-card-script vocab-card-root root-entry" data-idx="${i}">
       <div class="vocab-card-head">
@@ -4395,13 +4474,15 @@ function rootEntryHtml(w, i, withLemmas) {
         <h3 class="vocab-word vocab-root-word">${escapeAttr(w.word)}</h3>
         <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
       </div>
+      ${w.headwordGloss ? `<p class="root-headword-gloss">${escapeAttr(w.headwordGloss)}</p>` : ''}
       <div class="vocab-meta">
-        ${w.pronunciation ? `<span class="vocab-pron">(${escapeAttr(w.pronunciation)})</span>` : ''}
+        ${!isParticles && w.root ? `<span class="root-chip">root <b>${escapeAttr(w.root)}</b>${
+          w.pronunciation ? ` · ${escapeAttr(w.pronunciation)}` : ''}</span>` : ''}
         ${w.quranCount ? `<span class="vocab-pos">${w.quranCount.toLocaleString()}× in the Qur'an</span>` : ''}
       </div>
       <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
       ${lemmas.length ? `<div class="root-lemmas">
-        <div class="root-lemmas-head">Words built from it</div>
+        <div class="root-lemmas-head">${isParticles ? 'The set' : 'Others from the same root'}</div>
         ${lemmas.map(l => `
           <div class="root-lemma">
             <span class="root-lemma-ar">${escapeAttr(l.word)}</span>
@@ -4411,7 +4492,12 @@ function rootEntryHtml(w, i, withLemmas) {
             </span>
             ${l.form ? `<span class="root-lemma-form">${escapeAttr(l.form)}</span>` : ''}
           </div>`).join('')}
-      </div>` : `<div class="root-lemmas-pending">Words built from it — coming…</div>`}
+      </div>` : `<div class="root-lemmas-pending">Words from the same root — coming…</div>`}
+      ${w.verse ? `
+        <blockquote class="root-verse">
+          <span class="root-verse-ar" dir="rtl" lang="ar">${escapeAttr(w.verse.text)}</span>
+          <cite class="root-verse-ref">${escapeAttr(w.verse.surah)} · ${escapeAttr(w.verse.ref)}</cite>
+        </blockquote>` : ''}
     </article>`;
 }
 
@@ -5971,11 +6057,213 @@ const LangSession = {
   }
 };
 
+// ── THE QURANIC LESSON PAGE ──────────────────────────────────────────────────
+// Ten sections, identical on every one of the forty lessons, rendered from
+// quran-course-data.js. Nothing here is generated at runtime and nothing is
+// awaited — the whole page exists before it is asked for.
+//
+// The shape came out of the design conversation with GPT-5.2. Its argument, and
+// it is right: this page is READ, so its job is not practice. It is to give one
+// mental model, show just enough worked examples to make it stick, and say
+// exactly what to look for in the muṣḥaf. Practice is the quiz's job; questions
+// are the tutor's.
+//
+// ── THE COLOUR SYSTEM ───────────────────────────────────────────────────────
+// One colour per grammatical role, fixed across all forty lessons and never
+// reassigned. That consistency IS the teaching: it trains the eye to segment a
+// word before the reader can consciously parse it. Rainbow colouring without a
+// stable legend looks like more work and teaches nothing.
+const ROLE_LABELS = {
+  particle:        'particle',
+  preposition:     'preposition',
+  attachedPronoun: 'attached pronoun',
+  verbPrefix:      'verb prefix',
+  verbSuffix:      'verb ending',
+  root:            'root letters',
+  nounEnding:      'case ending',
+  plain:           ''
+};
+
+// An Arabic snippet with each piece coloured by what it is. The pieces come
+// pre-segmented and corpus-verified — see tools/build-course.cjs, which refuses
+// to ship a segmentation that does not rebuild its own snippet.
+function annotatedArabic(segments, arabic) {
+  if (!segments?.length) return `<span class="ar-plain">${escapeAttr(arabic || '')}</span>`;
+  return segments.map(s => {
+    const role = ROLE_LABELS[s.role] !== undefined ? s.role : 'plain';
+    return role === 'plain'
+      ? `<span class="ar-plain">${escapeAttr(s.text)}</span>`
+      : `<span class="ar-seg ar-${role}" title="${escapeAttr(ROLE_LABELS[role])}">${escapeAttr(s.text)}</span>`;
+  }).join('');
+}
+
+// Which roles a lesson actually uses, so the legend names those and not the
+// full set. A legend listing colours that are not on the page is noise.
+function roleLegendHtml(lesson) {
+  const used = new Set();
+  for (const ex of lesson.examples || []) {
+    for (const s of ex.segments || []) if (s.role && s.role !== 'plain') used.add(s.role);
+  }
+  for (const a of lesson.anatomy || []) {
+    for (const b of a.blocks || []) if (b.role && b.role !== 'plain') used.add(b.role);
+  }
+  if (!used.size) return '';
+  return `<div class="role-legend">${[...used].map(r =>
+    `<span class="role-key"><i class="ar-${r}"></i>${escapeAttr(ROLE_LABELS[r] || r)}</span>`).join('')}</div>`;
+}
+
+// Word anatomy: one written word broken into the blocks it is actually made of,
+// each glossed. Comprehension fails at boundaries — a reader who knows رَبّ and
+// knows هُمْ can still stall on رَبُّهُمْ — so the boundary is what gets drawn.
+function anatomyHtml(anatomy) {
+  if (!anatomy?.length) return '';
+  return `
+    <section class="lesson-sec">
+      <h3 class="lesson-sec-head">Inside the word</h3>
+      <div class="anatomy-set">
+        ${anatomy.map(a => `
+          <figure class="anatomy">
+            <div class="anatomy-whole">${escapeAttr(a.word || '')}</div>
+            <div class="anatomy-blocks">
+              ${(a.blocks || []).map(b => `
+                <div class="anatomy-block ar-${ROLE_LABELS[b.role] !== undefined ? b.role : 'plain'}">
+                  <span class="anatomy-ar">${escapeAttr(b.text)}</span>
+                  <span class="anatomy-gloss">${escapeAttr(b.gloss || '')}</span>
+                </div>`).join('<span class="anatomy-join">+</span>')}
+            </div>
+            ${a.note ? `<figcaption class="anatomy-note">${escapeAttr(a.note)}</figcaption>` : ''}
+          </figure>`).join('')}
+      </div>
+    </section>`;
+}
+
+// A worked example, in the five lines GPT-5.2 argued for: the Arabic, the same
+// Arabic annotated, a tight literal gloss, the smooth meaning, and one line on
+// what THIS example shows that the last one did not. Fewer examples, each
+// properly explained, beats more of them listed.
+function workedExamplesHtml(examples) {
+  if (!examples?.length) return '';
+  return `
+    <section class="lesson-sec">
+      <div class="lesson-sec-bar">
+        <h3 class="lesson-sec-head">See it in the Qur'an</h3>
+        <button class="annot-toggle" id="btn-annot-toggle" aria-pressed="true">Hide the colours</button>
+      </div>
+      <div class="worked-set">
+        ${examples.map((ex, i) => `
+          <article class="worked" data-idx="${i}">
+            <div class="worked-head">
+              <button class="grammar-play worked-play" data-idx="${i}" title="Hear it">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6V4z"/></svg>
+              </button>
+              <cite class="worked-ref">${escapeAttr(ex.surah || '')} · ${escapeAttr(ex.ref || '')}</cite>
+            </div>
+            <p class="worked-ar" dir="rtl" lang="ar">${annotatedArabic(ex.segments, ex.arabic)}</p>
+            ${ex.literal ? `<p class="worked-literal">${escapeAttr(ex.literal)}</p>` : ''}
+            ${ex.smooth ? `<p class="worked-smooth">${escapeAttr(ex.smooth)}</p>` : ''}
+            ${ex.whatChanged ? `<p class="worked-changed">${escapeAttr(ex.whatChanged)}</p>` : ''}
+          </article>`).join('')}
+      </div>
+    </section>`;
+}
+
+// The whole lesson page.
+function quranLessonHtml(lesson, formMarkers = null) {
+  if (!lesson) return '';
+
+  const patternHtml = lesson.pattern?.rows?.length ? `
+    <section class="lesson-sec">
+      <h3 class="lesson-sec-head">The shape to recognise</h3>
+      ${lesson.pattern.caption ? `<p class="lesson-sec-sub">${escapeAttr(lesson.pattern.caption)}</p>` : ''}
+      <div class="lesson-table-wrap">
+        <table class="lesson-table">
+          ${lesson.pattern.columns?.length ? `<thead><tr>${
+            lesson.pattern.columns.map(c => `<th>${escapeAttr(c)}</th>`).join('')}</tr></thead>` : ''}
+          <tbody>${lesson.pattern.rows.map(r =>
+            `<tr>${(Array.isArray(r) ? r : [r]).map((c, i) =>
+              `<td${i === 0 ? ' class="lt-key"' : ''}>${escapeAttr(c)}</td>`).join('')}</tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>` : '';
+
+  // The form table earns its place on the lessons that teach forms, and is
+  // folded away so it never crowds the teaching.
+  const markersHtml = (formMarkers?.length && /\bforms?\b/i.test(lesson.title || '')) ? `
+    <details class="form-markers">
+      <summary class="form-markers-head">Every form, and what marks it</summary>
+      <div class="form-markers-wrap">
+        <table class="form-markers-table">
+          <thead><tr><th>Form</th><th>What marks it</th><th>What it does</th></tr></thead>
+          <tbody>${formMarkers.map(m => `
+            <tr><td class="fm-num">${escapeAttr(m.form)}</td>
+                <td class="fm-cell">${escapeAttr(m.marker)}</td>
+                <td class="fm-cell">${escapeAttr(m.sense)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </details>` : '';
+
+  return `
+    <header class="lesson-head">
+      <h2 class="lesson-h">${escapeAttr(lesson.title)}</h2>
+      ${lesson.canDo ? `<p class="lesson-cando">${escapeAttr(lesson.canDo)}</p>` : ''}
+    </header>
+
+    ${lesson.rule ? `
+      <aside class="lesson-rule">
+        <span class="lesson-rule-label">The rule</span>
+        <p>${escapeAttr(lesson.rule)}</p>
+      </aside>` : ''}
+
+    ${lesson.why?.length ? `
+      <section class="lesson-sec">
+        <h3 class="lesson-sec-head">Why it matters</h3>
+        <ul class="lesson-why">${lesson.why.map(b => `<li>${escapeAttr(b)}</li>`).join('')}</ul>
+      </section>` : ''}
+
+    ${patternHtml}
+    ${markersHtml}
+    ${anatomyHtml(lesson.anatomy)}
+    ${roleLegendHtml(lesson)}
+    ${workedExamplesHtml(lesson.examples)}
+
+    ${lesson.traps?.length ? `
+      <section class="lesson-sec">
+        <h3 class="lesson-sec-head">Traps</h3>
+        <div class="trap-set">
+          ${lesson.traps.map(t => `
+            <div class="trap">
+              <p class="trap-claim">${escapeAttr(t.claim || '')}</p>
+              ${t.example ? `<p class="trap-ar" dir="rtl" lang="ar">${escapeAttr(t.example)}</p>` : ''}
+              ${t.note ? `<p class="trap-note">${escapeAttr(t.note)}</p>` : ''}
+            </div>`).join('')}
+        </div>
+      </section>` : ''}
+
+    ${lesson.checklist?.length ? `
+      <section class="lesson-sec">
+        <h3 class="lesson-sec-head">Spotting it in the muṣḥaf</h3>
+        <ol class="lesson-checklist">${lesson.checklist.map(c =>
+          `<li>${escapeAttr(c)}</li>`).join('')}</ol>
+      </section>` : ''}
+
+    ${lesson.summary?.length ? `
+      <aside class="lesson-summary">
+        <span class="lesson-rule-label">In three lines</span>
+        <ul>${lesson.summary.map(s => `<li>${escapeAttr(s)}</li>`).join('')}</ul>
+      </aside>` : ''}
+
+    ${lesson.quizBridge ? `
+      <p class="lesson-bridge">${escapeAttr(lesson.quizBridge)}</p>` : ''}
+  `;
+}
+
 // ── ONE UNIT, ON A PAGE ───────────────────────────────────────────────────────
 // The written teaching for a syllabus unit: what it is, the pattern laid out,
-// worked examples you can hear and tap, and the trap at the end. Two callers —
-// the lesson page and the old session's grammar strand — so there is one
-// renderer for a unit rather than two that drift apart.
+// worked examples you can hear and tap, and the trap at the end. Still used by
+// every language OTHER than Quranic Arabic, whose lessons are generated at
+// runtime against the `structure` in their syllabus.
 // `g` is the generated half and may not have arrived yet. Everything above it —
 // the title, what the structure is, why it matters, the form-marker table — is
 // curated data sitting in quran-grammar-data.js, so it goes on screen at once
@@ -6088,6 +6376,7 @@ const LessonView = {
   unitIndex: 0,
   unit: null,
   lesson: null,
+  written: null,        // the pre-written lesson, when the course has one
 
   async open(lang, unitIndex = null) {
     this.lang = lang;
@@ -6104,17 +6393,42 @@ const LessonView = {
 
     try {
       this.syllabus = await this.loadSyllabus(lang);
-      // Progress lost to a reset course document is rebuilt from the tutor
-      // transcripts, which outlive it. Only ever restores; runs once.
-      await recoverLangProgress(lang, this.syllabus).catch(() => {});
-      // Lessons finished before lessons filed cards still belong in the deck
-      backfillLessonCards(lang, this.syllabus).catch(() => {});
+
+      // Eight units became forty. Anyone part-way through the old course is
+      // moved onto the new one before anything is indexed against it.
+      const moved = migrateQuranProgress(lang, this.syllabus);
+      if (moved) {
+        Object.assign(lang, moved);
+        if (unitIndex == null) unitIndex = moved.unitIndex;
+        dbPatchLanguage(lang.id, moved).catch(err =>
+          console.warn('Could not save the course migration:', err.message));
+        console.log(`Moved ${lang.id} onto the 40-lesson course: ` +
+          `${moved.unitsMastered.length} lesson(s) kept, resuming at ${moved.unitIndex + 1}.`);
+      }
+
       if (unitIndex == null) this.unitIndex = lang.unitIndex || 0;
-      // A syllabus can get shorter — clamp rather than index off the end.
+      // A syllabus can change length — clamp rather than index off the end.
       if (this.syllabus.length) {
         this.unitIndex = Math.max(0, Math.min(this.unitIndex, this.syllabus.length - 1));
       }
       this.unit = this.syllabus[this.unitIndex] || null;
+
+      // ── The written-out course ────────────────────────────────────────
+      // Quranic Arabic is pre-generated into quran-course-data.js, so opening
+      // a lesson is a property lookup. It paints in this frame, before any of
+      // the housekeeping below, and there is nothing to wait for and nothing
+      // that can fail to arrive.
+      this.written = this.staticLesson(this.unit);
+      if (this.written) {
+        this.lesson = { unit: this.unit, formMarkers: QURAN_FORM_MARKERS };
+        this.render();
+        this.afterOpen(lang);
+        return;
+      }
+
+      // Every other language still writes its lessons on demand.
+      await recoverLangProgress(lang, this.syllabus).catch(() => {});
+      backfillLessonCards(lang, this.syllabus).catch(() => {});
 
       // Which open() this is. A lesson can take ten seconds to write, and in
       // that time the learner may well have moved on — the reply from the one
@@ -6167,6 +6481,7 @@ const LessonView = {
     setFocusMode(false);
     this.lang = null;
     this.lesson = null;
+    this.written = null;
     renderLanguages();
   },
 
@@ -6180,6 +6495,32 @@ const LessonView = {
 
   // Hand-written for Quranic Arabic, generated-and-cached for anything else.
   loadSyllabus(lang) { return loadCourseSyllabus(lang); },
+
+  // The written-out lesson for a unit, if this COURSE has one. Quranic Arabic
+  // does; nothing else does yet.
+  //
+  // Gated on the recipe, not just the unit id. Matching on the id alone meant
+  // any other language whose syllabus happened to use one of these ids was
+  // served Quranic content — which is not a hypothetical, it is what a test
+  // fixture did within an hour of this being written.
+  //
+  // Also guarded on the global existing, so the app still runs if
+  // quran-course-data.js is missing.
+  staticLesson(unit) {
+    if (!unit?.id || typeof quranLesson !== 'function') return null;
+    if (getRecipe(this.lang).ui?.staticSyllabus !== 'QURAN_GRAMMAR') return null;
+    return quranLesson(unit.id);
+  },
+
+  // The housekeeping a lesson used to wait for. It restores progress and files
+  // cards, and none of it has anything to say about what is on the page — so
+  // it runs after the page is already up.
+  afterOpen(lang) {
+    recoverLangProgress(lang, this.syllabus)
+      .then(() => this.renderChrome())
+      .catch(() => {});
+    backfillLessonCards(lang, this.syllabus).catch(() => {});
+  },
 
   // A slice of the course landed while this one was being read. Only the
   // chrome moves — repainting the page would scroll the learner back to the
@@ -6297,21 +6638,49 @@ const LessonView = {
     const hasPrev = this.unitIndex > 0;
 
     const column = document.getElementById('lesson-column');
+    const written = this.written;
     column.innerHTML = `
       <div class="lesson-kicker">${escapeAttr(unit?.stage || lang.name)}</div>
-      ${grammarUnitHtml(unit, lesson.grammar, lang, lesson.formMarkers)}
+      ${written
+        ? quranLessonHtml(written, lesson.formMarkers)
+        : grammarUnitHtml(unit, lesson.grammar, lang, lesson.formMarkers)}
       <div class="lesson-handoff">
-        Questions, examples and practice live with your tutor —
-        <button class="lesson-handoff-link" id="btn-lesson-ask">ask about this lesson →</button>
+        Stuck on something here?
+        <button class="lesson-handoff-link" id="btn-lesson-ask">ask your tutor →</button>
       </div>
       <div class="lesson-foot" id="lesson-foot"></div>
     `;
     this.renderChrome();
 
-    bindGrammarUnit(column, lesson.grammar, lang, (el) => this.bindWordTaps(el));
+    if (written) this.bindWrittenLesson(column, written, lang);
+    else bindGrammarUnit(column, lesson.grammar, lang, (el) => this.bindWordTaps(el));
     document.getElementById('lesson-scroll').scrollTop = 0;
 
     document.getElementById('btn-lesson-ask').addEventListener('click', () => this.showTutor());
+  },
+
+  // Speaking an example, and the toggle that takes the colours off so a reader
+  // can check they can still segment the word without them.
+  bindWrittenLesson(column, written, lang) {
+    column.querySelectorAll('.worked-play').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ex = written.examples[parseInt(btn.dataset.idx)];
+        if (!ex) return;
+        if (!NarrationEngine.speakLang(ex.arabic, 'ar-SA', 0.75)) {
+          showToast('No Arabic voice on this device — audio unavailable.', 'info', 3000);
+        }
+      });
+    });
+
+    const toggle = column.querySelector('#btn-annot-toggle');
+    toggle?.addEventListener('click', () => {
+      const off = column.classList.toggle('lesson-annot-off');
+      toggle.textContent = off ? 'Show the colours' : 'Hide the colours';
+      toggle.setAttribute('aria-pressed', String(!off));
+    });
+
+    this.bindWordTaps(column);
   },
 
   // Everything on the page that depends on HOW LONG THE COURSE IS: the lesson
@@ -6567,7 +6936,7 @@ const QuranTutor = {
         </div>` : ''}
       <div class="qtutor-bar">
         <div class="qtutor-modes">
-          <button class="qtutor-mode active" data-tmode="teach">Teach me</button>
+          <button class="qtutor-mode active" data-tmode="teach">Ask</button>
           <button class="qtutor-mode" data-tmode="quiz">Quiz me</button>
         </div>
         <div class="qtutor-scope">
@@ -6581,7 +6950,7 @@ const QuranTutor = {
       <div class="lang-chat qtutor-chat"></div>
       <div class="chat-composer">
         <textarea class="cp-answer qtutor-input" rows="1"
-                  placeholder="Ask anything, or say &quot;start&quot;…"></textarea>
+                  placeholder="Ask about anything in this lesson…"></textarea>
         <button class="qtutor-send" type="button" title="Send" aria-label="Send">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
@@ -6626,7 +6995,7 @@ const QuranTutor = {
       b.classList.toggle('active', b.dataset.tmode === mode));
     this.root.querySelector('.qtutor-input').placeholder = mode === 'quiz'
       ? 'Your answer…'
-      : 'Ask anything, or say "start"…';
+      : 'Ask about anything in this lesson…';
     this.paintHistory();
   },
 
@@ -6640,8 +7009,9 @@ const QuranTutor = {
       }
     }
     this.paintHistory();
-    // Nothing said yet in this unit → the tutor opens rather than waiting
-    if (!this.history.teach.length && this.mode === 'teach') this.turn('(start the lesson)');
+    // The tutor no longer opens by itself. It used to teach the unit unprompted,
+    // which is exactly the job the lesson page now does properly — so it waits,
+    // and answers what it is asked.
   },
 
   paintHistory() {
@@ -6652,7 +7022,7 @@ const QuranTutor = {
     if (!msgs.length) {
       chat.innerHTML = `<div class="qtutor-empty">${this.mode === 'quiz'
         ? 'Say "ready" and the questions start. No teaching — just questions.'
-        : 'Say "start" whenever you are.'}</div>`;
+        : 'Ask me anything about this lesson. I answer questions — I won\'t teach it back at you or test you.'}</div>`;
       return;
     }
     msgs.forEach(m => this.addBubble(m.role, m.content, false));
@@ -6810,8 +7180,10 @@ const QuranTutor = {
       dbPutTutorChat(lang.id, this.unitIndex, this.mode, this.history[this.mode])
         .catch(err => console.warn('Tutor transcript save failed:', err.message));
 
-      // Teach mode only: the tag is how the tutor says they have it
-      if (this.mode === 'teach' && /\[MASTERED:/i.test(full)) await this.markMastered();
+      // The tutor no longer marks anything mastered — it answers questions and
+      // that is all. Progress comes from reading the lesson and from the quiz.
+      // The tag is still stripped on the way to the screen (see the paint path)
+      // in case a model emits one out of habit.
       // Quiz mode: a missed question ends with the offer, which becomes a chip.
       // Never after a tap, though — an offer answered is answered, and a model
       // that repeats it would leave the learner tapping the same button forever.
@@ -6823,56 +7195,6 @@ const QuranTutor = {
       this.busy = false;
       if (sendBtn) sendBtn.disabled = false;
     }
-  },
-
-  async markMastered() {
-    const { lang, unit } = this;
-    if (!unit) return;
-    const mastered = lang.unitsMastered || [];
-    if (mastered.includes(unit.id)) return;
-
-    lang.unitsMastered = [...mastered, unit.id];
-    const patch = { unitsMastered: lang.unitsMastered };
-
-    // Advance the pointer only when the tutor is on the unit the learner is
-    // actually up to — revisiting an old unit must not move them forward.
-    const isCurrent = this.unitIndex === (lang.unitIndex || 0);
-    const hasNext = this.unitIndex < this.syllabus.length - 1;
-    if (isCurrent && hasNext) {
-      lang.unitIndex = this.unitIndex + 1;
-      patch.unitIndex = lang.unitIndex;
-    }
-    try { await dbPatchLanguage(lang.id, patch); }
-    catch (err) { console.warn('Mastery save failed:', err.message); }
-
-    showToast(`"${unit.title}" — mastered.`, 'success', 3500);
-    if (isCurrent && hasNext) this.offerNextUnit();
-  },
-
-  offerNextUnit() {
-    const chat = this.root?.querySelector('.qtutor-chat');
-    const next = this.syllabus[this.unitIndex + 1];
-    if (!chat || !next) return;
-    const row = document.createElement('div');
-    row.className = 'qtutor-next';
-    row.innerHTML = `<button class="btn btn-primary btn-sm">Next lesson: ${escapeAttr(next.title)} →</button>`;
-    row.querySelector('button').addEventListener('click', async () => {
-      // Opened from a lesson: the next lesson means the lesson PAGE, so you read
-      // it before being taught it. Inside the session player there is no page to
-      // go back to, so the tutor just moves itself on.
-      if (!this.embedded && LessonView.lang?.id === this.lang.id) {
-        LessonView.showLesson();
-        await LessonView.open(this.lang, this.unitIndex + 1);
-        return;
-      }
-      this.unitIndex += 1;
-      this.unit = this.syllabus[this.unitIndex];
-      this.history = { teach: [], quiz: [] };
-      this.render();
-      await this.loadHistory();
-    });
-    chat.appendChild(row);
-    chat.scrollTop = chat.scrollHeight;
   }
 };
 
@@ -6906,20 +7228,18 @@ function demoQuranTutor(unit, userMessage, mode, history) {
     return `Correct.\n\nIn مَالِكِ يَوْمِ الدِّينِ (1:4) there are two pairs stacked — what owns يَوْمِ?`;
   }
 
+  // Ask mode ANSWERS. It never teaches the lesson back and never ends on a
+  // question of its own — the page did the teaching and the quiz does the
+  // testing.
   if (dunno) {
-    // First time a hint, second time the answer — the rule the real prompt carries
-    const priorDunno = history.filter(m =>
-      m.role === 'user' && /(don'?t know|no idea|tell me|skip)/i.test(m.content)).length;
-    return priorDunno >= 1
-      ? `No problem — here it is. In بِسْمِ اللَّهِ (bismillāh, "in the name of Allah", 1:1), the two nouns sit side by side, so it means "the name OF Allah". That is the possession pair. Now you have it — the next one will be easier.`
-      : `Have a look at بِسْمِ اللَّهِ (bismillāh, 1:1). Two nouns, nothing between them. What do you think the second one is doing to the first? If you'd rather I just told you, say so.`;
+    return `Here it is straight out: in بِسْمِ اللَّهِ (bismillāh, 1:1) the two nouns sit side by side with nothing between them, so the second owns the first — "the name OF Allah". That side-by-side pair is the whole structure.`;
   }
-  if (asked >= 2) {
-    return `That's exactly it. [MASTERED: ${unit?.title || 'this unit'}] You've got this one — let's carry it into the next.`;
+  if (!asked && !msg.trim()) {
+    return `This lesson is on ${unit?.title || 'the current structure'}. Ask me anything about it — or about any other verse you have hit.`;
   }
   return asked === 0
-    ? `Right — ${unit?.title || 'let\'s begin'}. ${unit?.structure || ''}\n\nHere it is in real Qur'an: بِسْمِ اللَّهِ (bismillāh) — "in the name of Allah", the very first words of the Book (1:1). بِسْمِ is "in the name", اللَّهِ is "of Allah". Two nouns, nothing between them, and the second one ends in kasrah.\n\nDoes that land, or shall I show you another?`
-    : `Good. One more: الْحَمْدُ لِلَّهِ (al-ḥamdu lillāh, 1:2) — "the praise is for Allah". Now you try: in رَبِّ الْعَالَمِينَ (rabbi'l-ʿālamīn), what does it mean?`;
+    ? `${unit?.structure || ''}\n\nIn real Qur'an: بِسْمِ اللَّهِ (bismillāh, 1:1) — بِسْمِ is "in the name", اللَّهِ is "of Allah". Two nouns, nothing between them, and the second takes a kasrah.`
+    : `الْحَمْدُ لِلَّهِ (1:2) works the same way — "the praise is for Allah". The kasrah on the second word is what tells you the pair is a unit.`;
 }
 
 // ── SCRIPT BOOTCAMP ───────────────────────────────────────────────────────────
@@ -10856,9 +11176,14 @@ function showNextCard() {
   backText.classList.toggle('long', (card.back || '').length > 220);
   document.querySelectorAll('#flashcard-element .card-body').forEach(b => { b.scrollTop = 0; });
 
-  // ── Root cards: the root alone on the front; on the back the root again with
-  // its meaning, then the words the Qur'an actually builds from it. A list is
-  // the wrong thing to cram into a text node, so it renders separately.
+  // ── Root cards ──────────────────────────────────────────────────────────
+  // A REAL QURANIC WORD on the front — ٱلْكِتَٰبِ, not ك ت ب. The three letters
+  // never appear as a word in the muṣḥaf, so a card fronted with them drilled
+  // recognition of something the page does not contain.
+  //
+  // The back does the explaining: the word again with what it means, then the
+  // root that unifies the family, then the other real forms grown from it, then
+  // a verse it actually appears in.
   const isRootCard = card.type === 'root' && Array.isArray(card.lemmas) && card.lemmas.length;
   const rootHead = document.getElementById('card-back-root');
   const lemmaBox = document.getElementById('card-back-lemmas');
@@ -10868,15 +11193,17 @@ function showNextCard() {
     rootHead.style.display = isRootCard ? 'flex' : 'none';
     if (isRootCard) {
       document.getElementById('card-back-root-word').textContent = card.front;
-      document.getElementById('card-back-root-rom').textContent =
-        [card.romanization, card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : '']
-          .filter(Boolean).join(' · ');
+      document.getElementById('card-back-root-rom').textContent = [
+        card.headwordGloss,
+        card.root ? `root ${card.root}` : card.romanization,
+        card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : ''
+      ].filter(Boolean).join(' · ');
     }
   }
   if (lemmaBox) {
     lemmaBox.style.display = isRootCard ? 'block' : 'none';
     lemmaBox.innerHTML = isRootCard ? `
-      <div class="card-lemmas-head">Words built from it</div>
+      <div class="card-lemmas-head">Others from the same root</div>
       ${card.lemmas.map(l => `
         <div class="card-lemma">
           <span class="card-lemma-ar">${escapeAttr(l.word)}</span>
@@ -10885,7 +11212,12 @@ function showNextCard() {
             <span class="card-lemma-meaning">${escapeAttr(l.meaning)}</span>
           </span>
           ${l.form ? `<span class="card-lemma-form">${escapeAttr(l.form)}</span>` : ''}
-        </div>`).join('')}` : '';
+        </div>`).join('')}
+      ${card.verse ? `
+        <blockquote class="card-verse">
+          <span class="card-verse-ar" dir="rtl" lang="ar">${escapeAttr(card.verse.text)}</span>
+          <cite class="card-verse-ref">${escapeAttr(card.verse.surah)} · ${escapeAttr(card.verse.ref)}</cite>
+        </blockquote>` : ''}` : '';
   }
 
   // ── Language cards: TTS button + romanization fade ──

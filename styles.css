@@ -6150,3 +6150,262 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .form-markers-table tr:last-child td { border-bottom: none; }
 .fm-num { font-weight: 700; color: var(--purple); white-space: nowrap; }
 .fm-cell { color: var(--text-secondary); line-height: 1.5; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE QURANIC LESSON PAGE
+   Ten sections, the same on all forty lessons, rendered from static data.
+
+   The colour system is the heart of it. One hue per grammatical role, fixed
+   across the whole course and never reassigned — that constancy is what
+   trains the eye to segment a word before the reader consciously parses it.
+   The hues are picked to sit inside the parchment theme and to stay apart
+   from each other at the small sizes Arabic diacritics live at.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --role-particle:  #6b3f7a;   /* plum      — the glue: negation, condition */
+  --role-prep:      #2f6f5e;   /* verdigris — prepositions */
+  --role-pronoun:   #a3323f;   /* burgundy  — attached pronouns, the big one */
+  --role-vprefix:   #a8600f;   /* ochre     — front-marked verbs */
+  --role-vsuffix:   #2d5f8a;   /* slate     — back-marked verbs */
+  --role-ending:    #5f6b4a;   /* olive     — case endings */
+  --role-root:      #241a10;   /* ink       — the three letters themselves */
+}
+
+/* An Arabic snippet, coloured by role. Weight rather than hue carries the
+   root, because the root is the spine of the word and not one part among
+   several. */
+.ar-seg { border-radius: 3px; padding: 0 0.04em; }
+.ar-particle        { color: var(--role-particle); }
+.ar-preposition     { color: var(--role-prep); }
+.ar-attachedPronoun { color: var(--role-pronoun); }
+.ar-verbPrefix      { color: var(--role-vprefix); }
+.ar-verbSuffix      { color: var(--role-vsuffix); }
+.ar-nounEnding      { color: var(--role-ending); }
+.ar-root            { color: var(--role-root); font-weight: 700; }
+.ar-plain           { color: var(--text-primary); }
+
+/* Weaning off the annotation is part of learning to read, so it is one tap
+   away and the layout does not move when it goes. */
+.lesson-annot-off .ar-seg { color: var(--text-primary); font-weight: inherit; }
+
+.role-legend {
+  display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem;
+  margin: 0 0 1.5rem; padding: 0.7rem 0.9rem;
+  background: var(--bg-elevated); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 0.76rem; color: var(--text-secondary);
+}
+.role-key { display: inline-flex; align-items: center; gap: 0.4rem; }
+.role-key i {
+  width: 0.72rem; height: 0.72rem; border-radius: 3px; flex-shrink: 0;
+  background: currentColor;
+}
+.role-key i.ar-root { background: var(--role-root); }
+
+/* ── Head, rule, sections ────────────────────────────────────────────── */
+.lesson-head { margin-bottom: 1.5rem; }
+.lesson-h {
+  font-family: var(--font-display); font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1.2; color: var(--text-primary); margin: 0 0 0.55rem;
+}
+.lesson-cando {
+  font-family: var(--font-body); font-size: 0.95rem; line-height: 1.55;
+  color: var(--purple); margin: 0; font-weight: 500;
+}
+
+/* The one thing to remember in three days. Boxed, so it can be found again
+   by scrolling rather than by rereading. */
+.lesson-rule, .lesson-summary {
+  background: var(--purple-dim);
+  border-left: 3px solid var(--purple);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 1rem 1.1rem; margin: 0 0 1.75rem;
+}
+.lesson-rule-label {
+  display: block; font-family: var(--font-body); font-size: 0.68rem;
+  letter-spacing: 0.13em; text-transform: uppercase;
+  color: var(--purple); margin-bottom: 0.5rem; font-weight: 600;
+}
+.lesson-rule p { margin: 0; font-size: 1rem; line-height: 1.62; color: var(--text-primary); }
+.lesson-summary ul { margin: 0; padding-left: 1.1rem; }
+.lesson-summary li { color: var(--text-primary); line-height: 1.55; margin-bottom: 0.3rem; }
+
+.lesson-sec { margin: 0 0 1.9rem; }
+.lesson-sec-bar {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+}
+.lesson-sec-head {
+  font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 0 0 0.8rem; font-weight: 600;
+}
+.lesson-sec-sub {
+  font-size: 0.88rem; color: var(--text-secondary); margin: -0.4rem 0 0.8rem;
+}
+.lesson-why { margin: 0; padding-left: 1.15rem; }
+.lesson-why li { color: var(--text-secondary); line-height: 1.6; margin-bottom: 0.45rem; }
+
+.annot-toggle {
+  background: none; border: 1px solid var(--border-light); border-radius: 999px;
+  padding: 0.25rem 0.7rem; font-family: var(--font-body); font-size: 0.72rem;
+  color: var(--text-secondary); cursor: pointer; flex-shrink: 0;
+}
+.annot-toggle:hover { border-color: var(--purple); color: var(--purple); }
+
+/* ── The pattern table: small, frequency-led, used immediately ───────── */
+.lesson-table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
+.lesson-table {
+  width: 100%; border-collapse: collapse; font-family: var(--font-body);
+  font-size: 0.88rem; background: var(--bg-surface);
+}
+.lesson-table th {
+  text-align: left; padding: 0.55rem 0.8rem; font-size: 0.68rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light); font-weight: 600; white-space: nowrap;
+}
+.lesson-table td {
+  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);
+  color: var(--text-secondary); vertical-align: top;
+}
+.lesson-table tr:last-child td { border-bottom: none; }
+.lesson-table .lt-key { color: var(--text-primary); font-weight: 500; }
+
+/* ── Word anatomy: where the boundary falls inside one written word ──── */
+.anatomy-set { display: grid; gap: 1rem; }
+.anatomy {
+  margin: 0; padding: 0.9rem 1rem;
+  background: var(--bg-surface); border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.anatomy-whole {
+  font-size: 1.7rem; direction: rtl; text-align: right;
+  color: var(--text-primary); line-height: 1.7; margin-bottom: 0.6rem;
+}
+.anatomy-blocks {
+  display: flex; flex-direction: row-reverse; flex-wrap: wrap;
+  align-items: flex-start; justify-content: flex-end; gap: 0.3rem;
+}
+.anatomy-block {
+  display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+  padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  min-width: 3.2rem;
+}
+.anatomy-ar { font-size: 1.25rem; direction: rtl; line-height: 1.5; }
+.anatomy-gloss {
+  font-family: var(--font-body); font-size: 0.68rem; color: var(--text-muted);
+  text-align: center; line-height: 1.3;
+}
+.anatomy-join {
+  align-self: center; color: var(--text-muted); font-size: 0.85rem; padding: 0 0.1rem;
+}
+.anatomy-note {
+  font-family: var(--font-body); font-size: 0.78rem; color: var(--text-secondary);
+  margin: 0.65rem 0 0; line-height: 1.5;
+}
+
+/* ── Worked examples: five lines each, few and fully explained ───────── */
+.worked-set { display: grid; gap: 1.1rem; }
+.worked {
+  padding: 0.95rem 1.05rem; background: var(--bg-surface);
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+}
+.worked-head {
+  display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.55rem;
+}
+.worked-play {
+  flex-shrink: 0; width: 1.8rem; height: 1.8rem; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.worked-play svg { width: 0.85rem; height: 0.85rem; }
+.worked-ref {
+  font-family: var(--font-body); font-size: 0.72rem; font-style: normal;
+  color: var(--text-muted); letter-spacing: 0.02em;
+}
+.worked-ar {
+  font-size: 1.5rem; line-height: 2; direction: rtl; text-align: right;
+  margin: 0 0 0.7rem;
+}
+.worked-literal {
+  font-family: var(--font-body); font-size: 0.82rem; color: var(--text-muted);
+  margin: 0 0 0.3rem; line-height: 1.5;
+}
+.worked-smooth {
+  font-size: 1rem; color: var(--text-primary); margin: 0 0 0.4rem; line-height: 1.55;
+}
+.worked-changed {
+  font-family: var(--font-body); font-size: 0.8rem; color: var(--text-secondary);
+  margin: 0; padding-top: 0.45rem; border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+/* ── Traps: the near-miss pairs that cost quiz answers ───────────────── */
+.trap-set { display: grid; gap: 0.85rem; }
+.trap {
+  padding: 0.85rem 1rem; border-radius: var(--radius-sm);
+  background: rgba(109,37,48,0.05); border-left: 3px solid var(--rose);
+}
+.trap-claim {
+  font-family: var(--font-body); font-weight: 600; font-size: 0.92rem;
+  color: var(--text-primary); margin: 0 0 0.4rem;
+}
+.trap-ar {
+  font-size: 1.25rem; direction: rtl; text-align: right;
+  color: var(--text-primary); margin: 0 0 0.4rem; line-height: 1.8;
+}
+.trap-note {
+  font-family: var(--font-body); font-size: 0.84rem; color: var(--text-secondary);
+  margin: 0; line-height: 1.55;
+}
+
+/* ── The scan procedure ──────────────────────────────────────────────── */
+.lesson-checklist { margin: 0; padding-left: 1.3rem; }
+.lesson-checklist li {
+  color: var(--text-secondary); line-height: 1.6; margin-bottom: 0.5rem;
+  padding-left: 0.2rem;
+}
+.lesson-bridge {
+  font-family: var(--font-body); font-size: 0.85rem; color: var(--text-muted);
+  font-style: italic; margin: 0 0 1rem; padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .worked-ar { font-size: 1.3rem; }
+  .anatomy-whole { font-size: 1.45rem; }
+  .anatomy-block { min-width: 2.8rem; padding: 0.35rem 0.45rem; }
+  .role-legend { font-size: 0.72rem; gap: 0.35rem 0.8rem; }
+}
+
+/* ── The root card, wordform-first ────────────────────────────────────────
+   The front is a real Quranic word now, so the root has to be visibly the
+   supporting fact rather than the headline. It gets a chip, not a heading. */
+.root-headword-gloss {
+  font-family: var(--font-body); font-size: 0.9rem; color: var(--text-primary);
+  margin: -0.25rem 0 0.5rem; direction: ltr; text-align: left;
+}
+.root-chip {
+  display: inline-flex; align-items: baseline; gap: 0.3rem;
+  font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted);
+  background: var(--bg-elevated); border-radius: 999px; padding: 0.15rem 0.55rem;
+}
+.root-chip b {
+  color: var(--text-secondary); font-weight: 600; letter-spacing: 0.1em;
+  direction: rtl; font-size: 0.85rem;
+}
+
+/* The verse the word actually appears in — the anchor that stops a card being
+   a vocabulary fact and makes it a reading one. */
+.root-verse, .card-verse {
+  margin: 0.85rem 0 0; padding: 0.7rem 0.85rem;
+  background: var(--bg-elevated); border-radius: var(--radius-sm);
+  border-right: 3px solid var(--purple); border-left: none;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.root-verse-ar, .card-verse-ar {
+  font-size: 1.15rem; line-height: 2; color: var(--text-primary); text-align: right;
+}
+.root-verse-ref, .card-verse-ref {
+  font-family: var(--font-body); font-size: 0.7rem; font-style: normal;
+  color: var(--text-muted); text-align: right;
+}
