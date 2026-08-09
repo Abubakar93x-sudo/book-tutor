@@ -3328,11 +3328,23 @@ async function backfillLessonCards(lang, syllabus) {
   const cards = [];
   await Promise.all(syllabus.map(async (unit, i) => {
     if (!done.has(unit.id)) return;
+    // A written-out course has its examples in the shipped data; a generated one
+    // has them in the cached lesson document. Reading only the latter meant the
+    // Quranic course stopped filing cards the moment it stopped generating.
+    const written = typeof quranLesson === 'function' &&
+      getRecipe(lang).ui?.staticSyllabus === 'QURAN_GRAMMAR'
+        ? quranLesson(unit.id) : null;
     let lesson = null;
-    try { lesson = await dbGetLangLesson(lang.id, unitKey(i)); } catch (_) { return; }
+    if (!written) {
+      try { lesson = await dbGetLangLesson(lang.id, unitKey(i)); } catch (_) { return; }
+    }
+
     const rows = [];
     if (unit.structure) rows.push({ front: unit.title, back: unit.structure, word: '' });
-    for (const ex of (lesson?.grammar?.examples || []).slice(0, 4)) {
+    const examples = written
+      ? written.examples.map(ex => ({ text: ex.arabic, gloss: ex.smooth, romanization: null }))
+      : (lesson?.grammar?.examples || []);
+    for (const ex of examples.slice(0, 4)) {
       if (ex.text && ex.gloss) {
         rows.push({ front: ex.text, back: ex.gloss, word: ex.text,
                     romanization: ex.romanization || null });
@@ -6769,9 +6781,11 @@ const LessonView = {
   // written ahead by the prefetch does not put cards in your deck for something
   // you have not looked at yet.
   async fileLessonCards() {
-    const { lang, unit, lesson } = this;
+    const { lang, unit, lesson, written } = this;
     const g = lesson?.grammar;
-    if (!lang || !unit || !g) return;
+    // Either half of the course can supply the examples: the shipped data for
+    // the written-out course, the cached lesson for a generated one.
+    if (!lang || !unit || (!g && !written)) return;
 
     const cards = [];
     // The rule, in the unit's own words — curated, so it is worth having even
@@ -6787,7 +6801,10 @@ const LessonView = {
       });
     }
     // Each example: the Arabic on the front, what it means on the back.
-    for (const ex of (g.examples || []).slice(0, 4)) {
+    const examples = written
+      ? written.examples.map(ex => ({ text: ex.arabic, gloss: ex.smooth, romanization: null }))
+      : (g?.examples || []);
+    for (const ex of examples.slice(0, 4)) {
       if (!ex.text || !ex.gloss) continue;
       cards.push({
         front: ex.text,
