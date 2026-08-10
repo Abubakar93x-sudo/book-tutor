@@ -1214,7 +1214,7 @@ function unitKey(unitIndex) {
 //   6 — the teaching section was capped at "3-5 sentences" and is now allowed
 //       to run as long as the structure needs. Every cached lesson is a short
 //       one written under the old cap.
-const LESSON_SCHEMA_VERSION = 7;
+const LESSON_SCHEMA_VERSION = 8;
 
 // Generated content is stamped with the schema it was written for AND the
 // provider that wrote it. Switching the app from DeepSeek to ChatGPT is a
@@ -3018,33 +3018,56 @@ const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
 // the same name. The other four were split or merged, and each maps to the new
 // lesson that now teaches it. Progress can only ever be preserved by this, never
 // invented: a unit that has no successor is simply dropped.
+// ── THE COURSE WAS REBUILT AROUND THE LEARNER'S OWN SESSION ──────────────────
+// Twice now. The eight-unit course became forty grammar lessons (v7), and those
+// forty became twenty-eight morphology-first ones derived from his real ChatGPT
+// transcript (v8). Every id changed in the second move, because the subjects
+// changed — not renamed, reconceived.
+//
+// So there is very little to carry. Four subjects survive recognisably, and
+// those are mapped; everything else has no successor and is dropped rather than
+// guessed at. Crediting someone with a lesson they never read is worse than
+// asking them to read a better one.
 const QURAN_UNIT_MOVES = {
-  // Renamed or resited, same subject
-  'q-attached-pronouns': 'q-pronouns-nouns',  // split three ways; the noun one is first
-  'q-particles':         'q-prepositions',    // became eight lessons; this is the first
-  'q-forms-1-2-3':       'q-form-3'           // three lessons now; credit through Form III
-  // q-find-root, q-verb-chart, q-case-endings, q-idafa and q-noun-adjective
-  // all still exist under their own ids and need no move.
+  // v7 → v8. The root lesson and the forms lesson are the only two whose
+  // subject genuinely survives intact.
+  'q-find-root':       'root-lemma-wordform',
+  'q-forms-1-2-3':     'forms-in-english',
+  'q-participles':     'noun-patterns',
+  'q-sentence-types':  'nominal-and-verbal',
+  'q-case-endings':    'just-enough-irab',
+  'q-particles':       'the-40-particles',
+
+  // v6 → v8, for anyone who never opened the app during v7.
+  'q-attached-pronouns': 'root-lemma-wordform'
 };
 
-// Rewrites a language's mastered list onto the new syllabus, and puts the
-// learner on the lesson after the furthest one they had finished. Runs once.
 function migrateQuranProgress(lang, syllabus) {
-  if (!lang || lang.recipeId !== 'quranic' || lang.unitsMigratedV7) return null;
+  if (!lang || lang.recipeId !== 'quranic' || lang.unitsMigratedV8) return null;
   const valid = new Set(syllabus.map(u => u.id));
-  const moved = (lang.unitsMastered || [])
+  const had = lang.unitsMastered || [];
+  const moved = had
     .map(id => QURAN_UNIT_MOVES[id] || id)
     .filter(id => valid.has(id));
 
   const mastered = [...new Set(moved)];
-  // The lesson after the furthest one they had actually finished. Their old
-  // unitIndex means nothing now — index 5 of 8 is a different subject from
-  // index 5 of 40 — so it is recomputed from what they mastered, not carried.
+  // The lesson after the furthest one they actually finished. Their old
+  // unitIndex means nothing now — index 5 of 40 is a different subject from
+  // index 5 of 28 — so it is recomputed from what they mastered, never carried.
   const lastDone = syllabus.reduce((n, u, i) => mastered.includes(u.id) ? i : n, -1);
+  const dropped = had.length - mastered.length;
+  if (dropped > 0) {
+    // Said out loud rather than swallowed. Someone who had finished a dozen
+    // lessons and now shows four is owed an explanation, and the console is
+    // where the one person who can act on it will look.
+    console.log(`${lang.id}: the course was rebuilt around a different sequence, so ` +
+      `${dropped} of ${had.length} finished lesson(s) have no equivalent and were dropped. ` +
+      `${mastered.length} carried across; resuming at lesson ${lastDone + 2}.`);
+  }
   return {
     unitsMastered: mastered,
     unitIndex: Math.min(lastDone + 1, syllabus.length - 1),
-    unitsMigratedV7: true
+    unitsMigratedV8: true
   };
 }
 
@@ -6199,9 +6222,15 @@ function quranLessonHtml(lesson, formMarkers = null) {
       </div>
     </section>` : '';
 
-  // The form table earns its place on the lessons that teach forms, and is
-  // folded away so it never crowds the teaching.
-  const markersHtml = (formMarkers?.length && /\bforms?\b/i.test(lesson.title || '')) ? `
+  // The structural key sits beside every lesson in the patterns unit, folded
+  // away so it never crowds the teaching. Which lessons get it is an explicit
+  // list in quran-grammar-data.js, not a match on the title — a title match
+  // put it on lessons that merely said "form" in passing and left it off ones
+  // that needed it.
+  const wantsKey = typeof QURAN_FORM_KEY_UNITS !== 'undefined'
+    ? QURAN_FORM_KEY_UNITS.has(lesson.id)
+    : /\bforms?\b/i.test(lesson.title || '');
+  const markersHtml = (formMarkers?.length && wantsKey) ? `
     <details class="form-markers">
       <summary class="form-markers-head">Every form, and what marks it</summary>
       <div class="form-markers-wrap">
@@ -6222,23 +6251,57 @@ function quranLessonHtml(lesson, formMarkers = null) {
       ${lesson.canDo ? `<p class="lesson-cando">${escapeAttr(lesson.canDo)}</p>` : ''}
     </header>
 
-    ${lesson.rule ? `
-      <aside class="lesson-rule">
-        <span class="lesson-rule-label">The rule</span>
-        <p>${escapeAttr(lesson.rule)}</p>
-      </aside>` : ''}
+    <!-- ENGLISH FIRST, ARABIC SECOND. The learner asked for exactly this in
+         his own session — "without using Arabic example explain what each of
+         the forms do in English. Do it simply" — and engagement went up when
+         it happened. So a lesson arrives in three steps and he opens each one
+         when he is ready, rather than meeting a wall with Arabic a third of
+         the way down it. The steps are the sections it already had; what is
+         new is that they are gated and named. -->
+    <div class="reveal-step reveal-open" data-step="1">
+      <button class="reveal-head" aria-expanded="true">
+        <span class="reveal-num">1</span>
+        <span class="reveal-name">The idea, in English</span>
+        <span class="reveal-mark" aria-hidden="true"></span>
+      </button>
+      <div class="reveal-body">
+        ${lesson.rule ? `
+          <aside class="lesson-rule">
+            <span class="lesson-rule-label">The rule</span>
+            <p>${escapeAttr(lesson.rule)}</p>
+          </aside>` : ''}
+        ${lesson.why?.length ? `
+          <section class="lesson-sec">
+            <h3 class="lesson-sec-head">Why it matters</h3>
+            <ul class="lesson-why">${lesson.why.map(b => `<li>${escapeAttr(b)}</li>`).join('')}</ul>
+          </section>` : ''}
+      </div>
+    </div>
 
-    ${lesson.why?.length ? `
-      <section class="lesson-sec">
-        <h3 class="lesson-sec-head">Why it matters</h3>
-        <ul class="lesson-why">${lesson.why.map(b => `<li>${escapeAttr(b)}</li>`).join('')}</ul>
-      </section>` : ''}
+    <div class="reveal-step" data-step="2">
+      <button class="reveal-head" aria-expanded="false">
+        <span class="reveal-num">2</span>
+        <span class="reveal-name">What to look for</span>
+        <span class="reveal-mark" aria-hidden="true"></span>
+      </button>
+      <div class="reveal-body">
+        ${patternHtml}
+        ${markersHtml}
+        ${anatomyHtml(lesson.anatomy)}
+      </div>
+    </div>
 
-    ${patternHtml}
-    ${markersHtml}
-    ${anatomyHtml(lesson.anatomy)}
-    ${roleLegendHtml(lesson)}
-    ${workedExamplesHtml(lesson.examples)}
+    <div class="reveal-step" data-step="3">
+      <button class="reveal-head" aria-expanded="false">
+        <span class="reveal-num">3</span>
+        <span class="reveal-name">See it in the Qur'an</span>
+        <span class="reveal-mark" aria-hidden="true"></span>
+      </button>
+      <div class="reveal-body">
+        ${roleLegendHtml(lesson)}
+        ${workedExamplesHtml(lesson.examples)}
+      </div>
+    </div>
 
     ${lesson.traps?.length ? `
       <section class="lesson-sec">
@@ -6406,15 +6469,15 @@ const LessonView = {
     try {
       this.syllabus = await this.loadSyllabus(lang);
 
-      // Eight units became forty. Anyone part-way through the old course is
-      // moved onto the new one before anything is indexed against it.
+      // The course has been reshaped twice. Anyone part-way through an older
+      // version is moved onto this one before anything is indexed against it.
       const moved = migrateQuranProgress(lang, this.syllabus);
       if (moved) {
         Object.assign(lang, moved);
         if (unitIndex == null) unitIndex = moved.unitIndex;
         dbPatchLanguage(lang.id, moved).catch(err =>
           console.warn('Could not save the course migration:', err.message));
-        console.log(`Moved ${lang.id} onto the 40-lesson course: ` +
+        console.log(`Moved ${lang.id} onto the ${this.syllabus.length}-lesson course: ` +
           `${moved.unitsMastered.length} lesson(s) kept, resuming at ${moved.unitIndex + 1}.`);
       }
 
@@ -6667,9 +6730,45 @@ const LessonView = {
 
   },
 
-  // Speaking an example, and the toggle that takes the colours off so a reader
-  // can check they can still segment the word without them.
+  // Speaking an example, the three-step reveal, the hide-the-answers table, and
+  // the toggle that takes the colours off so a reader can check they can still
+  // segment a word without them.
   bindWrittenLesson(column, written, lang) {
+    // ── The three steps ───────────────────────────────────────────────────
+    // Opening one does not close the others: this is a lesson being revealed,
+    // not an accordion. Once a step is open it stays open, because going back
+    // up to re-read something you have already unlocked is normal.
+    column.querySelectorAll('.reveal-step').forEach(step => {
+      const head = step.querySelector('.reveal-head');
+      head?.addEventListener('click', () => {
+        const open = step.classList.toggle('reveal-open');
+        head.setAttribute('aria-expanded', String(open));
+        if (open) step.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    });
+
+    // ── Hide the answers ──────────────────────────────────────────────────
+    // The نزل exchange, generalised: work down the table with the meanings
+    // covered, then reveal and compare. NOTHING IS SCORED and nothing is
+    // recorded — across 38 turns of his own session he was never once tested,
+    // and that is why it never felt like an exam.
+    column.querySelectorAll('.lesson-table-wrap').forEach(wrap => {
+      const table = wrap.querySelector('.lesson-table');
+      if (!table || table.tBodies[0]?.rows.length < 3) return;
+      const bar = document.createElement('div');
+      bar.className = 'table-reveal-bar';
+      bar.innerHTML = `<button class="table-reveal-btn" type="button">Cover the answers</button>`;
+      wrap.parentNode.insertBefore(bar, wrap);
+      bar.querySelector('button').addEventListener('click', (e) => {
+        const hidden = table.classList.toggle('answers-hidden');
+        e.currentTarget.textContent = hidden ? 'Show me' : 'Cover the answers';
+      });
+    });
+
+    this.bindLessonExtras(column, written, lang);
+  },
+
+  bindLessonExtras(column, written, lang) {
     column.querySelectorAll('.worked-play').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -6681,11 +6780,28 @@ const LessonView = {
       });
     });
 
+    // ── Format preferences, remembered ────────────────────────────────────
+    // He steered format constantly in his own session — "no dashes", "no
+    // Arabic examples", "one table only", "exactly how you did before" — and
+    // the tutor adapted instantly. A page cannot be asked, so it offers the
+    // two switches that mattered and REMEMBERS them, because having to set
+    // them again on every lesson is worse than not having them.
+    const prefs = LessonView.lessonPrefs();
+    if (prefs.annotOff) column.classList.add('lesson-annot-off');
+    if (prefs.romanOff) column.classList.add('lesson-roman-off');
+
     const toggle = column.querySelector('#btn-annot-toggle');
-    toggle?.addEventListener('click', () => {
-      const off = column.classList.toggle('lesson-annot-off');
+    const paintToggle = () => {
+      if (!toggle) return;
+      const off = column.classList.contains('lesson-annot-off');
       toggle.textContent = off ? 'Show the colours' : 'Hide the colours';
       toggle.setAttribute('aria-pressed', String(!off));
+    };
+    paintToggle();
+    toggle?.addEventListener('click', () => {
+      const off = column.classList.toggle('lesson-annot-off');
+      paintToggle();
+      LessonView.lessonPrefs({ annotOff: off });
     });
 
     this.bindWordTaps(column);
@@ -6755,6 +6871,26 @@ const LessonView = {
       showToast('That\'s the whole course. Keep the review deck warm.', 'success', 4000);
       this.close();
     });
+  },
+
+  // Read, or read-and-write, the format preferences. Kept in IndexedDB beside
+  // the other local-only settings rather than in Firestore: this is a display
+  // choice, not progress, and it should not need a sync to take effect.
+  lessonPrefs(patch = null) {
+    this._prefs = this._prefs || { annotOff: false, romanOff: false };
+    if (patch) {
+      Object.assign(this._prefs, patch);
+      dbPut('settings', { key: 'lessonPrefs', value: this._prefs })
+        .catch(err => console.warn('Could not save the display preference:', err.message));
+    }
+    return this._prefs;
+  },
+
+  async loadLessonPrefs() {
+    try {
+      const rec = await dbGet('settings', 'lessonPrefs');
+      if (rec?.value) this._prefs = { annotOff: false, romanOff: false, ...rec.value };
+    } catch (_) { /* first run, or no IndexedDB — the defaults are fine */ }
   },
 
   // Word taps reuse the session's popover — same three gloss sources, same cache.
@@ -8645,6 +8781,9 @@ async function loadSettings() {
   // DeepSeek unless OpenAI was explicitly chosen — nobody's existing setup
   // should change provider because a second one became available.
   AppState.settings.provider = providerRecord?.value === 'openai' ? 'openai' : 'deepseek';
+
+  // How the lesson page should be shown — local-only, like the keys.
+  await LessonView.loadLessonPrefs();
 
   // Anyone who used this before the switch has a GEMINI key sitting in the main
   // field. Google's keys start with AIza and DeepSeek's with sk-, so they can be
