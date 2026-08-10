@@ -6656,10 +6656,6 @@ const LessonView = {
       ${written
         ? quranLessonHtml(written, lesson.formMarkers)
         : grammarUnitHtml(unit, lesson.grammar, lang, lesson.formMarkers)}
-      <div class="lesson-handoff">
-        Stuck on something here?
-        <button class="lesson-handoff-link" id="btn-lesson-ask">ask your tutor →</button>
-      </div>
       <div class="lesson-foot" id="lesson-foot"></div>
     `;
     this.renderChrome();
@@ -6668,7 +6664,7 @@ const LessonView = {
     else bindGrammarUnit(column, lesson.grammar, lang, (el) => this.bindWordTaps(el));
     document.getElementById('lesson-scroll').scrollTop = 0;
 
-    document.getElementById('btn-lesson-ask').addEventListener('click', () => this.showTutor());
+
   },
 
   // Speaking an example, and the toggle that takes the colours off so a reader
@@ -6713,16 +6709,47 @@ const LessonView = {
 
     const foot = document.getElementById('lesson-foot');
     if (!foot) return;
+    const next = hasNext ? this.syllabus[this.unitIndex + 1] : null;
+
+    // ── THE PULL FORWARD ──────────────────────────────────────────────────
+    // A lesson ends by OFFERING, not by sitting there. This is the single
+    // thing that made the original ChatGPT sessions feel like progress:
+    // measured across that transcript, 31 of 38 replies ended by proposing
+    // the next step, and the learner's own messages were a median of 66
+    // characters — "yes", "keep going". He was never navigating; he was
+    // accepting. A page with one grey "Next lesson" button asks him to
+    // navigate, and that is what "I don't feel any progression" was about.
+    //
+    // The tutor is deliberately NOT the thing doing this. It stays
+    // answer-only. The page pulls; the tutor waits to be asked.
+    const milestone = this.unit?.canDoLine || this.written?.canDo || '';
     foot.innerHTML = `
-      ${hasPrev ? `<button class="btn btn-ghost" id="btn-lesson-prev">← Previous lesson</button>` : '<span></span>'}
-      ${hasNext
-        ? `<button class="btn btn-primary" id="btn-lesson-next">Next lesson →</button>`
-        : `<button class="btn btn-primary" id="btn-lesson-done">Finish the course →</button>`}`;
+      ${milestone ? `<p class="lesson-milestone"><span>✓</span>${escapeAttr(milestone)}</p>` : ''}
+      <div class="lesson-next">
+        ${hasNext ? `
+          <button class="btn btn-primary lesson-next-main" id="btn-lesson-next">
+            <span class="lesson-next-label">Carry on</span>
+            <span class="lesson-next-title">${escapeAttr(next.title)}</span>
+          </button>` : `
+          <button class="btn btn-primary lesson-next-main" id="btn-lesson-done">
+            <span class="lesson-next-label">Finish the course</span>
+            <span class="lesson-next-title">That is the last lesson</span>
+          </button>`}
+        <div class="lesson-next-side">
+          <button class="btn btn-ghost btn-sm" id="btn-lesson-ask-more">Ask about this →</button>
+          <button class="btn btn-ghost btn-sm" id="btn-lesson-quiz">Try it on a verse →</button>
+          ${hasPrev ? `<button class="btn btn-ghost btn-sm" id="btn-lesson-prev">← Back one</button>` : ''}
+        </div>
+      </div>`;
 
     document.getElementById('btn-lesson-prev')
       ?.addEventListener('click', () => this.goTo(this.unitIndex - 1, false));
     document.getElementById('btn-lesson-next')
       ?.addEventListener('click', () => this.goTo(this.unitIndex + 1, true));
+    document.getElementById('btn-lesson-ask-more')
+      ?.addEventListener('click', () => this.showTutor('teach'));
+    document.getElementById('btn-lesson-quiz')
+      ?.addEventListener('click', () => this.showTutor('quiz'));
     document.getElementById('btn-lesson-done')?.addEventListener('click', async () => {
       await this.markRead();
       showToast('That\'s the whole course. Keep the review deck warm.', 'success', 4000);
@@ -6872,7 +6899,11 @@ const LessonView = {
   },
 
   // ── The tutor, on the lesson you are reading ──
-  showTutor() {
+  // `mode` lets the lesson's own buttons land the learner in the right place —
+  // "Ask about this" opens the answering side, "Try it on a verse" opens the
+  // quiz. Both are offers made BY the page; the tutor still never proposes
+  // anything itself.
+  showTutor(mode = 'teach') {
     document.getElementById('lesson-pane').style.display = 'none';
     // Lifts the floating menu button clear of the composer — on a phone they
     // share the bottom-right corner, and it sits on top of Send.
@@ -6886,7 +6917,8 @@ const LessonView = {
       lang: this.lang,
       syllabus: this.syllabus,
       unitIndex: this.unitIndex,
-      unit: this.unit
+      unit: this.unit,
+      mode
     });
   },
 
@@ -6925,14 +6957,15 @@ const QuranTutor = {
   busy: false,
 
   // ── Mount into any container ──
-  async mount(containerEl, { lang, syllabus, unitIndex, unit, embedded = false }) {
+  async mount(containerEl, { lang, syllabus, unitIndex, unit, embedded = false,
+                             mode = 'teach' }) {
     this.lang = lang;
     this.syllabus = syllabus || [];
     this.unitIndex = unitIndex || 0;
     this.unit = unit || this.syllabus[this.unitIndex] || null;
     this.root = containerEl;
     this.embedded = embedded;
-    this.mode = 'teach';
+    this.mode = mode === 'quiz' ? 'quiz' : 'teach';
     this.scope = 'unit';
     this.history = { teach: [], quiz: [] };
 
@@ -6953,8 +6986,8 @@ const QuranTutor = {
         </div>` : ''}
       <div class="qtutor-bar">
         <div class="qtutor-modes">
-          <button class="qtutor-mode active" data-tmode="teach">Ask</button>
-          <button class="qtutor-mode" data-tmode="quiz">Quiz me</button>
+          <button class="qtutor-mode${this.mode === 'teach' ? ' active' : ''}" data-tmode="teach">Ask</button>
+          <button class="qtutor-mode${this.mode === 'quiz' ? ' active' : ''}" data-tmode="quiz">Quiz me</button>
         </div>
         <div class="qtutor-scope">
           <span class="qtutor-scope-label">Covering</span>
@@ -6967,7 +7000,7 @@ const QuranTutor = {
       <div class="lang-chat qtutor-chat"></div>
       <div class="chat-composer">
         <textarea class="cp-answer qtutor-input" rows="1"
-                  placeholder="Ask about anything in this lesson…"></textarea>
+                  placeholder="${this.mode === 'quiz' ? 'Your answer…' : 'Ask about anything in this lesson…'}"></textarea>
         <button class="qtutor-send" type="button" title="Send" aria-label="Send">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
