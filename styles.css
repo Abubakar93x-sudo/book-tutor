@@ -6414,3 +6414,66 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   font-family: var(--font-body); font-size: 0.7rem; font-style: normal;
   color: var(--text-muted); text-align: right;
 }
+
+/* ── THE THREE-STEP REVEAL ────────────────────────────────────────────────
+   English, then what to look for, then the Arabic. The learner asked for this
+   order outright in his own session and it is the order the material wants:
+   a shape you cannot attach a meaning to is a squiggle to memorise. */
+.reveal-step {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin: 0 0 0.85rem;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.reveal-head {
+  display: flex; align-items: center; gap: 0.75rem; width: 100%;
+  padding: 0.85rem 1rem; background: none; border: none; cursor: pointer;
+  font-family: var(--font-body); text-align: left;
+}
+.reveal-head:hover { background: var(--bg-hover); }
+.reveal-num {
+  flex-shrink: 0; width: 1.55rem; height: 1.55rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 0.78rem; font-weight: 600;
+}
+.reveal-open > .reveal-head .reveal-num { background: var(--purple); color: #fff; }
+.reveal-name {
+  flex: 1; font-size: 0.95rem; font-weight: 600; color: var(--text-primary);
+}
+.reveal-mark {
+  flex-shrink: 0; width: 0.55rem; height: 0.55rem; border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted); transform: rotate(45deg);
+  transition: transform 0.18s var(--ease); margin-right: 0.2rem;
+}
+.reveal-open > .reveal-head .reveal-mark { transform: rotate(-135deg); }
+
+/* Closed steps are hidden outright rather than collapsed to zero height —
+   a max-height transition on content of unknown length either clips it or
+   animates to a guess. */
+.reveal-body { display: none; padding: 0 1rem 1.1rem; }
+.reveal-open > .reveal-body { display: block; }
+.reveal-body > .lesson-sec:last-child,
+.reveal-body > .lesson-rule:last-child { margin-bottom: 0; }
+
+/* ── COVER THE ANSWERS ────────────────────────────────────────────────────
+   Active recall with no marking. Every column but the first is masked; you
+   fill it in your head, then reveal and compare. No score is kept because
+   across 38 turns of the original session he was never tested once. */
+.table-reveal-bar { display: flex; justify-content: flex-end; margin: 0 0 0.5rem; }
+.table-reveal-btn {
+  background: none; border: 1px solid var(--border-light); border-radius: 999px;
+  padding: 0.25rem 0.75rem; font-family: var(--font-body); font-size: 0.72rem;
+  color: var(--text-secondary); cursor: pointer;
+}
+.table-reveal-btn:hover { border-color: var(--purple); color: var(--purple); }
+.lesson-table.answers-hidden td:not(.lt-key) {
+  color: transparent;
+  background: repeating-linear-gradient(
+    -45deg, var(--bg-elevated), var(--bg-elevated) 6px,
+    var(--bg-hover) 6px, var(--bg-hover) 12px);
+  border-radius: 3px;
+  user-select: none;
+}
+@media (prefers-reduced-motion: reduce) { .reveal-mark { transition: none; } }

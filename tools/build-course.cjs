@@ -1,10 +1,10 @@
 // ============================================================================
 // BookTutor — the course builder (tools/build-course.cjs)
 //
-// Writes quran-course-data.js: all forty Quranic Arabic lessons, in full, as
-// static data. NOT shipped to the browser and never loaded by the app — this
-// runs on a developer's machine, costs API credit, and its output is what the
-// app reads.
+// Writes quran-course-data.js: all twenty-eight Quranic Arabic lessons, in
+// full, as static data. NOT shipped to the browser and never loaded by the app
+// — it runs on a developer's machine, costs API credit, and its output is what
+// the app reads.
 //
 // Why pre-generate at all: a lesson written at runtime is a lesson the learner
 // waits for, every time, and a lesson that can fail to appear. Generated once
@@ -31,7 +31,8 @@
 //      shipped. A lesson with three verified examples beats one with five of
 //      which two are false.
 //
-// Usage:  OAI=sk-... node tools/build-course.cjs [--only 7] [--model gpt-5.2]
+// Usage:  OAI=sk-... node tools/build-course.cjs [--only 7,9] [--fresh]
+//         Progress is checkpointed per lesson, so a re-run resumes.
 // ============================================================================
 
 const fs = require('fs');
@@ -80,49 +81,51 @@ const bare = (s) => String(s)
 // them are found here, in the real text, and handed to the model — so the
 // examples it writes are drawn from verses that demonstrably exist.
 const PROBES = {
-  'q-word-kinds':        ['قَالَ', 'إِنَّ', 'فِى'],
-  'q-connectors':        ['ثُمَّ', 'بَلْ', 'وَلَٰكِن'],
-  'q-prepositions':      ['فِى', 'عَلَىٰ', 'إِلَى', 'مِنْ', 'بِ', 'عَن'],
-  'q-definiteness':      ['ٱلْكِتَٰب', 'ٱلنَّاس', 'ٱلصَّلَوٰة'],
-  'q-pronouns-standalone': ['هُوَ', 'هُم', 'نَحْنُ', 'أَنتُم'],
-  'q-find-root':         ['ٱلْمُسْلِم', 'يَعْلَمُون', 'كِتَٰب'],
-  'q-pronouns-nouns':    ['رَبِّهِم', 'قُلُوبِهِم', 'رَبَّنَا', 'أَنفُسَكُم'],
-  'q-pronouns-preps':    ['لَهُم', 'بِهِۦ', 'فِيهَا', 'عَلَيْهِم', 'إِلَيْهِ', 'مِنْهُ'],
-  'q-negation':          ['لَا', 'مَا', 'لَمْ', 'لَن'],
-  'q-questions-emphasis': ['هَلْ', 'أَلَمْ', 'قَدْ', 'إِنَّ'],
+  // What a word is
+  'word-types':            ['قَالَ', 'ٱلْكِتَٰب', 'فِى', 'إِنَّ'],
+  'lemma-vs-form':         ['قَالُوا', 'يَقُولُونَ', 'قُلْ', 'قِيلَ'],
+  'root-lemma-wordform':   ['ٱلْكِتَٰب', 'كَتَبَ', 'كُتِبَ', 'كِتَٰبًا'],
 
-  'q-past-verbs':        ['خَلَقَ', 'قَالُوا', 'كَانُوا', 'جَعَلَ'],
-  'q-present-verbs':     ['يَعْلَمُ', 'تَعْلَمُون', 'نَعْبُدُ', 'يُؤْمِنُون'],
-  'q-pronouns-verbs':    ['هَدَىٰنَا', 'خَلَقَكُم', 'أَرْسَلْنَٰهُ', 'جَعَلَهُم'],
-  'q-idafa':             ['رَبِّ ٱلْعَٰلَمِين', 'يَوْمِ ٱلدِّين', 'كِتَٰبَ ٱللَّهِ', 'عِبَادُ'],
-  'q-noun-adjective':    ['ٱلصِّرَٰطَ ٱلْمُسْتَقِيم', 'عَذَابٌ أَلِيم', 'غَفُورٌ رَّحِيم'],
-  'q-sentence-types':    ['ٱللَّهُ', 'غَفُورٌ', 'خَلَقَ ٱللَّهُ'],
-  'q-mubtada-khabar':    ['ٱللَّهُ نُور', 'إِنَّ ٱللَّهَ', 'وَٱللَّهُ'],
-  'q-inna-sisters':      ['إِنَّ ٱللَّهَ', 'أَنَّ', 'لَٰكِنَّ', 'لَعَلَّ'],
-  'q-relative-clauses':  ['ٱلَّذِينَ', 'ٱلَّذِى', 'ٱلَّتِى'],
-  'q-demonstratives':    ['ذَٰلِكَ', 'هَٰذَا', 'أُو۟لَٰٓئِكَ', 'تِلْكَ'],
-  'q-imperatives':       ['قُلْ', 'ٱعْبُدُوا', 'لَا تَقْرَبُوا', 'ٱهْدِنَا'],
-  'q-verb-chart':        ['يَفْعَلُون', 'فَعَلُوا', 'تَعْمَلُون'],
+  // How to go about it
+  'the-80-20-plan':        ['ٱلَّذِينَ', 'مِنْ', 'ٱللَّهِ', 'فِى'],
 
-  'q-form-1':            ['عِلْم', 'كِتَٰب', 'عَمِلَ'],
-  'q-form-2':            ['عَلَّمَ', 'نَزَّلَ', 'كَذَّبُوا', 'يُسَبِّحُ'],
-  'q-form-3':            ['جَٰهَدُوا', 'قَٰتِلُوا', 'نَادَىٰ'],
-  'q-form-4':            ['أَنزَلَ', 'أَسْلَمَ', 'أَخْرَجَ', 'يُؤْمِنُون'],
-  'q-forms-5-6':         ['تَذَكَّرُون', 'تَوَكَّلْ', 'تَعَاوَنُوا', 'يَتَسَآءَلُون'],
-  'q-forms-7-8':         ['ٱخْتَلَفَ', 'ٱتَّقُوا', 'ٱنشَقَّ', 'يَجْتَنِبُون'],
-  'q-form-10':           ['ٱسْتَغْفِرْ', 'ٱسْتَكْبَرُوا', 'نَسْتَعِين', 'ٱسْتَجَابَ'],
-  'q-participles':       ['ٱلْمُؤْمِنُون', 'مُسْلِم', 'ٱلظَّٰلِمِين', 'مَّكْتُوب'],
-  'q-noun-patterns':     ['ٱلْمَسْجِد', 'مَشْرِق', 'ٱلْمِيزَان', 'عَلِيم', 'غَفَّار'],
-  'q-broken-plurals':    ['كُتُب', 'رُسُل', 'قُلُوب', 'عِبَاد', 'أَنۢبِيَآء'],
+  // The roots
+  // كَاتِب and مَكْتُوب are real Quranic words but occur only inside verses
+  // longer than the teaching window, so they cannot serve as grounding.
+  'why-roots':             ['ٱلْكِتَٰب', 'كَتَبْنَا', 'كُتِبَ', 'يَكْتُبُون'],
+  'roots-in-chunks':       ['ٱللَّهُ', 'رَبِّ', 'قَالَ', 'ءَامَنُوا'],
+  'bare-roots':            ['كَتَبَ', 'كُتِبَ', 'ٱلْكِتَٰب'],
 
-  'q-case-endings':      ['ٱللَّهُ', 'ٱللَّهَ', 'ٱللَّهِ'],
-  'q-sound-plurals-dual': ['ٱلْمُسْلِمُون', 'ٱلْمُؤْمِنِين', 'ٱلصَّٰلِحَٰت'],
-  'q-objects':           ['ءَاتَيْنَا', 'عَلَّمَ ءَادَمَ', 'خَلَقَ ٱلسَّمَٰوَٰت'],
-  'q-attachment':        ['وَلَهُمْ عَذَاب', 'لَهُم', 'عَلَيْهِمْ'],
-  'q-conditionals':      ['إِذَا', 'وَإِن', 'لَوْ', 'لَوْلَا'],
-  'q-exceptions':        ['إِلَّا', 'إِنَّمَا', 'غَيْر'],
-  'q-purpose':           ['لَعَلَّكُم', 'لِيَعْلَمَ', 'حَتَّىٰ', 'كَىْ'],
-  'q-method':            ['إِنَّ ٱلَّذِينَ', 'يَٰٓأَيُّهَا ٱلَّذِينَ']
+  // The patterns
+  'what-is-a-pattern':     ['عَلَّمَ', 'أَنزَلَ', 'ٱسْتَغْفِرْ', 'عَلِمَ'],
+  'forms-in-english':      ['عَلِمَ', 'عَلَّمَ', 'جَٰهَدُوا', 'أَنزَلَ'],
+  'form-markers-english':  ['عَلَّمَ', 'تَذَكَّرُون', 'ٱنشَقَّ', 'ٱسْتَكْبَرُوا'],
+  'form-markers-arabic':   ['أَنزَلَ', 'تَسَآءَلُون', 'ٱخْتَلَفَ', 'ٱسْتَغْفِرْ', 'نَزَّلَ'],
+  'forms-master-table':    ['عَلَّمَ', 'أَنزَلَ', 'ٱسْتَغْفِرْ', 'ٱخْتَلَفَ'],
+  'one-root-ten-forms':    ['كَتَبَ', 'ٱلْكِتَٰب', 'كُتِبَ', 'يَكْتُبُون'],
+  'blank-table-practice':  ['نَزَّلَ', 'أَنزَلَ', 'تَنَزَّلُ', 'نَزَلَ'],
+  'nazala-case-study':     ['نَزَّلَ', 'أَنزَلْنَا', 'تَنَزَّلُ', 'أَنزَلَ'],
+  'why-meanings-drift':    ['جَٰهَدُوا', 'يَتَسَآءَلُون', 'قَٰتَلُوا', 'تَسَآءَلُون'],
+  'hollow-verbs':          ['قَالَ', 'قُلْ', 'كَانَ', 'قِيلَ', 'يَقُولُ'],
+  'form-2-teach-or-intensify': ['عَلَّمَ', 'كَذَّبُوا', 'يُسَبِّحُ', 'نَزَّلَ'],
+
+  // Who does what to whom
+  'transitive-intransitive': ['خَلَقَ', 'جَآءَ', 'دَخَلُوا', 'تَقْرَأُ'],
+  'two-objects':           ['عَلَّمَ ءَادَمَ', 'ءَاتَيْنَا', 'ءَاتَىٰ', 'عَلَّمَكُم'],
+
+  // Nouns from roots
+  'noun-patterns':         ['ٱلْمُؤْمِنُون', 'مُّبِين', 'عَلِيم', 'غَفَّار', 'ٱلْمَسْجِد'],
+
+  // How a sentence works
+  'the-40-particles':      ['فِى', 'مِنْ', 'إِنَّ', 'لَمْ', 'إِلَّا', 'ٱلَّذِينَ'],
+  'nominal-and-verbal':    ['ٱللَّهُ غَفُور', 'خَلَقَ ٱللَّهُ', 'وَٱللَّهُ', 'إِنَّ ٱللَّهَ'],
+  'just-enough-irab':      ['ٱللَّهُ', 'ٱللَّهَ', 'ٱللَّهِ', 'إِنَّ ٱللَّهَ'],
+
+  // Reading
+  'the-parsing-routine':   ['ٱلْحَمْدُ لِلَّهِ', 'إِنَّ ٱلَّذِينَ', 'يَٰٓأَيُّهَا'],
+  'reading-path':          ['قُلْ هُوَ ٱللَّهُ', 'ٱلْحَمْدُ لِلَّهِ', 'تَبَٰرَكَ'],
+  'why-this-form-here':    ['نَزَّلَ', 'أَنزَلَ', 'كُتِبَ', 'يُسَبِّحُ'],
+  'reading-unaided':       ['إِنَّ ٱلَّذِينَ', 'وَٱلَّذِينَ', 'يَٰٓأَيُّهَا ٱلَّذِينَ']
 };
 
 const REFS = Object.keys(QURAN_TEXT);
@@ -352,22 +355,64 @@ async function buildLesson(unit, i, total) {
 }
 
 // ── RUN ─────────────────────────────────────────────────────────────────────
+// ── CHECKPOINTING ───────────────────────────────────────────────────────────
+// A full run takes about twenty-two minutes and used to keep everything in
+// memory until the end. A container restart nine lessons in threw away all
+// nine — seven minutes and real API credit for nothing. So each lesson is
+// written down the moment it is verified, and a re-run picks up what is
+// already there. A crash now costs one lesson.
+//
+// The save lags a few lessons behind the log. execFileSync blocks the event
+// loop, so a worker's continuation — the line that writes the checkpoint — sits
+// in the microtask queue behind the NEXT worker's synchronous API call. Losing
+// the last three or four is still worth having; making it exact would mean
+// --jobs 1, and the pool is already only cosmetic for the same reason.
+//
+// Deleted once the course is written, so it never goes stale behind a syllabus
+// change. --fresh ignores it outright.
+const PROGRESS = path.join(__dirname, '.course-progress.json');
+
+function readProgress() {
+  if (argv.includes('--fresh') || !fs.existsSync(PROGRESS)) return {};
+  try { return JSON.parse(fs.readFileSync(PROGRESS, 'utf8')); }
+  catch { return {}; }
+}
+
+function saveProgress(done) {
+  try { fs.writeFileSync(PROGRESS, JSON.stringify(done)); }
+  catch (err) { console.warn(`  (could not checkpoint: ${err.message})`); }
+}
+
 (async () => {
   const want = ONLY ? new Set(ONLY.split(',').map(s => s.trim())) : null;
   const targets = want
     ? UNITS.map((u, i) => [u, i]).filter(([, i]) => want.has(String(i + 1)))
     : UNITS.map((u, i) => [u, i]);
 
-  console.log(`Building ${targets.length} lesson(s) on ${MODEL}, ${CONCURRENCY} at a time.\n`);
+  // Anything already verified in an earlier run of THIS syllabus. Ids are the
+  // key, so a lesson that has been renamed or removed simply is not found.
+  const done = ONLY ? {} : readProgress();
+  const resuming = targets.filter(([u]) => done[u.id]).length;
+
+  console.log(`Building ${targets.length} lesson(s) on ${MODEL}, ${CONCURRENCY} at a time.`);
+  if (resuming) console.log(`Resuming: ${resuming} already verified, ${targets.length - resuming} to go.`);
+  console.log('');
   const t0 = Date.now();
   const lessons = new Array(UNITS.length);
   const failures = [];
+
+  // Seed from the checkpoint before any work starts.
+  UNITS.forEach((u, i) => { if (done[u.id]) lessons[i] = done[u.id]; });
 
   let cursor = 0;
   const worker = async () => {
     while (cursor < targets.length) {
       const [unit, i] = targets[cursor++];
-      try { lessons[i] = await buildLesson(unit, i, UNITS.length); }
+      if (lessons[i]) continue;                       // already have it
+      try {
+        lessons[i] = await buildLesson(unit, i, UNITS.length);
+        if (!ONLY) { done[unit.id] = lessons[i]; saveProgress(done); }
+      }
       catch (err) { failures.push(`${i + 1} ${unit.id}: ${err.message}`); }
     }
   };
@@ -425,6 +470,10 @@ const QURAN_COURSE = `;
     'function quranLesson(unitId) {\n' +
     '  return QURAN_COURSE.find(l => l.id === unitId) || null;\n' +
     '}\n');
+
+  // The course is on disk; the checkpoint has done its job and would only go
+  // stale behind the next syllabus change.
+  try { fs.unlinkSync(PROGRESS); } catch { /* never existed */ }
 
   const kb = (fs.statSync(OUT).size / 1024).toFixed(0);
   console.log(`\nWrote ${OUT}`);
