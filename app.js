@@ -3051,10 +3051,16 @@ function migrateQuranProgress(lang, syllabus) {
     .filter(id => valid.has(id));
 
   const mastered = [...new Set(moved)];
-  // The lesson after the furthest one they actually finished. Their old
-  // unitIndex means nothing now — index 5 of 40 is a different subject from
-  // index 5 of 28 — so it is recomputed from what they mastered, never carried.
-  const lastDone = syllabus.reduce((n, u, i) => mastered.includes(u.id) ? i : n, -1);
+  // THE FIRST lesson they have not done — not the one after the furthest.
+  //
+  // Those differ badly here. The old course and this one disagree about order,
+  // so a mapped lesson can land late: someone credited with the old particles
+  // lesson gets lesson 22 of the new course, and resuming "after the furthest"
+  // would drop them at 23 — past the entire patterns unit, which is the heart
+  // of this course and which they have never seen. Resuming at the first gap
+  // credits what they did without skipping what they did not.
+  const firstGap = syllabus.findIndex(u => !mastered.includes(u.id));
+  const lastDone = firstGap === -1 ? syllabus.length - 1 : firstGap - 1;
   const dropped = had.length - mastered.length;
   if (dropped > 0) {
     // Said out loud rather than swallowed. Someone who had finished a dozen
@@ -3066,7 +3072,7 @@ function migrateQuranProgress(lang, syllabus) {
   }
   return {
     unitsMastered: mastered,
-    unitIndex: Math.min(lastDone + 1, syllabus.length - 1),
+    unitIndex: Math.max(0, Math.min(lastDone + 1, syllabus.length - 1)),
     unitsMigratedV8: true
   };
 }
