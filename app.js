@@ -3603,6 +3603,14 @@ const VocabBuilder = {
     // matter to a learner; which batch they arrived in does not.
     const byLang = [];
     for (const lang of this.langs) {
+      // The 300 roots are not "saved words" that accumulated — they are a fixed
+      // list that ships with the app, so they come from the file rather than
+      // from Firestore. That makes this group complete the first time it is
+      // opened, and identical to what the list looked like before it moved.
+      if (isQuranVocab(lang)) {
+        byLang.push({ lang, words: await this.loadQuranRoots(), isRoots: true });
+        continue;
+      }
       let sets = [];
       try {
         sets = await dbGetAllVocabSets(lang.id);
@@ -3651,25 +3659,36 @@ const VocabBuilder = {
       || new Set(byLang.filter(e => e.lang.id === this.lang?.id).map(e => e.lang.id));
     panel.innerHTML = `
       <div class="vocab-saved-list">
-        ${byLang.map(({ lang, words }) => `
+        ${byLang.map(({ lang, words, isRoots }) => `
           <details class="vocab-saved-set" data-lang="${escapeAttr(lang.id)}"${wasOpen.has(lang.id) ? ' open' : ''}>
             <summary class="vocab-saved-head">
               <span class="vocab-saved-title">${escapeAttr(lang.name)}</span>
-              <span class="vocab-saved-meta">${words.length} word${words.length === 1 ? '' : 's'}</span>
-              <span class="vocab-saved-words">${words.slice(0, 12).map(w => escapeAttr(w.word)).join(' · ')}${words.length > 12 ? ' …' : ''}</span>
+              <span class="vocab-saved-meta">${words.length} ${isRoots ? 'root' : 'word'}${words.length === 1 ? '' : 's'}</span>
+              <span class="vocab-saved-words">${words.slice(0, 12).map(w => escapeAttr(isRoots ? w.root : w.word)).join(' · ')}${words.length > 12 ? ' …' : ''}</span>
             </summary>
-            <div class="vocab-list vocab-saved-body">
-              ${words.map((w, i) => vocabCardHtml(w, i, lang, { swappable: true })).join('')}
-            </div>
-            <div class="vocab-actions">
-              <button class="btn btn-ghost btn-sm vocab-review-set" data-lang="${escapeAttr(lang.id)}">
-                Quiz me on ${escapeAttr(lang.name)} →
-              </button>
-            </div>
+            ${isRoots
+              // Filled in after the paint by renderRootList, so the table here
+              // is the same table, built by the same code, rather than a copy
+              // of it that can drift.
+              ? `<div class="vocab-saved-body root-list-host" data-roots-for="${escapeAttr(lang.id)}"></div>`
+              : `<div class="vocab-list vocab-saved-body">
+                   ${words.map((w, i) => vocabCardHtml(w, i, lang, { swappable: true })).join('')}
+                 </div>
+                 <div class="vocab-actions">
+                   <button class="btn btn-ghost btn-sm vocab-review-set" data-lang="${escapeAttr(lang.id)}">
+                     Quiz me on ${escapeAttr(lang.name)} →
+                   </button>
+                 </div>`}
           </details>
         `).join('')}
       </div>
     `;
+
+    for (const { lang, words, isRoots } of byLang) {
+      if (!isRoots) continue;
+      const host = panel.querySelector(`[data-roots-for="${CSS.escape(lang.id)}"]`);
+      if (host) this.renderRootList(host, words, lang);
+    }
 
     this._openSavedLangs = new Set(wasOpen);
     panel.querySelectorAll('.vocab-saved-set').forEach(det => {
@@ -3727,18 +3746,24 @@ const VocabBuilder = {
     if (!panel) return;
     if (this._seeding) return;               // the progress bar owns the panel
 
-    // The root list is a reference, not a batch: it opens on the whole 305 and
-    // has no "next six" to press. If it isn't loaded yet, load it now rather
-    // than putting a button in front of a list that was never optional.
+    // The root list lives in Saved vocab now — it is a reference you come back
+    // to, not a batch you are handed. This tab is where the next Qur'anic
+    // section will go; until there is one, it says so and points at the roots
+    // rather than showing a second copy of them.
     if (isQuranVocab(this.lang)) {
-      if (!this.words.length) {
-        panel.innerHTML = `<div class="cp-loading" style="justify-content:center; padding:3rem 0;">
-          <span class="cp-spinner"></span> Opening the ${QURAN_SEQUENCE.length} roots…</div>`;
-        if (!this._loadingRoots) { this._loadingRoots = true; this.loadWords()
-          .finally(() => { this._loadingRoots = false; }); }
-        return;
-      }
-      return this.renderRootList(panel);
+      panel.innerHTML = `
+        <div class="vocab-empty">
+          <h3 class="vocab-empty-title">The ${QURAN_SEQUENCE.length} roots are in Saved vocab</h3>
+          <p class="vocab-empty-sub">
+            That is where the list lives — five sets of sixty, each root with the
+            words built from it and a verse to meet them in.<br>
+            The next Qur'anic section will appear here.
+          </p>
+          <button class="btn btn-primary" id="btn-vocab-to-saved">Open the roots →</button>
+        </div>`;
+      document.getElementById('btn-vocab-to-saved')
+        .addEventListener('click', () => this.switchTab('saved'));
+      return;
     }
 
     if (!this.words.length) {
@@ -3940,8 +3965,10 @@ const VocabBuilder = {
   // All 305 entries in frequency order, each with the words the Qur'an builds
   // from it. Rendered in one pass — 305 cards is a lot of nodes, so the HTML is
   // built as a single string and assigned once rather than appended per card.
-  renderRootList(panel) {
-    const words = this.words;
+  // The root table. Rendered into whatever container it is handed, and every
+  // lookup scoped to that container — both panels live in the DOM at once, so
+  // getElementById would hand the Saved tab's button to the Learn tab's code.
+  renderRootList(panel, words = this.words, lang = this.lang) {
     const filter = (this.rootFilter || '').trim().toLowerCase();
     const shown = filter
       ? words.filter(w =>
@@ -3958,10 +3985,10 @@ const VocabBuilder = {
     // The deck offer sits above the list, not instead of it. Reading the roots
     // and putting them in the review deck are two different things, and being
     // shown a button where the words should be helps with neither.
-    const deckOffer = this.lang.rootDeckSeeded ? '' : `
-      <div class="root-deck-offer" id="root-deck-offer">
+    const deckOffer = lang.rootDeckSeeded ? '' : `
+      <div class="root-deck-offer" data-root-deck-offer>
         <span class="root-deck-offer-text">These ${words.length} roots can go in your flashcard deck too — a real Qur'anic word on the front, the root and its family on the back.</span>
-        <button class="btn btn-primary btn-sm" id="btn-vocab-seed-roots">Add to flashcards</button>
+        <button class="btn btn-primary btn-sm" data-seed-roots>Add to flashcards</button>
       </div>`;
 
     // Sixty at a time, with a heading over each set, because that is how the
@@ -3970,8 +3997,7 @@ const VocabBuilder = {
     // all five, so the headings come off while a filter is on — a heading over
     // no rows is worse than no heading.
     const sets = (typeof QURAN_ROOT_SETS !== 'undefined' && QURAN_ROOT_SETS) || [];
-    const rows = (list) => list.map(w =>
-      rootEntryHtml(w, words.indexOf(w))).join('');
+    const rows = (list) => list.map(w => rootEntryHtml(w, words.indexOf(w))).join('');
 
     const body = filter
       ? (shown.length
@@ -3998,26 +4024,26 @@ const VocabBuilder = {
           <span class="root-head-note">in five sets of sixty · ${covered}% of the Qur'an between them</span>
         </div>
         ${deckOffer}
-        <input type="search" id="vocab-root-search" class="form-input root-search"
+        <input type="search" data-root-search class="form-input root-search"
                placeholder="Search a root, a meaning or a word built from it…"
                value="${escapeAttr(this.rootFilter || '')}">
       </div>
       ${body}
       <div class="vocab-actions">
-        <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
+        <button class="btn btn-primary" data-root-quiz>Quiz me on these →</button>
       </div>
     `;
 
-    document.getElementById('btn-vocab-seed-roots')
+    panel.querySelector('[data-seed-roots]')
       ?.addEventListener('click', () => this.seedRootDeck());
 
-    const search = document.getElementById('vocab-root-search');
+    const search = panel.querySelector('[data-root-search]');
     search.addEventListener('input', () => {
       this.rootFilter = search.value;
       clearTimeout(this._rootFilterTimer);
       this._rootFilterTimer = setTimeout(() => {
-        this.renderRootList(panel);
-        const again = document.getElementById('vocab-root-search');
+        this.renderRootList(panel, words, lang);
+        const again = panel.querySelector('[data-root-search]');
         again.focus();
         again.setSelectionRange(again.value.length, again.value.length);
       }, 180);
@@ -4039,12 +4065,13 @@ const VocabBuilder = {
         e.stopPropagation();
         const w = words[parseInt(btn.dataset.idx)];
         if (!NarrationEngine.speakLang(w.word || w.lemmas?.[0]?.word,
-              this.lang.ttsLangCode || this.lang.code, 0.85)) {
-          showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+              lang.ttsLangCode || lang.code, 0.85)) {
+          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3000);
         }
       });
     });
-    document.getElementById('btn-vocab-quiz-now').addEventListener('click', () => this.switchTab('quiz'));
+    panel.querySelector('[data-root-quiz]')
+      .addEventListener('click', () => { this.lang = lang; this.words = words; this.switchTab('quiz'); });
   },
 
   // One corpus entry as a vocabulary word.
@@ -4112,18 +4139,17 @@ const VocabBuilder = {
       // entries paint from the cache at once, and their lemmas fill in behind
       // the paint. The model only ever supplies lemmas.
       if (isQuranVocab(this.lang)) {
-        const words = await this.loadQuranRoots();
-        this.words = words;
+        this.words = await this.loadQuranRoots();
         this.setNumber = 0;
         this.quiz = null;
-        this.renderLearn();
-        await dbPutVocabSet(this.lang.id, 0, words, {
-          langName: this.lang.name, script: this.lang.script
-        }).catch(err => console.warn('Root set save failed:', err.message));
-        // Sets written back when this track handed out six roots at a time
-        // would otherwise show the same roots again in Saved vocab.
-        dbDropVocabSetsAbove(this.lang.id, 0)
-          .then(n => { if (n) console.log(`Dropped ${n} stale root set(s).`); })
+        this.renderTab();
+        // Nothing is written back. The roots are a fixed list in the page, and
+        // Saved vocab reads them from there — copying 300 of them into
+        // Firestore only to read them out again bought nothing. Anything an
+        // earlier version did write is cleared, so the old cards cannot show up
+        // underneath the table.
+        dbDropVocabSetsAbove(this.lang.id, -1)
+          .then(n => { if (n) console.log(`Cleared ${n} stale root set(s).`); })
           .catch(err => console.warn('Stale root set cleanup failed:', err.message));
         return;
       }
@@ -4257,6 +4283,13 @@ const VocabBuilder = {
   renderQuiz() {
     const panel = document.getElementById('vocab-panel-quiz');
     if (!panel) return;
+
+    // The Qur'anic roots are always available — they are in the page, not
+    // something that has to have been studied first — so quizzing them never
+    // needs the learner to go and fetch them.
+    if (!this.words.length && isQuranVocab(this.lang)) {
+      this.words = QURAN_SEQUENCE.map(e => this.quranWord(e));
+    }
 
     const pool = this.words.length ? this.words : null;
     if (!pool) {
