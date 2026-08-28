@@ -46,7 +46,13 @@ const VOCAB        = load('quran-vocab-data.js', 'QURAN_VOCAB');
 
 const MAP      = JSON.parse(fs.readFileSync(path.join(__dirname, 'roots300-map.json'), 'utf8'));
 const NEW_FAM  = JSON.parse(fs.readFileSync(path.join(__dirname, 'roots300-new-families.json'), 'utf8'));
-delete MAP._comment; delete NEW_FAM._comment;
+// The top-up layer, written by build-root-families.cjs: extra wordforms for the
+// roots whose families came back thin. Optional — the build works without it,
+// it just ships fewer words per root.
+const EXTRA_PATH = path.join(__dirname, 'roots300-extra-families.json');
+const EXTRA = fs.existsSync(EXTRA_PATH)
+  ? JSON.parse(fs.readFileSync(EXTRA_PATH, 'utf8')) : {};
+delete MAP._comment; delete NEW_FAM._comment; delete EXTRA._comment;
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'roots300-source.txt'), 'utf8')
   .trim().split('\n').map(line => {
@@ -174,8 +180,12 @@ const entries = rows.filter(r => r.root).map((row, i) => {
   // its only word.
   const proposed = card?.family?.length ? card.family
     : (fresh?.family?.map(([word, gloss]) => ({ word, gloss })) || []);
-  let family = proposed
+  // The card's family first, then the top-up, deduplicated on the bare form so
+  // the same word written two ways cannot appear twice.
+  const seenForm = new Set();
+  let family = [...proposed, ...(EXTRA[row.root] || [])]
     .filter(f => f.word && occurs(f.word))
+    .filter(f => { const k = bare(f.word); if (seenForm.has(k)) return false; seenForm.add(k); return true; })
     .slice(0, 6);
 
   // The card front stays a real vowelled wordform — never the bare letters,

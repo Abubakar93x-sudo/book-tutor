@@ -54,10 +54,6 @@ const QURAN_ROOTS = [
     "gloss": "a book / a decree"
    },
    {
-    "word": "كُتِبَ",
-    "gloss": "it was prescribed"
-   },
-   {
     "word": "كَتَبْنَا",
     "gloss": "We wrote/prescribed"
    },
@@ -68,6 +64,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَكْتُوبًا",
     "gloss": "written / prescribed"
+   },
+   {
+    "word": "ٱلْكِتَٰبِ",
+    "gloss": "the Book"
    }
   ],
   "verse": {
@@ -146,6 +146,14 @@ const QURAN_ROOTS = [
    {
     "word": "عَلِيمٌ",
     "gloss": "All-Knowing"
+   },
+   {
+    "word": "يَعْلَمُونَ",
+    "gloss": "they know"
+   },
+   {
+    "word": "أَعْلَمُ",
+    "gloss": "I know best"
    }
   ],
   "verse": {
@@ -226,8 +234,8 @@ const QURAN_ROOTS = [
     "gloss": "you made/placed"
    },
    {
-    "word": "جُعِلَ",
-    "gloss": "it was made/placed"
+    "word": "جَعَلْنَا",
+    "gloss": "We made"
    }
   ],
   "verse": {
@@ -259,6 +267,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْخَلْقَ",
     "gloss": "the creation"
+   },
+   {
+    "word": "خَلَقَ",
+    "gloss": "He created"
    }
   ],
   "verse": {
@@ -341,6 +353,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُهْتَدُونَ",
     "gloss": "rightly-guided"
+   },
+   {
+    "word": "هُدًى",
+    "gloss": "guidance"
    }
   ],
   "verse": {
@@ -380,6 +396,10 @@ const QURAN_ROOTS = [
    {
     "word": "عِبَادَةً",
     "gloss": "worship"
+   },
+   {
+    "word": "عِبَادِى",
+    "gloss": "My servants"
    }
   ],
   "verse": {
@@ -458,6 +478,14 @@ const QURAN_ROOTS = [
    {
     "word": "غَفَّارٌ",
     "gloss": "Oft-Forgiving"
+   },
+   {
+    "word": "غَفُورٌ",
+    "gloss": "All-Forgiving"
+   },
+   {
+    "word": "ٱسْتَغْفِرْ",
+    "gloss": "seek forgiveness"
    }
   ],
   "verse": {
@@ -497,6 +525,10 @@ const QURAN_ROOTS = [
    {
     "word": "أُمِرْتُ",
     "gloss": "I was commanded"
+   },
+   {
+    "word": "أَمْرُ",
+    "gloss": "command"
    }
   ],
   "verse": {
@@ -528,6 +560,18 @@ const QURAN_ROOTS = [
    {
     "word": "ٱرْزُقْنَا",
     "gloss": "provide for us"
+   },
+   {
+    "word": "رِزْقًا",
+    "gloss": "provision"
+   },
+   {
+    "word": "رِزْقُهُۥ",
+    "gloss": "His provision"
+   },
+   {
+    "word": "ٱلرَّٰزِقِينَ",
+    "gloss": "the providers"
    }
   ],
   "verse": {
@@ -553,10 +597,6 @@ const QURAN_ROOTS = [
     "gloss": "He sent down (repeatedly)"
    },
    {
-    "word": "نَزَلَ",
-    "gloss": "he/it came down"
-   },
-   {
     "word": "نَزَّلْنَا",
     "gloss": "We sent down"
    },
@@ -567,6 +607,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُنَزَّلٌ",
     "gloss": "sent down"
+   },
+   {
+    "word": "أَنزَلْنَا",
+    "gloss": "We sent down"
    }
   ],
   "verse": {
@@ -643,10 +687,6 @@ const QURAN_ROOTS = [
     "gloss": "they disbelieve"
    },
    {
-    "word": "كُفْرٌ",
-    "gloss": "disbelief"
-   },
-   {
     "word": "كَافِرٌ",
     "gloss": "disbeliever"
    },
@@ -692,6 +732,10 @@ const QURAN_ROOTS = [
    {
     "word": "جَهُولًا",
     "gloss": "greatly ignorant"
+   },
+   {
+    "word": "ٱلْجَٰهِلُونَ",
+    "gloss": "the ignorant"
    }
   ],
   "verse": {
@@ -807,10 +851,6 @@ const QURAN_ROOTS = [
     "gloss": "We helped"
    },
    {
-    "word": "نَصْرٌ",
-    "gloss": "help; victory"
-   },
-   {
     "word": "نَصْرَ ٱللَّهِ",
     "gloss": "Allah’s help"
    },
@@ -860,6 +900,10 @@ const QURAN_ROOTS = [
    {
     "word": "صَبْرًا",
     "gloss": "with patience"
+   },
+   {
+    "word": "ٱلصَّٰبِرِينَ",
+    "gloss": "the patient"
    }
   ],
   "verse": {
@@ -981,6 +1025,14 @@ const QURAN_ROOTS = [
    {
     "word": "عَدْلٌ",
     "gloss": "an equivalent"
+   },
+   {
+    "word": "يَعْدِلُ",
+    "gloss": "he is just"
+   },
+   {
+    "word": "ٱلْعَدْلِ",
+    "gloss": "the justice"
    }
   ],
   "verse": {
@@ -1010,12 +1062,16 @@ const QURAN_ROOTS = [
     "gloss": "truthfulness"
    },
    {
-    "word": "صَدَّقَ",
-    "gloss": "he confirmed"
-   },
-   {
     "word": "مُصَدِّقٌ",
     "gloss": "confirming"
+   },
+   {
+    "word": "ٱلصَّٰدِقِينَ",
+    "gloss": "the truthful"
+   },
+   {
+    "word": "صَدَقَٰتٍ",
+    "gloss": "charities"
    }
   ],
   "verse": {
@@ -1043,10 +1099,6 @@ const QURAN_ROOTS = [
    {
     "word": "يُكَذِّبُ",
     "gloss": "he denies"
-   },
-   {
-    "word": "كِذْبٌ",
-    "gloss": "a lie"
    },
    {
     "word": "كَذِبًا",
@@ -1090,6 +1142,18 @@ const QURAN_ROOTS = [
    {
     "word": "قِتَالٌ",
     "gloss": "fighting"
+   },
+   {
+    "word": "قُتِلُوا۟",
+    "gloss": "they were killed"
+   },
+   {
+    "word": "قَتَلْتُمْ",
+    "gloss": "you killed"
+   },
+   {
+    "word": "قَتْلًا",
+    "gloss": "killing"
    }
   ],
   "verse": {
@@ -1125,6 +1189,14 @@ const QURAN_ROOTS = [
    {
     "word": "مُحْسِنِينَ",
     "gloss": "doers of good"
+   },
+   {
+    "word": "حَسَنًا",
+    "gloss": "goodly"
+   },
+   {
+    "word": "أَحْسَنُ",
+    "gloss": "best"
    }
   ],
   "verse": {
@@ -1203,6 +1275,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَأْكُولٍ",
     "gloss": "eaten/consumed"
+   },
+   {
+    "word": "يَأْكُلُونَ",
+    "gloss": "they eat"
    }
   ],
   "verse": {
@@ -1242,6 +1318,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَشْرَبٍ",
     "gloss": "drinking-place"
+   },
+   {
+    "word": "يَشْرَبُونَ",
+    "gloss": "they drink"
    }
   ],
   "verse": {
@@ -1267,12 +1347,20 @@ const QURAN_ROOTS = [
     "gloss": "a god; deity"
    },
    {
-    "word": "إِلَٰهَ",
-    "gloss": "a god (acc.)"
-   },
-   {
     "word": "ءَالِهَةٌ",
     "gloss": "gods; deities"
+   },
+   {
+    "word": "ٱللَّهُ",
+    "gloss": "Allah"
+   },
+   {
+    "word": "ٱللَّهُمَّ",
+    "gloss": "O Allah"
+   },
+   {
+    "word": "ءَأِلَٰهٌ",
+    "gloss": "is there a god?"
    }
   ],
   "verse": {
@@ -1355,6 +1443,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُدْخَلَ صِدْقٍ",
     "gloss": "an entrance of truth"
+   },
+   {
+    "word": "ٱدْخُلُوا۟",
+    "gloss": "enter!"
    }
   ],
   "verse": {
@@ -1437,6 +1529,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلذِّكْرَ",
     "gloss": "the Reminder"
+   },
+   {
+    "word": "ذَكَرَ",
+    "gloss": "he mentioned"
    }
   ],
   "verse": {
@@ -1476,6 +1572,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَّنسِيًّا",
     "gloss": "a thing forgotten"
+   },
+   {
+    "word": "نَسِينَا",
+    "gloss": "we forgot"
    }
   ],
   "verse": {
@@ -1511,6 +1611,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَسْجِدِ",
     "gloss": "mosque / place of prostration"
+   },
+   {
+    "word": "يَسْجُدُونَ",
+    "gloss": "they prostrate"
    }
   ],
   "verse": {
@@ -1722,6 +1826,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلرَّجْعِ",
     "gloss": "the returning"
+   },
+   {
+    "word": "يَرْجِعُونَ",
+    "gloss": "they return"
    }
   ],
   "verse": {
@@ -1755,12 +1863,12 @@ const QURAN_ROOTS = [
     "gloss": "I followed"
    },
    {
-    "word": "ٱتَّبِعْ",
-    "gloss": "follow! (sg.)"
-   },
-   {
     "word": "تَابِعِينَ",
     "gloss": "followers"
+   },
+   {
+    "word": "ٱتَّبَعُوهُ",
+    "gloss": "they followed him"
    }
   ],
   "verse": {
@@ -1800,10 +1908,6 @@ const QURAN_ROOTS = [
    {
     "word": "يَأْتُونَ",
     "gloss": "they come"
-   },
-   {
-    "word": "أْتُوا۟",
-    "gloss": "bring! (pl.)"
    }
   ],
   "verse": {
@@ -1882,6 +1986,10 @@ const QURAN_ROOTS = [
    {
     "word": "جَآءَتْ",
     "gloss": "she came"
+   },
+   {
+    "word": "جِئْتَ",
+    "gloss": "you came"
    }
   ],
   "verse": {
@@ -1917,6 +2025,14 @@ const QURAN_ROOTS = [
    {
     "word": "ذَهَبًا",
     "gloss": "gold"
+   },
+   {
+    "word": "ذَهَبُوا۟",
+    "gloss": "they went"
+   },
+   {
+    "word": "يَذْهَبَنَّ",
+    "gloss": "he will surely go"
    }
   ],
   "verse": {
@@ -1956,6 +2072,10 @@ const QURAN_ROOTS = [
    {
     "word": "رُءْيَا",
     "gloss": "a dream, a vision"
+   },
+   {
+    "word": "يَرَىٰ",
+    "gloss": "he sees"
    }
   ],
   "verse": {
@@ -1987,6 +2107,18 @@ const QURAN_ROOTS = [
    {
     "word": "رَبَّنَا",
     "gloss": "our Lord"
+   },
+   {
+    "word": "رَبِّى",
+    "gloss": "my Lord"
+   },
+   {
+    "word": "رَبُّهُۥ",
+    "gloss": "his Lord"
+   },
+   {
+    "word": "رَبُّ ٱلْعَٰلَمِينَ",
+    "gloss": "Lord of the worlds"
    }
   ],
   "verse": {
@@ -2069,6 +2201,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْقَيِّمَةُ",
     "gloss": "the upright (religion)"
+   },
+   {
+    "word": "قِيَٰمًا",
+    "gloss": "a means of support"
    }
   ],
   "verse": {
@@ -2252,6 +2388,10 @@ const QURAN_ROOTS = [
    {
     "word": "يَنفَعُهُمْ",
     "gloss": "it benefits them"
+   },
+   {
+    "word": "يَنفَعْكُمْ",
+    "gloss": "benefit you"
    }
   ],
   "verse": {
@@ -2291,6 +2431,10 @@ const QURAN_ROOTS = [
    {
     "word": "ضُرٍّ",
     "gloss": "distress"
+   },
+   {
+    "word": "يَضُرُّهُمْ",
+    "gloss": "it harms them"
    }
   ],
   "verse": {
@@ -2330,6 +2474,10 @@ const QURAN_ROOTS = [
    {
     "word": "سَعْيًا",
     "gloss": "striving"
+   },
+   {
+    "word": "سَعْيُهُمْ",
+    "gloss": "their striving"
    }
   ],
   "verse": {
@@ -2365,6 +2513,14 @@ const QURAN_ROOTS = [
    {
     "word": "أَبَانَ",
     "gloss": "he made clear"
+   },
+   {
+    "word": "بَيْنَ",
+    "gloss": "between"
+   },
+   {
+    "word": "تِبْيَٰنًا",
+    "gloss": "a clarification"
    }
   ],
   "verse": {
@@ -2400,6 +2556,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَشَآءُ",
     "gloss": "he wills"
+   },
+   {
+    "word": "شَىْءٍ",
+    "gloss": "a thing"
+   },
+   {
+    "word": "شَيْـًٔا",
+    "gloss": "anything"
    }
   ],
   "verse": {
@@ -2439,6 +2603,10 @@ const QURAN_ROOTS = [
    {
     "word": "قُرْءَانًا",
     "gloss": "a recitation/Qur’an"
+   },
+   {
+    "word": "قُرْءَانُ",
+    "gloss": "the Qur’an"
    }
   ],
   "verse": {
@@ -2517,6 +2685,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱسْتَجِيبُوا۟",
     "gloss": "respond (pl.)"
+   },
+   {
+    "word": "ٱسْتَجَابَ",
+    "gloss": "he responded"
    }
   ],
   "verse": {
@@ -2548,6 +2720,14 @@ const QURAN_ROOTS = [
    {
     "word": "مَحْمُودًا",
     "gloss": "praised"
+   },
+   {
+    "word": "ٱلْحَمْدُ",
+    "gloss": "the praise"
+   },
+   {
+    "word": "حَمِيدًا",
+    "gloss": "praiseworthy"
    }
   ],
   "verse": {
@@ -2630,6 +2810,10 @@ const QURAN_ROOTS = [
    {
     "word": "فُطُورٍ",
     "gloss": "any flaw, any rift"
+   },
+   {
+    "word": "فَطَرَنِى",
+    "gloss": "created me"
    }
   ],
   "verse": {
@@ -2661,6 +2845,18 @@ const QURAN_ROOTS = [
    {
     "word": "نُعِيدُهُ",
     "gloss": "We repeat it (after beginning)"
+   },
+   {
+    "word": "بَدَأْنَا",
+    "gloss": "We began"
+   },
+   {
+    "word": "بَدَأَكُمْ",
+    "gloss": "He began you"
+   },
+   {
+    "word": "بَدْءٍ",
+    "gloss": "beginning"
    }
   ],
   "verse": {
@@ -2696,6 +2892,14 @@ const QURAN_ROOTS = [
    {
     "word": "مَعَادٍ",
     "gloss": "return; place of return"
+   },
+   {
+    "word": "تَعُودُوا۟",
+    "gloss": "you return"
+   },
+   {
+    "word": "عُدتُّمْ",
+    "gloss": "you returned"
    }
   ],
   "verse": {
@@ -2735,6 +2939,10 @@ const QURAN_ROOTS = [
    {
     "word": "بِـَٔايَٰتِ",
     "gloss": "with/by (the) signs"
+   },
+   {
+    "word": "ءَايَتِنَا",
+    "gloss": "Our sign"
    }
   ],
   "verse": {
@@ -2774,6 +2982,10 @@ const QURAN_ROOTS = [
    {
     "word": "رَفِيعُ",
     "gloss": "high/exalted"
+   },
+   {
+    "word": "نَرْفَعُ",
+    "gloss": "We raise"
    }
   ],
   "verse": {
@@ -2811,8 +3023,8 @@ const QURAN_ROOTS = [
     "gloss": "she places / gives birth"
    },
    {
-    "word": "وُضِعَ",
-    "gloss": "it was placed"
+    "word": "وَضَعْنَا",
+    "gloss": "We placed"
    }
   ],
   "verse": {
@@ -2844,6 +3056,10 @@ const QURAN_ROOTS = [
    {
     "word": "يَٰٓأَيُّهَا ٱلنَّاسُ",
     "gloss": "O mankind"
+   },
+   {
+    "word": "ٱلنَّاسِ",
+    "gloss": "the people"
    }
   ],
   "verse": {
@@ -2947,20 +3163,16 @@ const QURAN_ROOTS = [
     "gloss": "King (of)"
    },
    {
-    "word": "مُلْكُ",
-    "gloss": "dominion"
-   },
-   {
-    "word": "مَلَكٌ",
-    "gloss": "an angel"
-   },
-   {
     "word": "ٱلْمَلَٰٓئِكَةُ",
     "gloss": "the angels"
    },
    {
     "word": "مَلِيكٍ",
     "gloss": "Sovereign King"
+   },
+   {
+    "word": "مُلُوكًا",
+    "gloss": "kings"
    }
   ],
   "verse": {
@@ -2988,10 +3200,6 @@ const QURAN_ROOTS = [
    {
     "word": "حُكْمًا",
     "gloss": "judgment / authority"
-   },
-   {
-    "word": "حَكَمًا",
-    "gloss": "an arbiter"
    },
    {
     "word": "يَحْكُمُ",
@@ -3035,6 +3243,14 @@ const QURAN_ROOTS = [
    {
     "word": "تَقَبَّلْ",
     "gloss": "accept! (you)"
+   },
+   {
+    "word": "قَبْلَ",
+    "gloss": "before"
+   },
+   {
+    "word": "قَبْلَكَ",
+    "gloss": "before you"
    }
   ],
   "verse": {
@@ -3070,6 +3286,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَنفُسَهُمْ",
     "gloss": "themselves"
+   },
+   {
+    "word": "نَفْسٌۭ",
+    "gloss": "a soul"
    }
   ],
   "verse": {
@@ -3105,6 +3325,14 @@ const QURAN_ROOTS = [
    {
     "word": "نُقَلِّبُ",
     "gloss": "We turn/transform"
+   },
+   {
+    "word": "قُلُوبٌۭ",
+    "gloss": "hearts"
+   },
+   {
+    "word": "قُلُوبِهِمْ",
+    "gloss": "their hearts"
    }
   ],
   "verse": {
@@ -3144,6 +3372,10 @@ const QURAN_ROOTS = [
    {
     "word": "عَيْنًا",
     "gloss": "a spring/eye (acc.)"
+   },
+   {
+    "word": "أَعْيُنٍۢ",
+    "gloss": "eyes"
    }
   ],
   "verse": {
@@ -3183,6 +3415,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُوَلِّيهَا",
     "gloss": "turning toward it"
+   },
+   {
+    "word": "وَجْهَ",
+    "gloss": "face"
    }
   ],
   "verse": {
@@ -3222,6 +3458,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَيْدٍ",
     "gloss": "hands; strength"
+   },
+   {
+    "word": "يَدُ",
+    "gloss": "hand"
    }
   ],
   "verse": {
@@ -3294,10 +3534,6 @@ const QURAN_ROOTS = [
     "gloss": "allies/protectors"
    },
    {
-    "word": "أَوْلِيَآءَ",
-    "gloss": "allies/protectors (obj.)"
-   },
-   {
     "word": "يَتَوَلَّوْنَ",
     "gloss": "they take as allies/turn away to"
    },
@@ -3343,6 +3579,14 @@ const QURAN_ROOTS = [
    {
     "word": "سَبِيلًا",
     "gloss": "a way (acc.)"
+   },
+   {
+    "word": "سَبِيلِهِۦ",
+    "gloss": "His way"
+   },
+   {
+    "word": "سَبِيلَ",
+    "gloss": "way"
    }
   ],
   "verse": {
@@ -3425,6 +3669,10 @@ const QURAN_ROOTS = [
    {
     "word": "عَقَلُوهُ",
     "gloss": "they understood it"
+   },
+   {
+    "word": "تَعْقِلُونَ",
+    "gloss": "you understand"
    }
   ],
   "verse": {
@@ -3460,6 +3708,14 @@ const QURAN_ROOTS = [
    {
     "word": "فَكَّرَ",
     "gloss": "he thought/pondered"
+   },
+   {
+    "word": "يَتَفَكَّرُونَ",
+    "gloss": "they reflect"
+   },
+   {
+    "word": "تَفَكَّرُوا۟",
+    "gloss": "reflect!"
    }
   ],
   "verse": {
@@ -3538,6 +3794,14 @@ const QURAN_ROOTS = [
    {
     "word": "سَاءَ",
     "gloss": "it was evil; it worsened"
+   },
+   {
+    "word": "سُوٓءُ",
+    "gloss": "evil"
+   },
+   {
+    "word": "سَيِّـَٔاتِهِمْ",
+    "gloss": "their evil deeds"
    }
   ],
   "verse": {
@@ -3569,6 +3833,10 @@ const QURAN_ROOTS = [
    {
     "word": "رَهَبًا",
     "gloss": "fear (paired with رغَبًا)"
+   },
+   {
+    "word": "رَغَبًا وَرَهَبًا",
+    "gloss": "hope and fear"
    }
   ],
   "verse": {
@@ -3647,6 +3915,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُرْجَوْنَ",
     "gloss": "deferred, left waiting"
+   },
+   {
+    "word": "لَا يَرْجُونَ",
+    "gloss": "they do not hope"
    }
   ],
   "verse": {
@@ -3686,6 +3958,10 @@ const QURAN_ROOTS = [
    {
     "word": "حَبَّ",
     "gloss": "grain"
+   },
+   {
+    "word": "يُحِبُّ",
+    "gloss": "he loves"
    }
   ],
   "verse": {
@@ -3719,8 +3995,12 @@ const QURAN_ROOTS = [
     "gloss": "unwillingly/with hardship"
    },
    {
-    "word": "كَرْهًا",
-    "gloss": "compulsion/reluctance"
+    "word": "كُرْهٌ",
+    "gloss": "reluctance"
+   },
+   {
+    "word": "كَرِهُوا۟",
+    "gloss": "they disliked"
    }
   ],
   "verse": {
@@ -3756,6 +4036,10 @@ const QURAN_ROOTS = [
    {
     "word": "نَبِّئْهُمْ",
     "gloss": "inform them!"
+   },
+   {
+    "word": "نَبَإٍ",
+    "gloss": "tidings"
    }
   ],
   "verse": {
@@ -3793,8 +4077,8 @@ const QURAN_ROOTS = [
     "gloss": "those submitting (Muslims)"
    },
    {
-    "word": "أَسْلَمَ",
-    "gloss": "he submitted"
+    "word": "ٱلسَّلَٰمُ",
+    "gloss": "the peace"
    }
   ],
   "verse": {
@@ -3834,6 +4118,10 @@ const QURAN_ROOTS = [
    {
     "word": "نَاظِرَةٌ",
     "gloss": "looking/bright"
+   },
+   {
+    "word": "يَنظُرُونَ",
+    "gloss": "they look"
    }
   ],
   "verse": {
@@ -3896,6 +4184,10 @@ const QURAN_ROOTS = [
    {
     "word": "طَوْعًا",
     "gloss": "willingly"
+   },
+   {
+    "word": "لَا تُطِيعُوا۟",
+    "gloss": "do not obey"
    }
   ],
   "verse": {
@@ -4017,6 +4309,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُهْلِكُ",
     "gloss": "destroyer / one who causes ruin"
+   },
+   {
+    "word": "أَهْلَ ٱلْكِتَٰبِ",
+    "gloss": "People of the Book"
    }
   ],
   "verse": {
@@ -4056,6 +4352,10 @@ const QURAN_ROOTS = [
    {
     "word": "عَزِيزٌ عَلَيْهِ",
     "gloss": "hard on him"
+   },
+   {
+    "word": "ٱلْعَزِيزِ",
+    "gloss": "the Mighty"
    }
   ],
   "verse": {
@@ -4138,6 +4438,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُعْتَدِينَ",
     "gloss": "transgressors"
+   },
+   {
+    "word": "عَدُوِّى",
+    "gloss": "my enemy"
    }
   ],
   "verse": {
@@ -4177,6 +4481,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْجَزَآءَ",
     "gloss": "the recompense"
+   },
+   {
+    "word": "جَزَآءً",
+    "gloss": "a recompense"
    }
   ],
   "verse": {
@@ -4212,6 +4520,14 @@ const QURAN_ROOTS = [
    {
     "word": "أُجُورَهُنَّ",
     "gloss": "their wages (fem.)"
+   },
+   {
+    "word": "أَجْرٌ",
+    "gloss": "reward"
+   },
+   {
+    "word": "أَجْرًا عَظِيمًا",
+    "gloss": "a great reward"
    }
   ],
   "verse": {
@@ -4247,6 +4563,14 @@ const QURAN_ROOTS = [
    {
     "word": "وَٰلِدَةٌ",
     "gloss": "a mother (birth-giver)"
+   },
+   {
+    "word": "وَلَدٌ",
+    "gloss": "a child"
+   },
+   {
+    "word": "وَٰلِدَيْنِ",
+    "gloss": "parents"
    }
   ],
   "verse": {
@@ -4286,6 +4610,10 @@ const QURAN_ROOTS = [
    {
     "word": "يَدِينُونَ",
     "gloss": "they submit/are obligated"
+   },
+   {
+    "word": "دِينُكُمْ",
+    "gloss": "your religion"
    }
   ],
   "verse": {
@@ -4317,6 +4645,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُبَارَكًا",
     "gloss": "blessed (acc.)"
+   },
+   {
+    "word": "مُبَارَكٌ",
+    "gloss": "blessed"
    }
   ],
   "verse": {
@@ -4344,6 +4676,14 @@ const QURAN_ROOTS = [
    {
     "word": "صُحْبَةً",
     "gloss": "companionship"
+   },
+   {
+    "word": "أَصْحَٰبُ",
+    "gloss": "companions (people of)"
+   },
+   {
+    "word": "صَاحِبِهِۦ",
+    "gloss": "his companion"
    }
   ],
   "verse": {
@@ -4469,6 +4809,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَفَازًا",
     "gloss": "a place of success"
+   },
+   {
+    "word": "فَٱفُوزَ",
+    "gloss": "then I will succeed"
    }
   ],
   "verse": {
@@ -4500,6 +4844,14 @@ const QURAN_ROOTS = [
    {
     "word": "خَيْرٌۭ لَّكُمْ",
     "gloss": "better for you"
+   },
+   {
+    "word": "خَيْرٌ",
+    "gloss": "good; better"
+   },
+   {
+    "word": "ٱلْخَيْرِ",
+    "gloss": "the good"
    }
   ],
   "verse": {
@@ -4535,6 +4887,10 @@ const QURAN_ROOTS = [
    {
     "word": "بِشَرَرٍ",
     "gloss": "with sparks"
+   },
+   {
+    "word": "شَرَرٌ",
+    "gloss": "sparks"
    }
   ],
   "verse": {
@@ -4570,6 +4926,10 @@ const QURAN_ROOTS = [
    {
     "word": "يَوْمَيْنِ",
     "gloss": "two days"
+   },
+   {
+    "word": "يَوْمًا",
+    "gloss": "a day"
    }
   ],
   "verse": {
@@ -4605,6 +4965,10 @@ const QURAN_ROOTS = [
    {
     "word": "بِٱلَّيْلِ",
     "gloss": "by/at night"
+   },
+   {
+    "word": "لَيْلَةً",
+    "gloss": "a night"
    }
   ],
   "verse": {
@@ -4636,6 +5000,14 @@ const QURAN_ROOTS = [
    {
     "word": "أَرْضِهِمْ",
     "gloss": "their land"
+   },
+   {
+    "word": "ٱلْأَرْضِ",
+    "gloss": "the earth"
+   },
+   {
+    "word": "أَرْضٍ",
+    "gloss": "earth; land (gen.)"
    }
   ],
   "verse": {
@@ -4661,10 +5033,6 @@ const QURAN_ROOTS = [
     "gloss": "the heaven/sky"
    },
    {
-    "word": "ٱلسَّمَآءَ",
-    "gloss": "the heaven/sky (acc.)"
-   },
-   {
     "word": "سَمَآءٍ",
     "gloss": "a heaven/sky"
    },
@@ -4675,6 +5043,10 @@ const QURAN_ROOTS = [
    {
     "word": "وَٱلسَّمَآءِ",
     "gloss": "and the heaven/sky"
+   },
+   {
+    "word": "ٱلسَّمَٰوَٰتِ",
+    "gloss": "the heavens"
    }
   ],
   "verse": {
@@ -4700,12 +5072,16 @@ const QURAN_ROOTS = [
     "gloss": "a mountain"
    },
    {
-    "word": "جِبِلًّا",
-    "gloss": "a huge multitude"
-   },
-   {
     "word": "جِبِلًّا كَثِيرًا",
     "gloss": "a great multitude"
+   },
+   {
+    "word": "ٱلْجَبَلِ",
+    "gloss": "the mountain"
+   },
+   {
+    "word": "ٱلْجِبَالَ",
+    "gloss": "the mountains (acc.)"
    }
   ],
   "verse": {
@@ -4741,6 +5117,10 @@ const QURAN_ROOTS = [
    {
     "word": "بِحَارٌ",
     "gloss": "seas"
+   },
+   {
+    "word": "ٱلْبَحْرِ",
+    "gloss": "the sea"
    }
   ],
   "verse": {
@@ -4772,6 +5152,18 @@ const QURAN_ROOTS = [
    {
     "word": "نَهَرًا",
     "gloss": "a river (acc.)"
+   },
+   {
+    "word": "ٱلْأَنْهَٰرُ",
+    "gloss": "the rivers"
+   },
+   {
+    "word": "أَنْهَٰرٌ",
+    "gloss": "rivers"
+   },
+   {
+    "word": "أَنْهَٰرًا",
+    "gloss": "rivers"
    }
   ],
   "verse": {
@@ -4807,6 +5199,14 @@ const QURAN_ROOTS = [
    {
     "word": "رُوحٌۭ مِّنْهُ",
     "gloss": "a spirit from Him"
+   },
+   {
+    "word": "رُوحًا",
+    "gloss": "a spirit"
+   },
+   {
+    "word": "رُوحُ ٱلْقُدُسِ",
+    "gloss": "the Holy Spirit"
    }
   ],
   "verse": {
@@ -4842,6 +5242,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَطَرُ",
     "gloss": "rain"
+   },
+   {
+    "word": "مَّطَرَ ٱلسَّوْءِ",
+    "gloss": "an evil rain"
    }
   ],
   "verse": {
@@ -4873,6 +5277,10 @@ const QURAN_ROOTS = [
    {
     "word": "لِلشَّمْسِ",
     "gloss": "for the sun"
+   },
+   {
+    "word": "ٱلشَّمْسَ",
+    "gloss": "the sun"
    }
   ],
   "verse": {
@@ -4898,8 +5306,12 @@ const QURAN_ROOTS = [
     "gloss": "and the moon (acc.)"
    },
    {
-    "word": "وَٱلْقَمَرُ",
-    "gloss": "and the moon (nom.)"
+    "word": "ٱلْقَمَرِ",
+    "gloss": "the moon"
+   },
+   {
+    "word": "قَمَرًا",
+    "gloss": "a moon"
    }
   ],
   "verse": {
@@ -4931,6 +5343,10 @@ const QURAN_ROOTS = [
    {
     "word": "بِٱلنَّجْمِ",
     "gloss": "by the stars"
+   },
+   {
+    "word": "ٱلنَّجْمُ",
+    "gloss": "the star"
    }
   ],
   "verse": {
@@ -4999,16 +5415,16 @@ const QURAN_ROOTS = [
     "gloss": "water"
    },
    {
-    "word": "مَآءٍ",
-    "gloss": "water (of)"
-   },
-   {
     "word": "مِنَ ٱلْمَآءِ",
     "gloss": "from the water"
    },
    {
     "word": "بِمَآءٍ",
     "gloss": "with water"
+   },
+   {
+    "word": "ٱلْمَآءُ",
+    "gloss": "the water"
    }
   ],
   "verse": {
@@ -5040,6 +5456,14 @@ const QURAN_ROOTS = [
    {
     "word": "شَجَرَةًۭ مُّبَٰرَكَةً",
     "gloss": "a blessed tree"
+   },
+   {
+    "word": "شَجَرَةٌ",
+    "gloss": "a tree"
+   },
+   {
+    "word": "وَٱلشَّجَرُ",
+    "gloss": "and the trees"
    }
   ],
   "verse": {
@@ -5065,20 +5489,16 @@ const QURAN_ROOTS = [
     "gloss": "a fruit"
    },
    {
-    "word": "ثَمَرِهِۦ",
-    "gloss": "its fruit"
-   },
-   {
-    "word": "ثَمَرُهُۥ",
-    "gloss": "its fruit"
-   },
-   {
     "word": "ثَمَرٍ",
     "gloss": "fruit; produce"
    },
    {
     "word": "ٱلثَّمَرَٰتِ",
     "gloss": "the fruits"
+   },
+   {
+    "word": "ثَمَرَٰتٍ",
+    "gloss": "fruits"
    }
   ],
   "verse": {
@@ -5118,6 +5538,10 @@ const QURAN_ROOTS = [
    {
     "word": "زُرُوعٍ",
     "gloss": "crops (pl.)"
+   },
+   {
+    "word": "زَرْعًا",
+    "gloss": "a crop"
    }
   ],
   "verse": {
@@ -5153,6 +5577,10 @@ const QURAN_ROOTS = [
    {
     "word": "طَٰٓئِرُهُمْ",
     "gloss": "their omen/lot"
+   },
+   {
+    "word": "ٱلطَّيْرِ",
+    "gloss": "the birds"
    }
   ],
   "verse": {
@@ -5184,6 +5612,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَدُبُّ",
     "gloss": "it moves/creeps"
+   },
+   {
+    "word": "دَآبَّةٍ",
+    "gloss": "a creature"
+   },
+   {
+    "word": "دَآبَّةٍۢ مِّنْ",
+    "gloss": "a creature from"
    }
   ],
   "verse": {
@@ -5254,6 +5690,18 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْمُسَبِّحِينَ",
     "gloss": "those who glorify"
+   },
+   {
+    "word": "سَبِّحِ",
+    "gloss": "glorify!"
+   },
+   {
+    "word": "يُسَبِّحُونَ",
+    "gloss": "they glorify"
+   },
+   {
+    "word": "سُبْحَٰنَهُۥ",
+    "gloss": "glory be to Him"
    }
   ],
   "verse": {
@@ -5285,6 +5733,14 @@ const QURAN_ROOTS = [
    {
     "word": "طَابَ",
     "gloss": "it was good/pleasing"
+   },
+   {
+    "word": "طَيِّبٌ",
+    "gloss": "good/pure"
+   },
+   {
+    "word": "ٱلطَّيِّبَٰتِ",
+    "gloss": "the good things"
    }
   ],
   "verse": {
@@ -5316,6 +5772,14 @@ const QURAN_ROOTS = [
    {
     "word": "خَبِيثَةٍ",
     "gloss": "foul/impure (fem.)"
+   },
+   {
+    "word": "ٱلْخَبِيثَٰتُ",
+    "gloss": "the vile (f.)"
+   },
+   {
+    "word": "ٱلْخَبِيثُ",
+    "gloss": "the impure"
    }
   ],
   "verse": {
@@ -5347,6 +5811,18 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْخُلْدِ",
     "gloss": "the everlasting (life/abode)"
+   },
+   {
+    "word": "خَٰلِدِينَ",
+    "gloss": "abiding forever"
+   },
+   {
+    "word": "خَٰلِدًا",
+    "gloss": "abiding forever"
+   },
+   {
+    "word": "خَٰلِدُونَ",
+    "gloss": "abiding forever"
    }
   ],
   "verse": {
@@ -5382,6 +5858,14 @@ const QURAN_ROOTS = [
    {
     "word": "بَرًّا",
     "gloss": "dutiful"
+   },
+   {
+    "word": "بَارًّا",
+    "gloss": "dutiful"
+   },
+   {
+    "word": "بِٱلْبِرِّ",
+    "gloss": "in righteousness"
    }
   ],
   "verse": {
@@ -5421,6 +5905,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَالِىَ",
     "gloss": "my wealth"
+   },
+   {
+    "word": "مَالُهُۥ",
+    "gloss": "his wealth"
    }
   ],
   "verse": {
@@ -5456,6 +5944,14 @@ const QURAN_ROOTS = [
    {
     "word": "نَجْوَىٰ",
     "gloss": "secret counsel"
+   },
+   {
+    "word": "نَجَّيْنَا",
+    "gloss": "We delivered"
+   },
+   {
+    "word": "نُجِّىَ",
+    "gloss": "was delivered"
    }
   ],
   "verse": {
@@ -5483,6 +5979,18 @@ const QURAN_ROOTS = [
    {
     "word": "عِقَابٌ",
     "gloss": "punishment"
+   },
+   {
+    "word": "ٱلْعَٰقِبَةُ",
+    "gloss": "the end result"
+   },
+   {
+    "word": "عَٰقِبَةُ",
+    "gloss": "end result of"
+   },
+   {
+    "word": "عُقْبَىٰ",
+    "gloss": "final outcome"
    }
   ],
   "verse": {
@@ -5518,6 +6026,14 @@ const QURAN_ROOTS = [
    {
     "word": "مَيِّتُونَ",
     "gloss": "dead (pl. masc.)"
+   },
+   {
+    "word": "ٱلْمَوْتَ",
+    "gloss": "the death"
+   },
+   {
+    "word": "مَيِّتِينَ",
+    "gloss": "dead (pl.)"
    }
   ],
   "verse": {
@@ -5553,6 +6069,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْبَعْثِ",
     "gloss": "the resurrection"
+   },
+   {
+    "word": "بَعَثْنَا",
+    "gloss": "We raised/sent"
    }
   ],
   "verse": {
@@ -5635,6 +6155,10 @@ const QURAN_ROOTS = [
    {
     "word": "وَصَوَّرَكُمْ",
     "gloss": "and He shaped you"
+   },
+   {
+    "word": "صُورَةٍ",
+    "gloss": "a form"
    }
   ],
   "verse": {
@@ -5697,6 +6221,10 @@ const QURAN_ROOTS = [
    {
     "word": "بَالِغٌ",
     "gloss": "reaching / attaining"
+   },
+   {
+    "word": "بَلَٰغٌ",
+    "gloss": "a conveyance"
    }
   ],
   "verse": {
@@ -5736,6 +6264,10 @@ const QURAN_ROOTS = [
    {
     "word": "قَلِيلُونَ",
     "gloss": "few (pl.)"
+   },
+   {
+    "word": "قَلِيلٌ",
+    "gloss": "few; little"
    }
   ],
   "verse": {
@@ -5771,6 +6303,10 @@ const QURAN_ROOTS = [
    {
     "word": "يُكَلِّمُ",
     "gloss": "he speaks"
+   },
+   {
+    "word": "كَلِمَٰتِ",
+    "gloss": "words (of)"
    }
   ],
   "verse": {
@@ -5806,6 +6342,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَصْدُرُ",
     "gloss": "he/it departs"
+   },
+   {
+    "word": "صُدُورِهِمْ",
+    "gloss": "their breasts"
+   },
+   {
+    "word": "صَدْرِكَ",
+    "gloss": "your chest"
    }
   ],
   "verse": {
@@ -5845,6 +6389,10 @@ const QURAN_ROOTS = [
    {
     "word": "بُيُوتِهِمْ",
     "gloss": "their houses"
+   },
+   {
+    "word": "ٱلْبَيْتِ",
+    "gloss": "the House"
    }
   ],
   "verse": {
@@ -5876,6 +6424,18 @@ const QURAN_ROOTS = [
    {
     "word": "يُغْنِى",
     "gloss": "avails / suffices"
+   },
+   {
+    "word": "ٱلْغَنِىُّ",
+    "gloss": "the Self-sufficient"
+   },
+   {
+    "word": "غَنِيًّا",
+    "gloss": "self-sufficient"
+   },
+   {
+    "word": "ٱسْتَغْنَىٰ",
+    "gloss": "became self-sufficient"
    }
   ],
   "verse": {
@@ -5915,6 +6475,10 @@ const QURAN_ROOTS = [
    {
     "word": "رَجِلِكَ",
     "gloss": "your foot (lit. your leg/foot)"
+   },
+   {
+    "word": "رِجَالٌ",
+    "gloss": "men"
    }
   ],
   "verse": {
@@ -5950,6 +6514,14 @@ const QURAN_ROOTS = [
    {
     "word": "فِرْقَةٌ",
     "gloss": "a sect"
+   },
+   {
+    "word": "فُرِّقُوا۟",
+    "gloss": "they were divided"
+   },
+   {
+    "word": "ٱلْفُرْقَانِ",
+    "gloss": "the Criterion"
    }
   ],
   "verse": {
@@ -5989,6 +6561,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَيْمَنَةٍ",
     "gloss": "right side"
+   },
+   {
+    "word": "أَيْمَٰنُهُمْ",
+    "gloss": "their oaths"
    }
   ],
   "verse": {
@@ -6024,6 +6600,14 @@ const QURAN_ROOTS = [
    {
     "word": "أَذِنَتْ",
     "gloss": "it listened"
+   },
+   {
+    "word": "ءَاذَانِهِمْ",
+    "gloss": "their ears"
+   },
+   {
+    "word": "أُذُنٌ",
+    "gloss": "an ear"
    }
   ],
   "verse": {
@@ -6055,6 +6639,18 @@ const QURAN_ROOTS = [
    {
     "word": "بِأَفْوَٰهِهِم",
     "gloss": "with their mouths"
+   },
+   {
+    "word": "فُوهُ",
+    "gloss": "his mouth"
+   },
+   {
+    "word": "فَمِنْهُمْ",
+    "gloss": "so among them"
+   },
+   {
+    "word": "فَمَهُۥ",
+    "gloss": "his mouth"
    }
   ],
   "verse": {
@@ -6094,6 +6690,10 @@ const QURAN_ROOTS = [
    {
     "word": "رَأْسِى",
     "gloss": "my head"
+   },
+   {
+    "word": "رَأْسِهِۦ",
+    "gloss": "his head"
    }
   ],
   "verse": {
@@ -6133,6 +6733,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلشِّعْرَ",
     "gloss": "poetry"
+   },
+   {
+    "word": "شَعَرَ",
+    "gloss": "he perceived"
    }
   ],
   "verse": {
@@ -6211,6 +6815,10 @@ const QURAN_ROOTS = [
    {
     "word": "وَٱلْأَفْـِٔدَةَ",
     "gloss": "and the hearts"
+   },
+   {
+    "word": "فُؤَادٍ",
+    "gloss": "a heart"
    }
   ],
   "verse": {
@@ -6242,6 +6850,14 @@ const QURAN_ROOTS = [
    {
     "word": "بِطَانَةً",
     "gloss": "intimates; inner circle"
+   },
+   {
+    "word": "بُطُونِهَا",
+    "gloss": "its bellies"
+   },
+   {
+    "word": "بُطُونِهِمْ",
+    "gloss": "their bellies"
    }
   ],
   "verse": {
@@ -6277,6 +6893,14 @@ const QURAN_ROOTS = [
    {
     "word": "ظُهُورِهِمْ",
     "gloss": "their backs"
+   },
+   {
+    "word": "ظَهَرَ",
+    "gloss": "it became manifest"
+   },
+   {
+    "word": "ظَٰهِرِينَ",
+    "gloss": "being dominant"
    }
   ],
   "verse": {
@@ -6314,8 +6938,8 @@ const QURAN_ROOTS = [
     "gloss": "they rose/acted arrogantly"
    },
    {
-    "word": "عُلُوًّا",
-    "gloss": "arrogance/exaltation"
+    "word": "عَلِيٌّ",
+    "gloss": "Most High"
    }
   ],
   "verse": {
@@ -6343,6 +6967,22 @@ const QURAN_ROOTS = [
    {
     "word": "أُو۟لِى ٱلْأَلْبَٰبِ",
     "gloss": "people of understanding"
+   },
+   {
+    "word": "أَلْبَٰبٍ",
+    "gloss": "intellects"
+   },
+   {
+    "word": "أُولُوا۟ ٱلْأَلْبَٰبِ",
+    "gloss": "people of understanding"
+   },
+   {
+    "word": "لُبًّا",
+    "gloss": "core intellect"
+   },
+   {
+    "word": "لُبِّهِۦ",
+    "gloss": "his inner core"
    }
   ],
   "verse": {
@@ -6378,6 +7018,14 @@ const QURAN_ROOTS = [
    {
     "word": "ذُرِّيَّتَهُمْ",
     "gloss": "their offspring"
+   },
+   {
+    "word": "ذُرِّيَّتِى",
+    "gloss": "my offspring"
+   },
+   {
+    "word": "ذُرِّيَّتَنَا",
+    "gloss": "our offspring"
    }
   ],
   "verse": {
@@ -6417,6 +7065,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَبُونَا",
     "gloss": "our father"
+   },
+   {
+    "word": "ءَابَآءَنَا",
+    "gloss": "our fathers"
    }
   ],
   "verse": {
@@ -6489,16 +7141,16 @@ const QURAN_ROOTS = [
     "gloss": "son of (in iḍāfa)"
    },
    {
-    "word": "ٱبْنُ",
-    "gloss": "a son"
-   },
-   {
     "word": "ٱبْنَتُ",
     "gloss": "daughter"
    },
    {
     "word": "بَنَيْنَا",
     "gloss": "We built"
+   },
+   {
+    "word": "بَنِيهِ",
+    "gloss": "his sons"
    }
   ],
   "verse": {
@@ -6532,8 +7184,12 @@ const QURAN_ROOTS = [
     "gloss": "the One"
    },
    {
-    "word": "وَحْدَهُۥ",
-    "gloss": "alone"
+    "word": "وَٰحِدًا",
+    "gloss": "one (single)"
+   },
+   {
+    "word": "وَٰحِدٍ",
+    "gloss": "one (of)"
    }
   ],
   "verse": {
@@ -6569,6 +7225,14 @@ const QURAN_ROOTS = [
    {
     "word": "أُخْتٌ",
     "gloss": "sister"
+   },
+   {
+    "word": "إِخْوَٰنًا",
+    "gloss": "brothers (pl.)"
+   },
+   {
+    "word": "إِخْوَٰنِهِمْ",
+    "gloss": "their brothers"
    }
   ],
   "verse": {
@@ -6606,8 +7270,8 @@ const QURAN_ROOTS = [
     "gloss": "destroyer"
    },
    {
-    "word": "مَهْلِكِ",
-    "gloss": "place/time of destruction"
+    "word": "هَلَكَ",
+    "gloss": "he perished"
    }
   ],
   "verse": {
@@ -6643,6 +7307,14 @@ const QURAN_ROOTS = [
    {
     "word": "زَوْجَيْنِ",
     "gloss": "two pairs"
+   },
+   {
+    "word": "أَزْوَٰجٌ",
+    "gloss": "spouses / pairs"
+   },
+   {
+    "word": "أَزْوَٰجَهُمْ",
+    "gloss": "their spouses"
    }
   ],
   "verse": {
@@ -6678,6 +7350,14 @@ const QURAN_ROOTS = [
    {
     "word": "ٱكْتَسَبُوا۟",
     "gloss": "they earned"
+   },
+   {
+    "word": "كَسَبُوا۟",
+    "gloss": "they earned"
+   },
+   {
+    "word": "يَكْسِبُ",
+    "gloss": "he earns"
    }
   ],
   "verse": {
@@ -6711,12 +7391,12 @@ const QURAN_ROOTS = [
     "gloss": "a الحمل (load/pregnancy)"
    },
    {
-    "word": "حِمْلٌ",
-    "gloss": "a load"
-   },
-   {
     "word": "حَمَّالَةَ",
     "gloss": "carrier (f.)"
+   },
+   {
+    "word": "يَحْمِلُ",
+    "gloss": "he carries"
    }
   ],
   "verse": {
@@ -6756,6 +7436,10 @@ const QURAN_ROOTS = [
    {
     "word": "تِلَاوَتِهِۦ",
     "gloss": "its recitation"
+   },
+   {
+    "word": "يَتْلُونَ",
+    "gloss": "they recite"
    }
   ],
   "verse": {
@@ -6832,8 +7516,12 @@ const QURAN_ROOTS = [
     "gloss": "a devil"
    },
    {
-    "word": "شَيَٰطِينُ",
-    "gloss": "devils (nom.)"
+    "word": "ٱلشَّيْطَٰنُ",
+    "gloss": "the Devil"
+   },
+   {
+    "word": "شَيْطَٰنٍ",
+    "gloss": "a devil"
    }
   ],
   "verse": {
@@ -6857,10 +7545,6 @@ const QURAN_ROOTS = [
    {
     "word": "جَنَّٰتٍ",
     "gloss": "gardens"
-   },
-   {
-    "word": "جَنَّٰتِ",
-    "gloss": "gardens (gen.)"
    },
    {
     "word": "جِنٍّ",
@@ -6912,6 +7596,14 @@ const QURAN_ROOTS = [
    {
     "word": "فَأَصْبَحَ",
     "gloss": "so he became"
+   },
+   {
+    "word": "أَصْبَحْتُمْ",
+    "gloss": "you became"
+   },
+   {
+    "word": "صُبْحًا",
+    "gloss": "morning"
    }
   ],
   "verse": {
@@ -6951,6 +7643,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱزْدَادُوا۟",
     "gloss": "they increased"
+   },
+   {
+    "word": "زَادَ",
+    "gloss": "he increased"
    }
   ],
   "verse": {
@@ -7033,6 +7729,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَسْنُونٍ",
     "gloss": "molded (clay), fashioned"
+   },
+   {
+    "word": "مَسَّ",
+    "gloss": "he touched"
    }
   ],
   "verse": {
@@ -7072,6 +7772,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُصَلًّى",
     "gloss": "a place of prayer"
+   },
+   {
+    "word": "صَلَوٰتِهِمْ",
+    "gloss": "their prayers"
    }
   ],
   "verse": {
@@ -7109,8 +7813,8 @@ const QURAN_ROOTS = [
     "gloss": "Knower of the unseen"
    },
    {
-    "word": "عَٰلِمِ ٱلْغَيْبِ",
-    "gloss": "Knower of the unseen"
+    "word": "ٱلْغَيْبَ",
+    "gloss": "the unseen"
    }
   ],
   "verse": {
@@ -7146,6 +7850,10 @@ const QURAN_ROOTS = [
    {
     "word": "يُحَاجُّونَ",
     "gloss": "they dispute/argue"
+   },
+   {
+    "word": "حَجَّ",
+    "gloss": "he performed pilgrimage"
    }
   ],
   "verse": {
@@ -7177,6 +7885,10 @@ const QURAN_ROOTS = [
    {
     "word": "صَوْمًا",
     "gloss": "fasting / abstention"
+   },
+   {
+    "word": "صِيَامُ",
+    "gloss": "fasting (of)"
    }
   ],
   "verse": {
@@ -7208,6 +7920,14 @@ const QURAN_ROOTS = [
    {
     "word": "مُطَهَّرَةٌ",
     "gloss": "purified (fem.)"
+   },
+   {
+    "word": "يَتَطَهَّرُونَ",
+    "gloss": "they purify themselves"
+   },
+   {
+    "word": "تَطَهَّرُوا۟",
+    "gloss": "purify yourselves"
    }
   ],
   "verse": {
@@ -7329,6 +8049,14 @@ const QURAN_ROOTS = [
    {
     "word": "مُفْتَرًى",
     "gloss": "fabricated/forged"
+   },
+   {
+    "word": "يَفْتَرُونَ",
+    "gloss": "they fabricate"
+   },
+   {
+    "word": "يَفْتَرِى",
+    "gloss": "he fabricates"
    }
   ],
   "verse": {
@@ -7368,6 +8096,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَهْلَ ٱلْقُرَىٰ",
     "gloss": "people of the towns"
+   },
+   {
+    "word": "قَرْيَتَيْنِ",
+    "gloss": "two towns"
    }
   ],
   "verse": {
@@ -7403,6 +8135,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَعُدُّونَ",
     "gloss": "they count"
+   },
+   {
+    "word": "عَدَدَ",
+    "gloss": "number (of)"
+   },
+   {
+    "word": "مَعْدُودَةٌ",
+    "gloss": "numbered (few)"
    }
   ],
   "verse": {
@@ -7477,6 +8217,10 @@ const QURAN_ROOTS = [
    {
     "word": "تَحْتِى",
     "gloss": "beneath me"
+   },
+   {
+    "word": "مِن تَحْتِهِ",
+    "gloss": "from beneath him/it"
    }
   ],
   "verse": {
@@ -7516,6 +8260,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُنتَهَىٰ",
     "gloss": "the final end"
+   },
+   {
+    "word": "نَهَيْنَا",
+    "gloss": "We forbade"
    }
   ],
   "verse": {
@@ -7555,6 +8303,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْحَاقَّةُ",
     "gloss": "the Inevitable Reality"
+   },
+   {
+    "word": "ٱلْحَقُّ",
+    "gloss": "the truth"
    }
   ],
   "verse": {
@@ -7594,6 +8346,10 @@ const QURAN_ROOTS = [
    {
     "word": "بَطَلَ",
     "gloss": "it came to nothing"
+   },
+   {
+    "word": "وَٱلْبَٰطِلُ",
+    "gloss": "and falsehood"
    }
   ],
   "verse": {
@@ -7633,6 +8389,10 @@ const QURAN_ROOTS = [
    {
     "word": "يُضَٰعِفُ",
     "gloss": "He multiplies"
+   },
+   {
+    "word": "ضِعْفَيْنِ",
+    "gloss": "twofold"
    }
   ],
   "verse": {
@@ -7666,8 +8426,12 @@ const QURAN_ROOTS = [
     "gloss": "a foot"
    },
    {
-    "word": "قَدَمِ",
-    "gloss": "foot (of)"
+    "word": "قَدَّمْتُ",
+    "gloss": "I sent ahead"
+   },
+   {
+    "word": "قَدَّمْتُمْ",
+    "gloss": "you sent ahead"
    }
   ],
   "verse": {
@@ -7742,6 +8506,14 @@ const QURAN_ROOTS = [
    {
     "word": "أَطْعَمَ",
     "gloss": "He fed / gave food"
+   },
+   {
+    "word": "طَعَامٌ",
+    "gloss": "food"
+   },
+   {
+    "word": "طَعَامَهُۥ",
+    "gloss": "his food"
    }
   ],
   "verse": {
@@ -7781,6 +8553,10 @@ const QURAN_ROOTS = [
    {
     "word": "تَفْرِضُوا۟",
     "gloss": "you fix"
+   },
+   {
+    "word": "فَرَضْتُمْ",
+    "gloss": "you made obligatory"
    }
   ],
   "verse": {
@@ -7810,16 +8586,16 @@ const QURAN_ROOTS = [
     "gloss": "it was forbidden"
    },
    {
-    "word": "حُرُمٌ",
-    "gloss": "sacred (plural)"
-   },
-   {
     "word": "مُحَرَّمٌ",
     "gloss": "forbidden"
    },
    {
     "word": "ٱلْمَسْجِدِ ٱلْحَرَامِ",
     "gloss": "the Sacred Mosque"
+   },
+   {
+    "word": "ٱلْحَرَامَ",
+    "gloss": "the Sacred (sanctuary/month)"
    }
   ],
   "verse": {
@@ -7851,6 +8627,18 @@ const QURAN_ROOTS = [
    {
     "word": "مُحِلِّى",
     "gloss": "those making lawful/violating (iḥlāl)"
+   },
+   {
+    "word": "أُحِلَّ",
+    "gloss": "it is made lawful"
+   },
+   {
+    "word": "أُحِلَّ لَكُمْ",
+    "gloss": "made lawful for you"
+   },
+   {
+    "word": "حَلَٰلًا",
+    "gloss": "lawful"
    }
   ],
   "verse": {
@@ -7890,6 +8678,10 @@ const QURAN_ROOTS = [
    {
     "word": "كِرَامًا",
     "gloss": "noble ones (pl.)"
+   },
+   {
+    "word": "كَرِيمٌ",
+    "gloss": "noble; generous"
    }
   ],
   "verse": {
@@ -7929,6 +8721,10 @@ const QURAN_ROOTS = [
    {
     "word": "عَٰهِدْتَّ",
     "gloss": "you (sg) pledged"
+   },
+   {
+    "word": "ٱلْعَهْدِ",
+    "gloss": "the covenant"
    }
   ],
   "verse": {
@@ -7968,6 +8764,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَوْعِدُهُمُ",
     "gloss": "their appointed time"
+   },
+   {
+    "word": "وَعْدًا",
+    "gloss": "a promise"
    }
   ],
   "verse": {
@@ -8003,6 +8803,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْوَٰعِظِينَ",
     "gloss": "the admonishers"
+   },
+   {
+    "word": "مَوْعِظَةٌ",
+    "gloss": "an admonition"
    }
   ],
   "verse": {
@@ -8028,10 +8832,6 @@ const QURAN_ROOTS = [
     "gloss": "a path"
    },
    {
-    "word": "صِرَٰطَ",
-    "gloss": "a/the path"
-   },
-   {
     "word": "صِرَٰطَكَ",
     "gloss": "your path"
    },
@@ -8040,8 +8840,8 @@ const QURAN_ROOTS = [
     "gloss": "my path"
    },
    {
-    "word": "صِرَٰطِ",
-    "gloss": "path (of)"
+    "word": "ٱلصِّرَٰطَ",
+    "gloss": "the path"
    }
   ],
   "verse": {
@@ -8124,6 +8924,10 @@ const QURAN_ROOTS = [
    {
     "word": "حَفَظَةً",
     "gloss": "guardians"
+   },
+   {
+    "word": "حَفِيظٌ",
+    "gloss": "a guardian"
    }
   ],
   "verse": {
@@ -8153,16 +8957,12 @@ const QURAN_ROOTS = [
     "gloss": "it was detailed"
    },
    {
-    "word": "فَصْلٌ",
-    "gloss": "decisive separation/judgment"
-   },
-   {
-    "word": "فَصِّلْ",
-    "gloss": "explain in detail!"
-   },
-   {
     "word": "مُفَصَّلًا",
     "gloss": "fully detailed"
+   },
+   {
+    "word": "فَصَلْنَٰهُ",
+    "gloss": "We set it out"
    }
   ],
   "verse": {
@@ -8194,6 +8994,18 @@ const QURAN_ROOTS = [
    {
     "word": "حَٰشِرِينَ",
     "gloss": "gathering (pl. act. ptc.)"
+   },
+   {
+    "word": "يُحْشَرُونَ",
+    "gloss": "they are gathered"
+   },
+   {
+    "word": "يَوْمَ نَحْشُرُ",
+    "gloss": "day We gather"
+   },
+   {
+    "word": "حَشَرْنَٰهُ",
+    "gloss": "We gathered him"
    }
   ],
   "verse": {
@@ -8268,6 +9080,14 @@ const QURAN_ROOTS = [
    {
     "word": "فَوْقَكُمْ",
     "gloss": "above you"
+   },
+   {
+    "word": "فَوْقَ",
+    "gloss": "above"
+   },
+   {
+    "word": "مِن فَوْقِ",
+    "gloss": "from above"
    }
   ],
   "verse": {
@@ -8307,6 +9127,10 @@ const QURAN_ROOTS = [
    {
     "word": "قُوَّتِكُمْ",
     "gloss": "your strength"
+   },
+   {
+    "word": "ٱلْقَوِىُّ",
+    "gloss": "the Strong"
    }
   ],
   "verse": {
@@ -8342,6 +9166,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَسْخَرُونَ",
     "gloss": "they mock"
+   },
+   {
+    "word": "سَخَّرْنَا لَهُ",
+    "gloss": "We subjected for him"
+   },
+   {
+    "word": "سَخَّرَ",
+    "gloss": "He subjected"
    }
   ],
   "verse": {
@@ -8418,12 +9250,12 @@ const QURAN_ROOTS = [
     "gloss": "I turned away"
    },
    {
-    "word": "صَدٌّ",
-    "gloss": "hindering / turning away"
-   },
-   {
     "word": "صُدُودًا",
     "gloss": "turning away"
+   },
+   {
+    "word": "يَصُدُّونَ",
+    "gloss": "they hinder"
    }
   ],
   "verse": {
@@ -8463,6 +9295,10 @@ const QURAN_ROOTS = [
    {
     "word": "جَٰهِدْهُم",
     "gloss": "strive against them"
+   },
+   {
+    "word": "جَٰهَدُوا۟",
+    "gloss": "they strove"
    }
   ],
   "verse": {
@@ -8545,6 +9381,10 @@ const QURAN_ROOTS = [
    {
     "word": "تَطْغَوْا۟",
     "gloss": "do not transgress"
+   },
+   {
+    "word": "طَغَوْا۟",
+    "gloss": "they transgressed"
    }
   ],
   "verse": {
@@ -8580,6 +9420,14 @@ const QURAN_ROOTS = [
    {
     "word": "عَاصٍ",
     "gloss": "disobedient"
+   },
+   {
+    "word": "وَعَصَىٰ",
+    "gloss": "and he disobeyed"
+   },
+   {
+    "word": "عَصَيْنَا",
+    "gloss": "we disobeyed"
    }
   ],
   "verse": {
@@ -8611,6 +9459,14 @@ const QURAN_ROOTS = [
    {
     "word": "مِلْءُ",
     "gloss": "a fill/fulfilment"
+   },
+   {
+    "word": "ٱلْمَلَأُ",
+    "gloss": "the chiefs"
+   },
+   {
+    "word": "لَأَمْلَأَنَّ",
+    "gloss": "I will surely fill"
    }
   ],
   "verse": {
@@ -8685,6 +9541,14 @@ const QURAN_ROOTS = [
    {
     "word": "مُفْلِحِينَ",
     "gloss": "successful (pl.)"
+   },
+   {
+    "word": "ٱلْمُفْلِحُونَ",
+    "gloss": "the successful"
+   },
+   {
+    "word": "تُفْلِحُوٓا۟",
+    "gloss": "you may succeed"
    }
   ],
   "verse": {
@@ -8755,6 +9619,10 @@ const QURAN_ROOTS = [
    {
     "word": "حَدَثٌ",
     "gloss": "an occurrence"
+   },
+   {
+    "word": "حَدِيثُ",
+    "gloss": "discourse"
    }
   ],
   "verse": {
@@ -8794,6 +9662,10 @@ const QURAN_ROOTS = [
    {
     "word": "تَأْثِيمًا",
     "gloss": "incitement to sin"
+   },
+   {
+    "word": "ءَاثِمٌ",
+    "gloss": "sinful"
    }
   ],
   "verse": {
@@ -8825,6 +9697,14 @@ const QURAN_ROOTS = [
    {
     "word": "بِذُنُوبِهِمْ",
     "gloss": "for their sins"
+   },
+   {
+    "word": "ذَنۢبِهِۦ",
+    "gloss": "his sin"
+   },
+   {
+    "word": "ذُنُوبُهُمْ",
+    "gloss": "their sins"
    }
   ],
   "verse": {
@@ -8856,6 +9736,18 @@ const QURAN_ROOTS = [
    {
     "word": "وَارِثٌ",
     "gloss": "an heir"
+   },
+   {
+    "word": "يَرِثُ",
+    "gloss": "he inherits"
+   },
+   {
+    "word": "وَرِثْنَا",
+    "gloss": "We inherited"
+   },
+   {
+    "word": "ٱلْوَٰرِثِينَ",
+    "gloss": "the inheritors"
    }
   ],
   "verse": {
@@ -8895,6 +9787,10 @@ const QURAN_ROOTS = [
    {
     "word": "عَفَوْنَا",
     "gloss": "We pardoned"
+   },
+   {
+    "word": "عَفُوٌّ",
+    "gloss": "ever-forgiving"
    }
   ],
   "verse": {
@@ -8924,8 +9820,8 @@ const QURAN_ROOTS = [
     "gloss": "then, at that time"
    },
    {
-    "word": "حِينَئِذٍ",
-    "gloss": "then, at that time"
+    "word": "حِينٍ",
+    "gloss": "a time"
    }
   ],
   "verse": {
@@ -8965,6 +9861,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱتَّخَذْتُمُوهُمْ سِخْرِيًّا",
     "gloss": "you took them in ridicule"
+   },
+   {
+    "word": "يَسْتَهْزِئُ",
+    "gloss": "he ridicules"
    }
   ],
   "verse": {
@@ -9000,6 +9900,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَخَّرْنَا",
     "gloss": "We deferred"
+   },
+   {
+    "word": "ءَاخِرُ",
+    "gloss": "last; latter"
    }
   ],
   "verse": {
@@ -9031,6 +9935,18 @@ const QURAN_ROOTS = [
    {
     "word": "دَانِيَةٌ",
     "gloss": "hanging low/near"
+   },
+   {
+    "word": "يُدْنِينَ",
+    "gloss": "they draw down"
+   },
+   {
+    "word": "أَدْنَىٰ",
+    "gloss": "nearer"
+   },
+   {
+    "word": "دَانٍ",
+    "gloss": "near"
    }
   ],
   "verse": {
@@ -9070,6 +9986,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُقَرَّنِينَ",
     "gloss": "bound together"
+   },
+   {
+    "word": "قَرْنٍ",
+    "gloss": "a generation"
    }
   ],
   "verse": {
@@ -9101,6 +10021,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْجُنُبِ",
     "gloss": "the traveler / the one in janābah (by context)"
+   },
+   {
+    "word": "جَانِبٍ",
+    "gloss": "a side"
    }
   ],
   "verse": {
@@ -9136,6 +10060,10 @@ const QURAN_ROOTS = [
    {
     "word": "وُسْعَهَا",
     "gloss": "its capacity"
+   },
+   {
+    "word": "وَٰسِعٌ",
+    "gloss": "all-encompassing"
    }
   ],
   "verse": {
@@ -9167,6 +10095,14 @@ const QURAN_ROOTS = [
    {
     "word": "غَلَبَ",
     "gloss": "he overcame"
+   },
+   {
+    "word": "غُلِبَتِ",
+    "gloss": "was defeated"
+   },
+   {
+    "word": "أَغْلَبُ",
+    "gloss": "more prevailing"
    }
   ],
   "verse": {
@@ -9202,6 +10138,14 @@ const QURAN_ROOTS = [
    {
     "word": "عُرُوشٍ",
     "gloss": "trellises/arbors"
+   },
+   {
+    "word": "عَرْشِكَ",
+    "gloss": "Your throne"
+   },
+   {
+    "word": "عَلَى ٱلْعَرْشِ",
+    "gloss": "upon the Throne"
    }
   ],
   "verse": {
@@ -9260,6 +10204,14 @@ const QURAN_ROOTS = [
    {
     "word": "حَسْبُهُ",
     "gloss": "sufficient for him"
+   },
+   {
+    "word": "حَسْبُنَا",
+    "gloss": "sufficient for us"
+   },
+   {
+    "word": "حَسَبْتُمْ",
+    "gloss": "you thought"
    }
   ],
   "verse": {
@@ -9299,6 +10251,10 @@ const QURAN_ROOTS = [
    {
     "word": "يَزِنُونَ",
     "gloss": "they weigh"
+   },
+   {
+    "word": "ٱلْمِيزَانَ",
+    "gloss": "the balance"
    }
   ],
   "verse": {
@@ -9338,6 +10294,10 @@ const QURAN_ROOTS = [
    {
     "word": "قَصَصًا",
     "gloss": "a narrative (acc.)"
+   },
+   {
+    "word": "ٱلْقَصَصِ",
+    "gloss": "the narrative"
    }
   ],
   "verse": {
@@ -9404,6 +10364,10 @@ const QURAN_ROOTS = [
    {
     "word": "مُّسَمًّى",
     "gloss": "named, appointed"
+   },
+   {
+    "word": "لِأَجَلٍ",
+    "gloss": "for a term"
    }
   ],
   "verse": {
@@ -9443,6 +10407,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَرَدْنَآ",
     "gloss": "we intended"
+   },
+   {
+    "word": "تُرَٰوِدُ",
+    "gloss": "she tries to seduce"
    }
   ],
   "verse": {
@@ -9468,8 +10436,8 @@ const QURAN_ROOTS = [
     "gloss": "an hour; a moment"
    },
    {
-    "word": "سَاعَةً",
-    "gloss": "an hour; a while"
+    "word": "ٱلسَّاعَةُ",
+    "gloss": "the Hour"
    }
   ],
   "verse": {
@@ -9505,6 +10473,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَقْبَرَهُۥ",
     "gloss": "He had him buried"
+   },
+   {
+    "word": "قَبْرٍ",
+    "gloss": "a grave"
    }
   ],
   "verse": {
@@ -9540,6 +10512,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْجُنُودِ",
     "gloss": "the hosts"
+   },
+   {
+    "word": "جُنْدٌۭ مَّا",
+    "gloss": "any host"
    }
   ],
   "verse": {
@@ -9571,6 +10547,18 @@ const QURAN_ROOTS = [
    {
     "word": "نُشُورًا",
     "gloss": "rising again; resurrection"
+   },
+   {
+    "word": "نُشِرَتْ",
+    "gloss": "are spread open"
+   },
+   {
+    "word": "نَشَرْنَا",
+    "gloss": "We spread"
+   },
+   {
+    "word": "يُنْشَرُونَ",
+    "gloss": "they are raised"
    }
   ],
   "verse": {
@@ -9606,6 +10594,14 @@ const QURAN_ROOTS = [
    {
     "word": "ثِيَابٌ",
     "gloss": "garments"
+   },
+   {
+    "word": "ثَوَابًا",
+    "gloss": "a reward"
+   },
+   {
+    "word": "ثَوَابٌ",
+    "gloss": "reward"
    }
   ],
   "verse": {
@@ -9641,6 +10637,14 @@ const QURAN_ROOTS = [
    {
     "word": "خَٰلِدِينَ فِيهَآ أَبَدًا",
     "gloss": "abiding therein forever"
+   },
+   {
+    "word": "أَبَدًا",
+    "gloss": "ever"
+   },
+   {
+    "word": "أَبَدُ",
+    "gloss": "everlasting"
    }
   ],
   "verse": {
@@ -9680,6 +10684,10 @@ const QURAN_ROOTS = [
    {
     "word": "قَدْرِهِ",
     "gloss": "His due measure"
+   },
+   {
+    "word": "ٱلْقَدْرِ",
+    "gloss": "the Decree"
    }
   ],
   "verse": {
@@ -9715,6 +10723,14 @@ const QURAN_ROOTS = [
    {
     "word": "مَسَاكَ",
     "gloss": "he held/retained"
+   },
+   {
+    "word": "يُمْسِكُ",
+    "gloss": "He holds back"
+   },
+   {
+    "word": "تُمْسِكُوا۟",
+    "gloss": "you hold"
    }
   ],
   "verse": {
@@ -9740,12 +10756,20 @@ const QURAN_ROOTS = [
     "gloss": "the gate (acc.)"
    },
    {
-    "word": "ٱلْبَابِ",
-    "gloss": "the gate (gen.)"
-   },
-   {
     "word": "بِبَابٍ",
     "gloss": "at/with a gate"
+   },
+   {
+    "word": "ٱلْأَبْوَٰبَ",
+    "gloss": "the gates"
+   },
+   {
+    "word": "أَبْوَٰبٍۢ",
+    "gloss": "gates"
+   },
+   {
+    "word": "بَٰبًا",
+    "gloss": "a gate"
    }
   ],
   "verse": {
@@ -9771,10 +10795,6 @@ const QURAN_ROOTS = [
     "gloss": "He decreed"
    },
    {
-    "word": "قُضِىَ",
-    "gloss": "it was decided"
-   },
-   {
     "word": "يَقْضِى",
     "gloss": "He judges"
    },
@@ -9785,6 +10805,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَّقْضِيًّا",
     "gloss": "decreed"
+   },
+   {
+    "word": "قُضِىَ عَلَيْهِ",
+    "gloss": "decreed against him"
    }
   ],
   "verse": {
@@ -9820,6 +10844,14 @@ const QURAN_ROOTS = [
    {
     "word": "مُعَذَّبِينَ",
     "gloss": "punished (people)"
+   },
+   {
+    "word": "عَذَابٌ",
+    "gloss": "punishment"
+   },
+   {
+    "word": "عَذَابًا",
+    "gloss": "a punishment"
    }
   ],
   "verse": {
@@ -9847,6 +10879,10 @@ const QURAN_ROOTS = [
    {
     "word": "جَحِيمٍ",
     "gloss": "a blaze"
+   },
+   {
+    "word": "جَحِيمًا",
+    "gloss": "a blazing Fire"
    }
   ],
   "verse": {
@@ -9882,6 +10918,14 @@ const QURAN_ROOTS = [
    {
     "word": "عُجَابٌ",
     "gloss": "most amazing; very strange"
+   },
+   {
+    "word": "عَجِيبٌ",
+    "gloss": "amazing"
+   },
+   {
+    "word": "عَجِبْتَ",
+    "gloss": "you wondered"
    }
   ],
   "verse": {
@@ -9921,6 +10965,10 @@ const QURAN_ROOTS = [
    {
     "word": "أَنۢبَتْنَا فِيهَا",
     "gloss": "We grew in it"
+   },
+   {
+    "word": "نَبَاتًا",
+    "gloss": "growth"
    }
   ],
   "verse": {
@@ -9960,6 +11008,10 @@ const QURAN_ROOTS = [
    {
     "word": "قِسْطَاسٍ",
     "gloss": "balance/scale"
+   },
+   {
+    "word": "قَٰسِطِينَ",
+    "gloss": "the unjust"
    }
   ],
   "verse": {
@@ -9999,6 +11051,10 @@ const QURAN_ROOTS = [
    {
     "word": "بَأْسٌ شَدِيدٌ",
     "gloss": "strong might"
+   },
+   {
+    "word": "ٱلْحَدِيدَ",
+    "gloss": "the iron"
    }
   ],
   "verse": {
@@ -10032,8 +11088,12 @@ const QURAN_ROOTS = [
     "gloss": "a ship / ships"
    },
    {
-    "word": "فَلَكٍ",
-    "gloss": "an orbit"
+    "word": "ٱلْفُلْكَ",
+    "gloss": "the ship"
+   },
+   {
+    "word": "وَٱلْفُلْكِ",
+    "gloss": "and the ships"
    }
   ],
   "verse": {
@@ -10069,6 +11129,14 @@ const QURAN_ROOTS = [
    {
     "word": "فَضَّلْنَا",
     "gloss": "We favored/preferred"
+   },
+   {
+    "word": "فَضْلُ",
+    "gloss": "bounty"
+   },
+   {
+    "word": "فَضْلُ ٱللَّهِ",
+    "gloss": "Allah’s bounty"
    }
   ],
   "verse": {
@@ -10229,6 +11297,10 @@ const QURAN_ROOTS = [
    {
     "word": "فُتِنُوا۟",
     "gloss": "they were tried"
+   },
+   {
+    "word": "يَفْتِنُكَ",
+    "gloss": "they tempt you"
    }
   ],
   "verse": {
@@ -10264,6 +11336,10 @@ const QURAN_ROOTS = [
    {
     "word": "دَفْعٌ",
     "gloss": "repelling"
+   },
+   {
+    "word": "يَدْفَعُ",
+    "gloss": "he repels"
    }
   ],
   "verse": {
@@ -10295,6 +11371,18 @@ const QURAN_ROOTS = [
    {
     "word": "يُخَيَّلُ",
     "gloss": "it is made to seem"
+   },
+   {
+    "word": "ٱلْخَيْلَ",
+    "gloss": "the horses"
+   },
+   {
+    "word": "خَيْرِ",
+    "gloss": "goodness"
+   },
+   {
+    "word": "مُخْتَالٍ",
+    "gloss": "self-conceited"
    }
   ],
   "verse": {
@@ -10334,6 +11422,10 @@ const QURAN_ROOTS = [
    {
     "word": "بَقِينَ",
     "gloss": "remaining (pl.)"
+   },
+   {
+    "word": "بَقِيَّتُ",
+    "gloss": "remnant"
    }
   ],
   "verse": {
@@ -10369,6 +11461,14 @@ const QURAN_ROOTS = [
    {
     "word": "نَكَحَ",
     "gloss": "he married"
+   },
+   {
+    "word": "ٱنكِحُوا۟",
+    "gloss": "marry (them)"
+   },
+   {
+    "word": "يَنكِحْنَ",
+    "gloss": "they (f.) marry"
    }
   ],
   "verse": {
@@ -10404,6 +11504,10 @@ const QURAN_ROOTS = [
    {
     "word": "فَطَلِّقُوهُنَّ",
     "gloss": "then divorce them"
+   },
+   {
+    "word": "طَلَّقْتُمُ",
+    "gloss": "you divorced"
    }
   ],
   "verse": {
@@ -10435,6 +11539,14 @@ const QURAN_ROOTS = [
    {
     "word": "يَطْمَعُونَ",
     "gloss": "they hope/covet"
+   },
+   {
+    "word": "يَطْمَعُ",
+    "gloss": "he desires"
+   },
+   {
+    "word": "فَيَطْمَعَ",
+    "gloss": "so he may desire"
    }
   ],
   "verse": {
@@ -10470,6 +11582,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْيَتِيمِ",
     "gloss": "the orphan (gen.)"
+   },
+   {
+    "word": "ٱلْيَتَٰمَىٰ",
+    "gloss": "the orphans"
    }
   ],
   "verse": {
@@ -10499,12 +11615,12 @@ const QURAN_ROOTS = [
     "gloss": "from dust"
    },
    {
-    "word": "تُرَابٍ",
-    "gloss": "dust (of)"
-   },
-   {
     "word": "ٱلتُّرَابِ",
     "gloss": "the dust/earth"
+   },
+   {
+    "word": "تُرْبًا",
+    "gloss": "dust"
    }
   ],
   "verse": {
@@ -10544,6 +11660,10 @@ const QURAN_ROOTS = [
    {
     "word": "مَرْضِيَّةً",
     "gloss": "well-pleasing"
+   },
+   {
+    "word": "رَاضِيَةً",
+    "gloss": "well-pleased"
    }
   ],
   "verse": {
@@ -10575,6 +11695,14 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْمَغْضُوبِ",
     "gloss": "those angered upon"
+   },
+   {
+    "word": "غَضِبَ",
+    "gloss": "he became angry"
+   },
+   {
+    "word": "ٱلْغَضَبُ",
+    "gloss": "the wrath"
    }
   ],
   "verse": {
@@ -10610,6 +11738,14 @@ const QURAN_ROOTS = [
    {
     "word": "حَزَنًا",
     "gloss": "grief"
+   },
+   {
+    "word": "تَحْزَن",
+    "gloss": "you grieve"
+   },
+   {
+    "word": "يَحْزُنُ",
+    "gloss": "he grieves"
    }
   ],
   "verse": {
@@ -10645,6 +11781,14 @@ const QURAN_ROOTS = [
    {
     "word": "لَا تَفْرَحْ",
     "gloss": "do not exult"
+   },
+   {
+    "word": "فَرِحُوا۟",
+    "gloss": "they rejoiced"
+   },
+   {
+    "word": "فَرِحٌ",
+    "gloss": "rejoicing (one)"
    }
   ],
   "verse": {
@@ -10684,6 +11828,10 @@ const QURAN_ROOTS = [
    {
     "word": "تَمَامَ",
     "gloss": "completion of"
+   },
+   {
+    "word": "تَمَامًا",
+    "gloss": "completely; in full"
    }
   ],
   "verse": {
@@ -10746,6 +11894,10 @@ const QURAN_ROOTS = [
    {
     "word": "ٱلْأَعْرَابُ",
     "gloss": "the bedouins"
+   },
+   {
+    "word": "عَرَبِيًّا",
+    "gloss": "Arabic (as)"
    }
   ],
   "verse": {
@@ -10783,10 +11935,6 @@ const QURAN_ROOTS = [
     "gloss": "he cast"
    },
    {
-    "word": "يُلْقِى",
-    "gloss": "he casts"
-   },
-   {
     "word": "لَٰقُوا۟",
     "gloss": "they met"
    }
@@ -10816,6 +11964,18 @@ const QURAN_ROOTS = [
    {
     "word": "يَكْتُمُ",
     "gloss": "he conceals"
+   },
+   {
+    "word": "نَكْتُمُ",
+    "gloss": "we conceal"
+   },
+   {
+    "word": "تَكْتُمُوا۟",
+    "gloss": "you (pl) conceal"
+   },
+   {
+    "word": "تَكْتُمُونَ",
+    "gloss": "you (pl) conceal"
    }
   ],
   "verse": {
@@ -10855,6 +12015,10 @@ const QURAN_ROOTS = [
    {
     "word": "ضَلَلْنَا",
     "gloss": "we went astray"
+   },
+   {
+    "word": "ضَلَّ",
+    "gloss": "he went astray"
    }
   ],
   "verse": {
@@ -10894,6 +12058,10 @@ const QURAN_ROOTS = [
    {
     "word": "رَمَضَانَ",
     "gloss": "Ramaḍān (month name)"
+   },
+   {
+    "word": "ٱلشُّهُورِ",
+    "gloss": "the months"
    }
   ],
   "verse": {
@@ -10919,12 +12087,20 @@ const QURAN_ROOTS = [
     "gloss": "ways; precedents"
    },
    {
-    "word": "سُنَنٍ",
-    "gloss": "ways; precedents (gen)"
-   },
-   {
     "word": "سُنَّتَنَا",
     "gloss": "Our way (practice)"
+   },
+   {
+    "word": "سُنَّةَ",
+    "gloss": "way; practice"
+   },
+   {
+    "word": "سُنَّةَ ٱللَّهِ",
+    "gloss": "Allah’s way"
+   },
+   {
+    "word": "سُنَّتَ ٱلْأَوَّلِينَ",
+    "gloss": "the former’s way"
    }
   ],
   "verse": {
@@ -10956,6 +12132,14 @@ const QURAN_ROOTS = [
    {
     "word": "مَحْجُورًا",
     "gloss": "forbidden; barred"
+   },
+   {
+    "word": "حِجَارَةً",
+    "gloss": "stones"
+   },
+   {
+    "word": "ٱلْحِجَارَةِ",
+    "gloss": "the stones"
    }
   ],
   "verse": {
@@ -10991,6 +12175,14 @@ const QURAN_ROOTS = [
    {
     "word": "نَسُوقُ",
     "gloss": "We drive"
+   },
+   {
+    "word": "سَوْقِ",
+    "gloss": "driving; leading"
+   },
+   {
+    "word": "يُسَاقُونَ",
+    "gloss": "they are driven"
    }
   ],
   "verse": {
@@ -11016,12 +12208,8 @@ const QURAN_ROOTS = [
     "gloss": "years (pl.)"
    },
    {
-    "word": "سِنِينَ",
-    "gloss": "for years (pl.)"
-   },
-   {
-    "word": "سِنِينَ",
-    "gloss": "years (pl.)"
+    "word": "سَنَةٌ",
+    "gloss": "a year"
    }
   ],
   "verse": {
@@ -11053,6 +12241,18 @@ const QURAN_ROOTS = [
    {
     "word": "رِبْيَةً",
     "gloss": "increase"
+   },
+   {
+    "word": "ٱلرِّبَوٰا۟",
+    "gloss": "usury"
+   },
+   {
+    "word": "رِبًا",
+    "gloss": "usury"
+   },
+   {
+    "word": "أَرْبَىٰ",
+    "gloss": "more increase"
    }
   ],
   "verse": {
