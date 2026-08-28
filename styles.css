@@ -5206,7 +5206,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 .vocab-speak:hover { border-color: var(--purple); }
 
 /* A root card: the three letters, then the words the Qur'an builds from them */
-.vocab-card-root { border-left-color: var(--gold, #b8863f); }
 .vocab-root-word {
   font-size: 1.9rem;
   letter-spacing: 0.12em;
@@ -5287,26 +5286,79 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   color: var(--text-muted);
 }
 .root-search { width: 100%; margin: 0; }
-.root-fill-note {
-  font-family: var(--font-body);
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  margin-top: 0.5rem;
+/* ── The root table ────────────────────────────────────────────────────────
+   Three columns — # / Root / Core meaning — the shape the list was written in.
+   It has to stay readable at 300 rows, so a row is a line rather than a card,
+   and everything else about a root lives behind a tap. */
+.root-set { margin: 0 0 2rem; }
+.root-set-title {
+  display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
+  font-size: 1.05rem; font-weight: 700; color: var(--text-primary);
+  margin: 1.4rem 0 0.7rem;
 }
+.root-set-leaf { font-size: 1rem; }
+.root-set-range { font-family: var(--font-body); font-size: 0.85rem; font-weight: 600; color: var(--text-muted); }
 
-/* Frequency position, which is the whole point of the ordering */
-.root-entry .vocab-card-head { align-items: center; gap: 0.6rem; }
-.root-rank {
-  flex: none;
-  min-width: 2.1rem;
-  font-family: var(--font-body);
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  background: var(--bg-elevated);
-  border-radius: 100px;
-  padding: 0.15rem 0.45rem;
-  text-align: center;
+.root-table { border-top: 1px solid var(--border); }
+.root-table-head,
+.root-row-main {
+  display: grid;
+  grid-template-columns: 2.6rem 6.5rem 1fr 1.4rem;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.4rem;
+}
+.root-table-head {
+  font-family: var(--font-body); font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+.root-row { border-bottom: 1px solid var(--border); }
+.root-row-main {
+  background: none; border: none; cursor: pointer; font: inherit; color: inherit;
+  transition: background 0.15s ease;
+}
+.root-row-main:hover { background: var(--bg-elevated); }
+.root-row-main:focus-visible { outline: 2px solid var(--purple); outline-offset: -2px; }
+.root-col-n {
+  font-family: var(--font-body); font-size: 0.8rem; font-weight: 600;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.root-col-root { text-align: right; }
+/* Only the rows carry the Arabic at reading size — the column header is a
+   label, and inheriting 1.3rem made it shout. */
+.root-row-main .root-col-root {
+  font-size: 1.3rem; line-height: 1.9; color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+.root-col-gloss {
+  font-family: var(--font-body); font-size: 0.92rem; color: var(--text-secondary);
+  line-height: 1.45;
+}
+.root-row-more {
+  font-size: 0.7rem; color: var(--text-muted); justify-self: end;
+  transition: transform 0.18s ease;
+}
+.root-row.is-open .root-row-more { transform: rotate(180deg); }
+
+/* Everything a root has beyond its meaning, revealed rather than removed. */
+.root-row-detail { display: none; padding: 0.2rem 0.4rem 1rem 3.1rem; }
+.root-row.is-open .root-row-detail { display: block; }
+.root-row-meta {
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+.root-chip-word { font-size: 1rem; }
+.root-chip-gloss { font-family: var(--font-body); font-size: 0.78rem; color: var(--text-muted); }
+
+@media (max-width: 640px) {
+  .root-table-head, .root-row-main { grid-template-columns: 2rem 4.6rem 1fr 1.2rem; gap: 0.4rem; }
+  .root-row-main .root-col-root { font-size: 1.15rem; }
+  .root-col-gloss { font-size: 0.85rem; }
+  .root-row-detail { padding-left: 0.4rem; }
 }
 /* The lesson is on screen before its written half arrives */
 .lesson-pending {
@@ -5396,15 +5448,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   color: var(--text-secondary);
 }
 .root-deck-offer .seed-progress { flex: 1 0 100%; margin: 0.2rem 0 0; }
-
-.root-lemmas-pending {
-  margin-top: 0.7rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed var(--border);
-  font-family: var(--font-body);
-  font-size: 0.76rem;
-  color: var(--text-muted);
-}
 
 .vocab-meta { display: flex; gap: 0.6rem; margin: 0.2rem 0 0.6rem; flex-wrap: wrap; }
 .vocab-pos {
@@ -5721,6 +5764,8 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 /* Non-Latin vocabulary: the word in its own script, the English pronunciation
    bracketed under it, and the example sentence carrying both a romanization
    and a translation. */
+/* Root cards in the Saved tab and the quiz keep the gold spine. */
+.vocab-card-root { border-left-color: var(--gold, #b8863f); }
 .vocab-card-script .vocab-word {
   font-size: 1.6rem;
   line-height: 1.5;
@@ -6385,10 +6430,6 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 /* ── The root card, wordform-first ────────────────────────────────────────
    The front is a real Quranic word now, so the root has to be visibly the
    supporting fact rather than the headline. It gets a chip, not a heading. */
-.root-headword-gloss {
-  font-family: var(--font-body); font-size: 0.9rem; color: var(--text-primary);
-  margin: -0.25rem 0 0.5rem; direction: ltr; text-align: left;
-}
 .root-chip {
   display: inline-flex; align-items: baseline; gap: 0.3rem;
   font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted);

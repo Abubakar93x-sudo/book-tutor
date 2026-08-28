@@ -1,0 +1,129 @@
+{
+  "_comment": "The 42 roots that came from the list but had no verified card yet. Every Arabic form below is checked against quran-text.js by build-roots300.cjs and dropped if it does not occur, so a wrong recollection cannot ship.",
+  "سلط": { "translit": "s-l-ṭ", "meaning": "authority — a warrant to act, and being given power over", "family": [
+    ["سُلْطَٰنٍ","an authority, a warrant"],["سُلْطَٰنًا","authority"],["بِسُلْطَٰنٍ","with a clear warrant"],
+    ["يُسَلِّطُ","He gives power over"],["سُلْطَٰنُهُۥ","his authority"]] },
+  "كرس": { "translit": "k-r-s", "meaning": "the Kursī — the seat of His authority", "family": [
+    ["كُرْسِيُّهُ","His Kursī"]] },
+  "رود": { "translit": "r-w-d", "meaning": "willing, intending — what someone actually wants to happen", "family": [
+    ["يُرِيدُ","He wills"],["أَرَادَ","he intended"],["يُرِيدُونَ","they want"],
+    ["نُرِيدُ","we want"],["أَرَدْنَآ","we intended"]] },
+  "فعل": { "translit": "f-ʿ-l", "meaning": "doing, acting — what someone actually does", "family": [
+    ["يَفْعَلُ","he does"],["يَفْعَلُونَ","they do"],["فَعَلَ","he did"],["تَفْعَلُونَ","you do"],
+    ["فَٰعِلِينَ","doers"],["مَفْعُولًا","done, carried out"]] },
+  "جهل": { "translit": "j-h-l", "meaning": "ignorance — not knowing, and acting from not knowing", "family": [
+    ["ٱلْجَٰهِلِينَ","the ignorant"],["بِجَهَٰلَةٍ","in ignorance"],["تَجْهَلُونَ","you are ignorant"],
+    ["ٱلْجَٰهِلِيَّةِ","the age of ignorance"],["جَهُولًا","greatly ignorant"]] },
+  "نسي": { "translit": "n-s-y", "meaning": "forgetting, and being left forgotten", "family": [
+    ["نَسُوا۟","they forgot"],["نَسِيتَ","you forgot"],["تَنسَ","do not forget"],
+    ["نَسِيًّا","forgotten"],["مَّنسِيًّا","a thing forgotten"]] },
+  "ترك": { "translit": "t-r-k", "meaning": "leaving something behind, abandoning it", "family": [
+    ["تَرَكَ","he left"],["تَرَكْنَا","we left"],["تَرَكُوا۟","they left"],
+    ["تَارِكٌ","one who leaves"],["يُتْرَكُ","he is left"]] },
+  "جيء": { "translit": "j-y-ʾ", "meaning": "coming — arriving with something", "family": [
+    ["جَآءَ","he came"],["جَآءَهُمْ","it came to them"],["جِئْنَا","we came"],
+    ["جَآءُو","they came"],["جَآءَتْ","she came"]] },
+  "رأي": { "translit": "r-ʾ-y", "meaning": "seeing — with the eye, and seeing that something is so", "family": [
+    ["تَرَىٰ","you see"],["يَرَوْا۟","they see"],["رَأَوُا۟","they saw"],
+    ["رَءَيْتَ","you saw"],["رُءْيَا","a dream, a vision"]] },
+  "جلس": { "translit": "j-l-s", "meaning": "sitting, a sitting-place", "family": [
+    ["ٱلْمَجَٰلِسِ","the gatherings"]] },
+  "ختم": { "translit": "ḫ-t-m", "meaning": "sealing — closing something so nothing gets in", "family": [
+    ["خَتَمَ","he sealed"],["نَخْتِمُ","we seal"],["يَخْتِمْ","he seals"],
+    ["خِتَٰمُهُۥ","its seal"],["خَاتَمَ","the seal of"]] },
+  "نفع": { "translit": "n-f-ʿ", "meaning": "benefit — what does you good", "family": [
+    ["يَنفَعُ","it benefits"],["نَفْعًا","benefit"],["مَنَٰفِعَ","benefits, uses"],
+    ["تَنفَعُ","she benefits"],["يَنفَعُهُمْ","it benefits them"]] },
+  "ضرر": { "translit": "ḍ-r-r", "meaning": "harm, and the affliction that comes with it", "family": [
+    ["ضَرًّا","harm"],["ٱلضُّرُّ","the affliction"],["يَضُرُّ","it harms"],
+    ["ضِرَارًا","to cause harm"],["ضُرٍّ","distress"]] },
+  "سعي": { "translit": "s-ʿ-y", "meaning": "striving — effort you actually put in", "family": [
+    ["يَسْعَىٰ","he strives"],["سَعَىٰ","he strove"],["سَعْيَهَا","its striving"],
+    ["سَعْيُكُم","your effort"],["سَعْيًا","striving"]] },
+  "فطر": { "translit": "f-ṭ-r", "meaning": "originating — bringing into being, and splitting open", "family": [
+    ["فَاطِرِ","Originator of"],["فَطَرَ","he originated"],["فِطْرَتَ","the nature He made"],
+    ["ٱنفَطَرَتْ","it split apart"],["فُطُورٍ","any flaw, any rift"]] },
+  "صعد": { "translit": "ṣ-ʿ-d", "meaning": "ascending, going up", "family": [
+    ["صَعِيدًا","earth, dust"],["يَصَّعَّدُ","he climbs"],["تُصْعِدُونَ","you were climbing"],
+    ["صَعَدًا","an uphill punishment"],["صَعُودًا","a steep ascent"]] },
+  "رجو": { "translit": "r-j-w", "meaning": "hoping for, expecting from", "family": [
+    ["يَرْجُونَ","they hope for"],["يَرْجُوا۟","he hopes for"],["تَرْجُونَ","you hope for"],
+    ["مُرْجَوْنَ","deferred, left waiting"]] },
+  "قبح": { "translit": "q-b-ḥ", "meaning": "ugliness, being made repulsive", "family": [
+    ["ٱلْمَقْبُوحِينَ","the despised"]] },
+  "فوز": { "translit": "f-w-z", "meaning": "success — coming through and winning", "family": [
+    ["ٱلْفَوْزُ","the triumph"],["فَازَ","he succeeded"],["ٱلْفَآئِزُونَ","the successful"],
+    ["فَوْزًا","a triumph"],["مَفَازًا","a place of success"]] },
+  "شرر": { "translit": "š-r-r", "meaning": "evil — the bad of a thing, and the worst of people", "family": [
+    ["شَرٌّ","evil, worse"],["ٱلشَّرَّ","the evil"],["ٱلْأَشْرَارِ","the wicked"],
+    ["بِشَرَرٍ","with sparks"]] },
+  "برر": { "translit": "b-r-r", "meaning": "righteousness — doing genuine good, and dutifulness", "family": [
+    ["ٱلْبِرَّ","righteousness"],["ٱلْأَبْرَارِ","the righteous"],["بَرَرَةٍ","noble ones"],
+    ["بَرًّا","dutiful"]] },
+  "صور": { "translit": "ṣ-w-r", "meaning": "shaping, a form — and the Trumpet", "family": [
+    ["ٱلصُّورِ","the Trumpet"],["صَوَّرَ","he shaped"],["صُوَرَكُمْ","your forms"],
+    ["ٱلْمُصَوِّرُ","the Fashioner"],["وَصَوَّرَكُمْ","and He shaped you"]] },
+  "جسد": { "translit": "j-s-d", "meaning": "a body, something with a physical frame", "family": [
+    ["جَسَدًا","a body"]] },
+  "فوه": { "translit": "f-w-h", "meaning": "the mouth — what speech comes out of", "family": [
+    ["أَفْوَٰهِهِمْ","their mouths"],["أَفْوَٰهِكُم","your mouths"],["بِأَفْوَٰهِهِم","with their mouths"]] },
+  "شعر": { "translit": "š-ʿ-r", "meaning": "perceiving — noticing without being told; and poetry, and the rites", "family": [
+    ["يَشْعُرُونَ","they perceive"],["تَشْعُرُونَ","you perceive"],["شَعَآئِرَ","the rites"],
+    ["شَاعِرٌ","a poet"],["ٱلشِّعْرَ","poetry"]] },
+  "فأد": { "translit": "f-ʾ-d", "meaning": "the heart, as the seat of feeling", "family": [
+    ["فُؤَادَكَ","your heart"],["أَفْـِٔدَةُ","hearts"],["أَفْـِٔدَتَهُمْ","their hearts"],
+    ["وَٱلْأَفْـِٔدَةَ","and the hearts"]] },
+  "لبب": { "translit": "l-b-b", "meaning": "the kernel of the mind — understanding that gets to the core", "family": [
+    ["ٱلْأَلْبَٰبِ","the understanding minds"],["أُو۟لِى ٱلْأَلْبَٰبِ","people of understanding"]] },
+  "ذرر": { "translit": "ḏ-r-r", "meaning": "offspring, and the tiniest particle", "family": [
+    ["ذُرِّيَّةٌ","offspring"],["ذُرِّيَّتِهِۦ","his offspring"],["ذَرَّةٍ","an atom's weight"],
+    ["ذُرِّيَّتَهُمْ","their offspring"]] },
+  "شرع": { "translit": "š-r-ʿ", "meaning": "laying down a way — a law to travel on", "family": [
+    ["شَرَعَ","He ordained"],["شِرْعَةً","a law"],["شَرِيعَةٍ","an ordained way"],
+    ["شَرَعُوا۟","they ordained"],["شُرَّعًا","coming openly"]] },
+  "نهي": { "translit": "n-h-y", "meaning": "forbidding, and the end a thing comes to", "family": [
+    ["يَنْهَىٰ","he forbids"],["نَهَىٰ","he forbade"],["تَنْهَوْنَ","you forbid"],
+    ["ٱلنُّهَىٰ","understanding"],["مُنتَهَىٰ","the final end"]] },
+  "بطل": { "translit": "b-ṭ-l", "meaning": "falsehood — what has nothing behind it", "family": [
+    ["ٱلْبَٰطِلَ","falsehood"],["بَٰطِلًا","in vain"],["ٱلْمُبْطِلُونَ","the falsifiers"],
+    ["تُبْطِلُوا۟","you nullify"],["بَطَلَ","it came to nothing"]] },
+  "فرض": { "translit": "f-r-ḍ", "meaning": "making something obligatory, an appointed share", "family": [
+    ["فَرَضَ","He made obligatory"],["فَرِيضَةً","an obligation"],["مَّفْرُوضًا","apportioned"],
+    ["فَرَضْنَا","We enjoined"],["تَفْرِضُوا۟","you fix"]] },
+  "طغي": { "translit": "ṭ-ġ-y", "meaning": "transgressing — going past every bound", "family": [
+    ["طَغَىٰ","he transgressed"],["ٱلطَّٰغُوتُ","false authority"],["طُغْيَٰنِهِمْ","their transgression"],
+    ["طَٰغِينَ","transgressors"],["تَطْغَوْا۟","do not transgress"]] },
+  "فجر": { "translit": "f-j-r", "meaning": "breaking open — the dawn breaking, and breaking out into sin", "family": [
+    ["ٱلْفَجْرِ","the dawn"],["ٱلْفُجَّارَ","the wicked"],["فَجَّرْنَا","We caused to gush"],
+    ["فُجُورَهَا","its wickedness"],["فَاجِرًا","a wicked one"]] },
+  "أثم": { "translit": "ʾ-ṯ-m", "meaning": "sin — the wrong you carry afterwards", "family": [
+    ["ٱلْإِثْمِ","the sin"],["إِثْمًا","a sin"],["أَثِيمٍ","sinful"],
+    ["إِثْمُهُۥ","its sin"],["تَأْثِيمًا","incitement to sin"]] },
+  "سجل": { "translit": "s-j-l", "meaning": "a scroll — the register a record is rolled into", "family": [
+    ["ٱلسِّجِلِّ","the scroll"],["سِجِّيلٍ","hard baked clay"]] },
+  "أجل": { "translit": "ʾ-j-l", "meaning": "a term — the time set for something to end", "family": [
+    ["أَجَلٍ","a term"],["أَجَلُهُمْ","their term"],["أَجَلًا","a fixed term"],
+    ["أَجَلَهَا","its term"],["مُّسَمًّى","named, appointed"]] },
+  "قبر": { "translit": "q-b-r", "meaning": "the grave", "family": [
+    ["ٱلْقُبُورِ","the graves"],["قَبْرِهِۦ","his grave"],["ٱلْمَقَابِرَ","the graveyards"],
+    ["أَقْبَرَهُۥ","He had him buried"]] },
+  "قضي": { "translit": "q-ḍ-y", "meaning": "decreeing and finishing — settling a matter for good", "family": [
+    ["قَضَىٰ","He decreed"],["قُضِىَ","it was decided"],["يَقْضِى","He judges"],
+    ["قَضَيْتَ","you decreed"],["مَّقْضِيًّا","decreed"]] },
+  "جحم": { "translit": "j-ḥ-m", "meaning": "the blazing fire", "family": [
+    ["ٱلْجَحِيمِ","the blazing fire"],["جَحِيمٍ","a blaze"]] },
+  "نقم": { "translit": "n-q-m", "meaning": "retribution — taking back against a wrong", "family": [
+    ["ٱنتَقَمْنَا","We took retribution"],["مُنتَقِمُونَ","ones who take retribution"],
+    ["نَقَمُوٓا۟","they resented"],["تَنقِمُونَ","you resent"],["ٱنتِقَامٍ","retribution"]] },
+  "بلو": { "translit": "b-l-w", "meaning": "testing — putting someone through something to see", "family": [
+    ["لِيَبْلُوَكُمْ","that He may test you"],["ٱبْتَلَىٰ","He tested"],["بَلَاءٌ","a trial"],
+    ["نَبْلُوَا۟","We test"],["بَلَوْنَٰهُمْ","We tested them"]] },
+  "فتن": { "translit": "f-t-n", "meaning": "trial — the pressure that shows what someone is", "family": [
+    ["فِتْنَةٌ","a trial, discord"],["ٱلْفِتْنَةِ","the trial"],["فَتَنَّا","We tried"],
+    ["يُفْتَنُونَ","they are tried"],["فُتِنُوا۟","they were tried"]] },
+  "فزع": { "translit": "f-z-ʿ", "meaning": "terror — the start of fright", "family": [
+    ["فَزَعٍ","terror"],["ٱلْفَزَعُ","the terror"],["فَزِعُوا۟","they were terrified"]] },
+  "لقي": { "translit": "l-q-y", "meaning": "meeting — and casting something down", "family": [
+    ["لِقَآءَ","the meeting"],["يَلْقَىٰ","he meets"],["مُّلَٰقُوا۟","ones who will meet"],
+    ["أَلْقَىٰ","he cast"],["يُلْقِى","he casts"],["لَٰقُوا۟","they met"]] }
+}

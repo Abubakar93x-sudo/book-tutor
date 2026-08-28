@@ -977,30 +977,6 @@ async function dbPutVocabSet(langId, setNumber, words, meta = {}) {
   );
 }
 
-// ── QURANIC LEMMA CACHE ──────────────────────────────────────────────────────
-// A root's five commonest Quranic words never change, so they are generated
-// once and read back forever. Same shape as the syllabus cache: curated data
-// picks the root, the model writes what goes with it, Firestore keeps it.
-// Cached lemmas are stamped with WHO wrote them. Switching the app from one
-// provider to the other is a request for its work, not just its future work —
-// so anything the other one wrote is treated as stale and asked for again.
-async function dbGetQuranLemmas(rootId) {
-  const col = userCol('quranLemmas');
-  if (!col) return null;
-  const snap = await col.doc(rootId).get();
-  const data = snap.exists ? snap.data() : null;
-  if (!data?.lemmas?.length) return null;
-  if (!isCurrentGeneration(data)) return null;
-  return data.lemmas;
-}
-
-async function dbPutQuranLemmas(rootId, lemmas) {
-  const col = userCol('quranLemmas');
-  if (!col) return;
-  await col.doc(rootId).set(
-    { rootId, lemmas, ...generationStamp(), createdAt: Date.now() }, { merge: true });
-}
-
 // The tutor's transcript, one per language + unit + mode. Kept apart from the
 // lesson doc because the tutor is reachable without running a session, and
 // apart per mode so teaching and quizzing never bleed into each other.
@@ -1119,6 +1095,39 @@ async function dbDropVocabSetsAbove(langId, keepSetNumber = 0) {
     await batch.commit();
   }
   return stale.length;
+}
+
+// Remove a vocabulary track outright: the language document, every vocab set
+// ever saved under it, and every flashcard batch it filed. Used by the Qur'anic
+// cleanup below, which is the only thing that should ever want it — a learner
+// removing a language is a different, gentler operation.
+async function dbDropDocsFor(collection, langId) {
+  const col = userCol(collection);
+  if (!col) return 0;
+  try {
+    const snap = await col.where('langId', '==', langId).get();
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = firestoreDB.batch();
+      snap.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    return snap.docs.length;
+  } catch (err) {
+    console.warn(`Could not clear ${collection} for ${langId}:`, err.message);
+    return 0;
+  }
+}
+
+async function dbDeleteLanguageEntirely(langId) {
+  const sets = await dbDropDocsFor('vocabSets', langId);
+  const cards = await dbDropDocsFor('langCards', langId);
+  try {
+    const col = userCol('languages');
+    if (col) await col.doc(langId).delete();
+  } catch (err) {
+    console.warn(`Could not delete language ${langId}:`, err.message);
+  }
+  return { sets, cards };
 }
 
 // ── FOUNDATION DECK ──────────────────────────────────────────────────────────
@@ -2408,7 +2417,7 @@ async function renderLanguages() {
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
   // Runs here too, not only in the Vocabulary Builder: a course hidden by the
   // old shared id should come back the moment you look at your courses.
-  const all = await migrateQuranVocabId(await dbGetAllLanguages());
+  const all = await cleanUpQuranVocabTracks(await dbGetAllLanguages());
 
   // The Qur'anic text is 1.4MB and a lesson cannot start writing until it has
   // loaded, because the verses go INTO the prompt. Fetching it the moment the
@@ -2995,7 +3004,7 @@ const QURAN_VOCAB_PROFILE = {
   id: QURAN_VOCAB_ID, name: 'Quranic Arabic', nativeName: 'العربية الفصحى',
   code: 'ar-quran', ttsLangCode: 'ar-SA',
   script: 'arabic', scriptName: 'Arabic script', romanizationName: 'transliteration',
-  notes: 'The 300 root words the Qur\'an is built from, each with the five forms you will meet most often.'
+  notes: 'The 300 roots the Qur\'an is built from, in five sets of sixty, each with the words it grows and a verse to meet them in.'
 };
 
 // Chosen from, never typed. Same reasoning as LANGUAGE_CATALOGUE: a language is
@@ -3003,7 +3012,7 @@ const QURAN_VOCAB_PROFILE = {
 const VOCAB_CATALOGUE = [
   { profile: ENGLISH_PROFILE,     blurb: 'Words that make you precise — the ones an articulate speaker reaches for.' },
   { profile: URDU_PROFILE,        blurb: 'Precise Urdu, in script, with pronunciation and an example sentence.' },
-  { profile: QURAN_VOCAB_PROFILE, blurb: '300 roots in order of how often they appear, each with five real Quranic words built from it.' }
+  { profile: QURAN_VOCAB_PROFILE, blurb: '300 roots in five sets of sixty, each with the real Quranic words built from it.' }
 ];
 
 // The root-vocabulary track is driven by curated data rather than the model.
@@ -3077,27 +3086,53 @@ function migrateQuranProgress(lang, syllabus) {
   };
 }
 
-// Anyone who added Quranic vocabulary before the ids were separated has it
-// filed under 'ar-quran' — the course's id — with `recipeId: 'vocabBuilder'`
-// merged on top, which hid their course. Move it to its own document and hand
-// the course id back, keeping every root they have already studied.
-async function migrateQuranVocabId(languages) {
-  const stray = languages.find(l => l.id === 'ar-quran' && l.recipeId === 'vocabBuilder');
-  if (!stray) return languages;
+// ONE QUR'ANIC VOCABULARY TRACK, AND IT IS THE ROOTS.
+//
+// Two of them accumulated. The roots track is `ar-quran-roots`; the other is a
+// leftover from before the ids were separated, when adding Quranic vocabulary
+// merged `recipeId: 'vocabBuilder'` onto the COURSE document under `ar-quran`.
+// That leftover then behaved like an ordinary vocabulary track and generated
+// ordinary Arabic words six at a time — words that have nothing to do with the
+// root list and were never meant to be a second Quranic section.
+//
+// So it goes, with the words it generated, and the course id it was squatting
+// on is handed back to the course. The roots track is untouched.
+async function cleanUpQuranVocabTracks(languages) {
+  const strays = languages.filter(l =>
+    l.id !== QURAN_VOCAB_ID &&
+    l.recipeId === 'vocabBuilder' &&
+    // Matched on the name too, not just the id: what he is looking at is a
+    // second entry reading "Quranic Arabic" in the vocabulary dropdown, and an
+    // old track could be filed under an id that does not say so.
+    (l.id === 'ar-quran' || l.code === 'ar-quran' ||
+     /quran/i.test(l.id) || /qur.?an/i.test(l.name || '')));
+  if (!strays.length) return languages;
 
-  console.log('Moving Quranic vocabulary off the course id — see QURAN_VOCAB_ID.');
-  const moved = { ...stray, ...QURAN_VOCAB_PROFILE, recipeId: 'vocabBuilder' };
-  try {
-    await dbPutLanguage(moved);
-    // The course document is whatever is left once the vocabulary fields are
-    // taken off it. It keeps its own progress; only the recipe has to go back.
-    await dbPatchLanguage('ar-quran', { recipeId: 'quranic' });
-  } catch (err) {
-    console.warn('Quranic vocabulary migration failed:', err.message);
-    return languages;
+  const gone = new Set();
+  for (const stray of strays) {
+    try {
+      if (stray.id === 'ar-quran') {
+        // The course lives on this document, so it is not deleted — only its
+        // vocabulary half is. The words it generated go, and the recipe goes
+        // back to being the course.
+        const sets = await dbDropDocsFor('vocabSets', stray.id);
+        console.log(`Removed the second Quranic vocabulary section (${sets} saved set(s)).`);
+        await dbPatchLanguage('ar-quran', { recipeId: 'quranic', vocabSet: 0, knownWords: [] });
+        gone.add(stray.id);
+      } else {
+        const { sets } = await dbDeleteLanguageEntirely(stray.id);
+        console.log(`Removed the second Quranic vocabulary section ${stray.id} (${sets} saved set(s)).`);
+        gone.add(stray.id);
+      }
+    } catch (err) {
+      console.warn(`Could not remove the stray Quranic vocabulary track ${stray.id}:`, err.message);
+    }
   }
-  return [...languages.filter(l => l.id !== 'ar-quran'), moved,
-          { ...stray, recipeId: 'quranic' }];
+
+  return languages
+    .filter(l => !gone.has(l.id))
+    .concat(strays.filter(l => l.id === 'ar-quran' && gone.has(l.id))
+      .map(l => ({ ...l, recipeId: 'quranic', vocabSet: 0, knownWords: [] })));
 }
 
 // ── THE QUR'ANIC TEXT ────────────────────────────────────────────────────────
@@ -3181,48 +3216,11 @@ function versesInHistory(history = []) {
 // lemma cache is never asked for again. All 305 arrive due immediately.
 async function buildQuranRootDeck(lang, onProgress = () => {}) {
   const entries = QURAN_SEQUENCE;
-  const lemmasFor = new Map();
 
-  // Cache first — a re-run after a partial failure only pays for what's missing.
-  const cached = await Promise.all(entries.map(async (e) => {
-    try { return [e, await dbGetQuranLemmas(e.id)]; } catch (_) { return [e, null]; }
-  }));
-  const missing = [];
-  for (const [entry, lemmas] of cached) {
-    if (lemmas?.length) lemmasFor.set(entry.id, lemmas);
-    else missing.push(entry);
-  }
-
-  onProgress(entries.length - missing.length, entries.length);
-
-  if (AppState.mode === 'demo') {
-    missing.forEach(e => lemmasFor.set(e.id, demoQuranLemmas(e)));
-  } else if (missing.length) {
-    const chunks = [];
-    for (let i = 0; i < missing.length; i += QURAN_LEMMA_BATCH) {
-      chunks.push(missing.slice(i, i + QURAN_LEMMA_BATCH));
-    }
-
-    let done = entries.length - missing.length;
-    await Promise.all(chunks.map(async (chunk) => {
-      let rows = [];
-      try {
-        rows = await callQuranLemmasBatch(chunk);
-      } catch (err) {
-        // A failed batch costs those roots their lemmas, not the whole deck —
-        // they still go in as cards and fill in on a later run.
-        console.warn(`Lemma batch failed (${chunk[0].root}…):`, err.message);
-      }
-      for (const { entry, lemmas } of rows) {
-        if (!lemmas.length) continue;
-        lemmasFor.set(entry.id, lemmas);
-        dbPutQuranLemmas(entry.id, lemmas)
-          .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
-      }
-      done += chunk.length;
-      onProgress(Math.min(done, entries.length), entries.length);
-    }));
-  }
+  // Nothing to fetch and nothing to generate: every root carries its verified
+  // family in quran-roots-data.js, so the whole deck is built from data that is
+  // already in the page. It used to cost twenty model calls and a cache.
+  onProgress(entries.length, entries.length);
 
   // Cards the deck doesn't already hold. Re-running tops up rather than doubles.
   const have = new Set();
@@ -3230,28 +3228,21 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
     for (const c of batch.flashcards || []) if (c.rootId) have.add(c.rootId);
   }
 
-  const cards = entries.filter(e => !have.has(e.id)).map(e => {
-    const card = typeof quranVocabCard === 'function' ? quranVocabCard(e.id) : null;
-    return {
+  const cards = entries.filter(e => !have.has(e.id)).map(e => ({
     // A real Quranic word on the front, not the three root letters. The root
-    // goes on the back with the family — see rootEntryHtml for the reasoning.
-    front: card?.headword || e.root,
-    back: card?.meaning || e.gloss,
-    word: card?.headword || e.root,
+    // goes on the back with the family — the list is where roots are read.
+    front: e.headword || e.root,
+    back: e.gloss,
+    word: e.headword || e.root,
     root: e.root,
     romanization: e.translit,
-    headwordGloss: card?.headwordGloss || '',
-    verse: card?.verse || null,
+    headwordGloss: e.headwordGloss || '',
+    verse: e.verse || null,
     type: 'root',
     rootId: e.id,
     quranCount: e.count,
-    // The verified family from quran-vocab-data.js when there is one; the
-    // generated lemmas otherwise, for a root the builder could not verify.
-    lemmas: card?.family?.length
-      ? card.family.map(f => ({ word: f.word, meaning: f.gloss }))
-      : (lemmasFor.get(e.id) || [])
-    };
-  });
+    lemmas: (e.family || []).map(f => ({ word: f.word, meaning: f.gloss }))
+  }));
 
   if (cards.length) await dbAppendLangCards(lang.id, cards);
 
@@ -3459,7 +3450,7 @@ const VocabBuilder = {
 
   async open() {
     let all = await dbGetAllLanguages().catch(() => []);
-    all = await migrateQuranVocabId(all);
+    all = await cleanUpQuranVocabTracks(all);
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
@@ -3954,6 +3945,7 @@ const VocabBuilder = {
     const filter = (this.rootFilter || '').trim().toLowerCase();
     const shown = filter
       ? words.filter(w =>
+          String(w.root).includes(filter) ||
           String(w.word).includes(filter) ||
           String(w.pronunciation).toLowerCase().includes(filter) ||
           String(w.meaning).toLowerCase().includes(filter) ||
@@ -3961,7 +3953,6 @@ const VocabBuilder = {
                                      String(l.word).includes(filter)))
       : words;
 
-    const withLemmas = words.filter(w => w.lemmas?.length).length;
     const covered = (quranCoverage(words.map(w => w.rootId)) * 100).toFixed(1);
 
     // The deck offer sits above the list, not instead of it. Reading the roots
@@ -3969,28 +3960,49 @@ const VocabBuilder = {
     // shown a button where the words should be helps with neither.
     const deckOffer = this.lang.rootDeckSeeded ? '' : `
       <div class="root-deck-offer" id="root-deck-offer">
-        <span class="root-deck-offer-text">These ${words.length} roots can go in your flashcard deck too — the root on the front, its meaning and words on the back.</span>
+        <span class="root-deck-offer-text">These ${words.length} roots can go in your flashcard deck too — a real Qur'anic word on the front, the root and its family on the back.</span>
         <button class="btn btn-primary btn-sm" id="btn-vocab-seed-roots">Add to flashcards</button>
       </div>`;
+
+    // Sixty at a time, with a heading over each set, because that is how the
+    // list was written and how the course teaches it: five sets you can finish
+    // rather than one list of 300 you abandon at forty. Searching cuts across
+    // all five, so the headings come off while a filter is on — a heading over
+    // no rows is worse than no heading.
+    const sets = (typeof QURAN_ROOT_SETS !== 'undefined' && QURAN_ROOT_SETS) || [];
+    const rows = (list) => list.map(w =>
+      rootEntryHtml(w, words.indexOf(w))).join('');
+
+    const body = filter
+      ? (shown.length
+          ? `<div class="root-table">${rootTableHeadHtml()}${rows(shown)}</div>`
+          : `<div class="vocab-empty"><p class="vocab-empty-sub">
+               Nothing matches “${escapeAttr(this.rootFilter)}”.</p></div>`)
+      : sets.map(s => {
+          const inSet = shown.filter(w => w.set === s.set);
+          if (!inSet.length) return '';
+          return `
+            <section class="root-set" data-set="${s.set}">
+              <h3 class="root-set-title">
+                <span class="root-set-leaf" aria-hidden="true">🌿</span>
+                ${escapeAttr(s.title)} <span class="root-set-range">(Set ${s.set}: ${s.from}–${s.to})</span>
+              </h3>
+              <div class="root-table">${rootTableHeadHtml()}${rows(inSet)}</div>
+            </section>`;
+        }).join('');
 
     panel.innerHTML = `
       <div class="root-head">
         <div class="root-head-line">
-          <span class="vocab-set-count">${words.length} root words</span>
-          <span class="root-head-note">in order of how often they appear · ${covered}% of the Qur'an between them</span>
+          <span class="vocab-set-count">${words.length} roots</span>
+          <span class="root-head-note">in five sets of sixty · ${covered}% of the Qur'an between them</span>
         </div>
         ${deckOffer}
         <input type="search" id="vocab-root-search" class="form-input root-search"
                placeholder="Search a root, a meaning or a word built from it…"
                value="${escapeAttr(this.rootFilter || '')}">
-        <div id="vocab-fill-note" class="root-fill-note"
-             style="display:${this.fillingLemmas ? '' : 'none'}">${this.fillingLemmas
-               ? `Filling in the words built from ${this.fillingLemmas} more roots…` : ''}</div>
       </div>
-      ${shown.length ? `<div class="vocab-list">
-        ${shown.map(w => rootEntryHtml(w, words.indexOf(w), withLemmas)).join('')}
-      </div>` : `<div class="vocab-empty"><p class="vocab-empty-sub">
-        Nothing matches “${escapeAttr(this.rootFilter)}”.</p></div>`}
+      ${body}
       <div class="vocab-actions">
         <button class="btn btn-primary" id="btn-vocab-quiz-now">Quiz me on these →</button>
       </div>
@@ -4011,10 +4023,22 @@ const VocabBuilder = {
       }, 180);
     });
 
+    // A row opens onto its words. The table is the list he asked for; the
+    // family and the verse are still one tap underneath it rather than gone.
+    panel.querySelectorAll('.root-row-main').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        if (e.target.closest('.vocab-speak')) return;
+        const row = btn.closest('.root-row');
+        const open = row.classList.toggle('is-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+
     panel.querySelectorAll('.vocab-speak').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const w = words[parseInt(btn.dataset.idx)];
-        if (!NarrationEngine.speakLang(w.lemmas?.[0]?.word || w.word,
+        if (!NarrationEngine.speakLang(w.word || w.lemmas?.[0]?.word,
               this.lang.ttsLangCode || this.lang.code, 0.85)) {
           showToast(`No ${this.lang.name} voice on this device — audio unavailable.`, 'info', 3000);
         }
@@ -4025,38 +4049,32 @@ const VocabBuilder = {
 
   // One corpus entry as a vocabulary word.
   //
-  // THE WORD IS A WORD, not three letters. ك ت ب is not something anyone ever
-  // sees in the muṣḥaf — ٱلْكِتَٰبِ is — so the front of the card is a real
-  // vowelled Quranic wordform and the root moves to the back, where it does its
-  // actual job of unifying the family. Every headword and family form in
-  // quran-vocab-data.js was checked to occur in the text before it shipped.
+  // Every root now ships with its own family, its own example verse and its own
+  // headword, all checked against quran-text.js at build time — so this reads
+  // the entry and asks nothing of a model. Nothing here can be slow, and nothing
+  // here can invent a word the Qur'an does not contain.
   //
-  // Frequency and the root's meaning stay curated: nothing is asked of a model
-  // for a number.
-  quranWord(entry, lemmas = []) {
-    const card = typeof quranVocabCard === 'function' ? quranVocabCard(entry.id) : null;
-    // The verified family when there is one; the curated word list for the
-    // particle groups, which are not roots and so have no card — the set IS the
-    // entry, and it is sitting right there in quran-roots-data.js; the cached
-    // lemmas otherwise.
-    const family = card?.family?.length
-      ? card.family.map(f => ({ word: f.word, meaning: f.gloss, romanization: '' }))
-      : (lemmas.length ? lemmas
-        : (entry.words || []).map(w => ({ word: w, meaning: '', romanization: '' })));
+  // THE LIST SHOWS THE ROOT, THE CARD SHOWS A WORD. كتب is what a root list is
+  // written with and what he wrote; ٱلْكِتَٰبِ is what you actually meet on the
+  // page, so that is what stays on the front of the flashcard.
+  quranWord(entry) {
+    const family = (entry.family || []).map(f => ({
+      word: f.word, meaning: f.gloss || f.meaning || '', romanization: ''
+    }));
 
     return {
-      // A particle group has no single headword — it IS a set of words — so it
-      // keeps showing its set. Every root shows one real word.
-      word: card?.headword || entry.root,
-      headwordGloss: card?.headwordGloss || '',
+      word: entry.headword || entry.root,
+      headwordGloss: entry.headwordGloss || '',
       root: entry.root,
       rootId: entry.id,
-      partOfSpeech: entry.kind === 'particles' ? 'function words' : 'root',
+      n: entry.n,
+      set: entry.set,
+      partOfSpeech: 'root',
       pronunciation: entry.translit,
-      meaning: card?.meaning || entry.gloss,
-      verse: card?.verse || null,
+      meaning: entry.gloss,
+      verse: entry.verse || null,
       example: family[0]?.word || '',
-      exampleRomanization: family[0]?.romanization || '',
+      exampleRomanization: '',
       exampleTranslation: family[0]?.meaning || '',
       cloze: '',
       contrast: '',
@@ -4065,78 +4083,15 @@ const VocabBuilder = {
     };
   },
 
-  // The whole list, not a handful. Quranic Arabic is a closed corpus of 305
-  // entries in frequency order, so the set IS the corpus — there is nothing to
-  // generate a batch at a time and no reason to make a learner press "next six"
-  // fifty times to see what they are studying.
+  // The whole list, not a handful. The 300 roots ARE the set: there is nothing
+  // to generate a batch at a time, and no reason to make a learner press "next
+  // sixty" five times to see what they are studying.
   //
-  // Lemmas come from the cache, so the list paints at once. Anything not cached
-  // is filled in behind the paint by `fillQuranLemmas`.
+  // It paints instantly and costs nothing. Every root's words and verse are in
+  // quran-roots-data.js, verified against the text when that file was built, so
+  // there is no cache to read and no model to wait for.
   async loadQuranRoots() {
-    const cached = await Promise.all(QURAN_SEQUENCE.map(async (entry) => {
-      try { return await dbGetQuranLemmas(entry.id); } catch (_) { return null; }
-    }));
-    return QURAN_SEQUENCE.map((entry, i) => this.quranWord(entry,
-      cached[i]?.length ? cached[i] : (AppState.mode === 'demo' ? demoQuranLemmas(entry) : [])));
-  },
-
-  // Generate the lemmas the cache didn't have, fifteen roots per call and every
-  // batch in flight at once, repainting as each lands. Nothing here blocks the
-  // list being on screen — a root with no lemmas yet is still a root you can
-  // read, and it fills in while you look at the others.
-  async fillQuranLemmas(words) {
-    if (AppState.mode === 'demo') return;
-    const missing = words.filter(w => !w.lemmas?.length)
-      .map(w => QURAN_SEQUENCE.find(e => e.id === w.rootId)).filter(Boolean);
-    if (!missing.length) return;
-
-    const byId = new Map(words.map(w => [w.rootId, w]));
-    const chunks = [];
-    for (let i = 0; i < missing.length; i += QURAN_LEMMA_BATCH) {
-      chunks.push(missing.slice(i, i + QURAN_LEMMA_BATCH));
-    }
-
-    this.fillingLemmas = missing.length;
-    this.renderFillNote();
-
-    await Promise.all(chunks.map(async (chunk) => {
-      let rows = [];
-      try {
-        rows = await callQuranLemmasBatch(chunk);
-      } catch (err) {
-        console.warn(`Lemma batch failed (${chunk[0].root}…):`, err.message);
-      }
-      for (const { entry, lemmas } of rows) {
-        if (!lemmas.length) continue;
-        const word = byId.get(entry.id);
-        if (word) {
-          word.lemmas = lemmas;
-          word.example = lemmas[0].word;
-          word.exampleRomanization = lemmas[0].romanization || '';
-          word.exampleTranslation = lemmas[0].meaning;
-        }
-        dbPutQuranLemmas(entry.id, lemmas)
-          .catch(err => console.warn(`Lemma cache write failed for ${entry.id}:`, err.message));
-      }
-      this.fillingLemmas = Math.max(0, this.fillingLemmas - chunk.length);
-      // Only repaint if the learner is still looking at this language
-      if (this.tab === 'learn' && isQuranVocab(this.lang)) this.renderLearn();
-    }));
-
-    this.fillingLemmas = 0;
-    if (this.tab === 'learn' && isQuranVocab(this.lang)) this.renderLearn();
-    dbPutVocabSet(this.lang.id, 0, words, {
-      langName: this.lang.name, script: this.lang.script
-    }).catch(err => console.warn('Root set save failed:', err.message));
-  },
-
-  renderFillNote() {
-    const note = document.getElementById('vocab-fill-note');
-    if (note) {
-      note.textContent = this.fillingLemmas
-        ? `Filling in the words built from ${this.fillingLemmas} more roots…` : '';
-      note.style.display = this.fillingLemmas ? '' : 'none';
-    }
+    return QURAN_SEQUENCE.map(entry => this.quranWord(entry));
   },
 
   async loadWords() {
@@ -4170,7 +4125,6 @@ const VocabBuilder = {
         dbDropVocabSetsAbove(this.lang.id, 0)
           .then(n => { if (n) console.log(`Dropped ${n} stale root set(s).`); })
           .catch(err => console.warn('Stale root set cleanup failed:', err.message));
-        this.fillQuranLemmas(words);
         return;
       }
 
@@ -4497,48 +4451,62 @@ function rootCardHtml(w, i) {
     </article>`;
 }
 
-// One entry in the full root list. Numbered, because position in this list is
-// meaningful — it is frequency order, and #7 really is worth more than #250.
-// A root whose lemmas have not arrived yet still shows: the root, its sound and
-// its meaning are curated data and never needed a model.
-// One entry in the full list. The WORD leads — a real vowelled form from the
-// muṣḥaf — with the root underneath it as the thing that ties the family
-// together. It used to be the other way round, which taught the eye to look for
-// something the page never shows.
-function rootEntryHtml(w, i, withLemmas) {
-  const lemmas = w.lemmas || [];
-  const isParticles = w.partOfSpeech === 'function words';
+// The list he asked for: a numbered table of `# / Root / Core meaning`, the
+// root written JOINED — كتب, the way a root list is written and the way he
+// wrote it — with his own wording in the meaning column.
+//
+// The root leads here and a real wordform leads on the flashcard, and that is
+// deliberate rather than inconsistent. A root list exists to show the thing
+// that unifies a family; a card exists to drill what you actually meet on the
+// page. ك ت ب appears nowhere in the muṣḥaf, but كتب is how every root list
+// ever printed writes it.
+//
+// The words built from the root, their translations and the verse are one tap
+// underneath, so the table stays scannable without losing any of it.
+function rootTableHeadHtml() {
   return `
-    <article class="vocab-card vocab-card-script vocab-card-root root-entry" data-idx="${i}">
-      <div class="vocab-card-head">
-        <span class="root-rank">${i + 1}</span>
-        <h3 class="vocab-word vocab-root-word">${escapeAttr(w.word)}</h3>
-        <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+    <div class="root-table-head" aria-hidden="true">
+      <span class="root-col-n">#</span>
+      <span class="root-col-root">Root</span>
+      <span class="root-col-gloss">Core meaning / concept</span>
+    </div>`;
+}
+
+function rootEntryHtml(w, i) {
+  const lemmas = w.lemmas || [];
+  return `
+    <article class="root-row" data-idx="${i}">
+      <button type="button" class="root-row-main" aria-expanded="false"
+              aria-label="${escapeAttr(w.root)} — ${escapeAttr(w.meaning)}">
+        <span class="root-col-n">${w.n || i + 1}</span>
+        <span class="root-col-root" dir="rtl" lang="ar">${escapeAttr(w.root)}</span>
+        <span class="root-col-gloss">${escapeAttr(w.meaning)}</span>
+        <span class="root-row-more" aria-hidden="true">▾</span>
+      </button>
+      <div class="root-row-detail">
+        <div class="root-row-meta">
+          ${w.pronunciation ? `<span class="root-chip">${escapeAttr(w.pronunciation)}</span>` : ''}
+          ${w.word && w.word !== w.root ? `<span class="root-chip root-chip-word" dir="rtl" lang="ar">${escapeAttr(w.word)}</span>` : ''}
+          ${w.headwordGloss ? `<span class="root-chip-gloss">${escapeAttr(w.headwordGloss)}</span>` : ''}
+          ${w.quranCount ? `<span class="vocab-pos">${w.quranCount.toLocaleString()}× in the Qur'an</span>` : ''}
+          <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
+        </div>
+        ${lemmas.length ? `<div class="root-lemmas">
+          <div class="root-lemmas-head">Words built from ${escapeAttr(w.root)}</div>
+          ${lemmas.map(l => `
+            <div class="root-lemma">
+              <span class="root-lemma-ar" dir="rtl" lang="ar">${escapeAttr(l.word)}</span>
+              <span class="root-lemma-body">
+                <span class="root-lemma-meaning">${escapeAttr(l.meaning)}</span>
+              </span>
+            </div>`).join('')}
+        </div>` : ''}
+        ${w.verse ? `
+          <blockquote class="root-verse">
+            <span class="root-verse-ar" dir="rtl" lang="ar">${escapeAttr(w.verse.text)}</span>
+            <cite class="root-verse-ref">${escapeAttr(w.verse.surah)} · ${escapeAttr(w.verse.ref)}</cite>
+          </blockquote>` : ''}
       </div>
-      ${w.headwordGloss ? `<p class="root-headword-gloss">${escapeAttr(w.headwordGloss)}</p>` : ''}
-      <div class="vocab-meta">
-        ${!isParticles && w.root ? `<span class="root-chip">root <b>${escapeAttr(w.root)}</b>${
-          w.pronunciation ? ` · ${escapeAttr(w.pronunciation)}` : ''}</span>` : ''}
-        ${w.quranCount ? `<span class="vocab-pos">${w.quranCount.toLocaleString()}× in the Qur'an</span>` : ''}
-      </div>
-      <p class="vocab-meaning">${escapeAttr(w.meaning)}</p>
-      ${lemmas.length ? `<div class="root-lemmas">
-        <div class="root-lemmas-head">${isParticles ? 'The set' : 'Others from the same root'}</div>
-        ${lemmas.map(l => `
-          <div class="root-lemma">
-            <span class="root-lemma-ar">${escapeAttr(l.word)}</span>
-            <span class="root-lemma-body">
-              ${l.romanization ? `<span class="root-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
-              <span class="root-lemma-meaning">${escapeAttr(l.meaning)}</span>
-            </span>
-            ${l.form ? `<span class="root-lemma-form">${escapeAttr(l.form)}</span>` : ''}
-          </div>`).join('')}
-      </div>` : `<div class="root-lemmas-pending">Words from the same root — coming…</div>`}
-      ${w.verse ? `
-        <blockquote class="root-verse">
-          <span class="root-verse-ar" dir="rtl" lang="ar">${escapeAttr(w.verse.text)}</span>
-          <cite class="root-verse-ref">${escapeAttr(w.verse.surah)} · ${escapeAttr(w.verse.ref)}</cite>
-        </blockquote>` : ''}
     </article>`;
 }
 
@@ -4562,6 +4530,12 @@ function buildVocabQuiz(words) {
   // than inventing plausible-looking Arabic.
   const allLemmas = words.flatMap(x => (x.lemmas || []).map(l => ({ ...l, from: x.word })));
 
+  // A root entry is asked about BY ITS ROOT. `word` is the headword — a real
+  // wordform, right for a flashcard — but "which word comes from ٱلْكِتَٰبِ?"
+  // asks the wrong question. The root is what the family hangs off, so the root
+  // is what the question shows.
+  const face = x => x.root || x.word;
+
   words.forEach(w => {
     // 1. cloze: the studied sentence, word removed. A root has no sentence of
     //    its own — the words grown from it are the point — so it skips this.
@@ -4575,14 +4549,16 @@ function buildVocabQuiz(words) {
       });
     }
 
-    // 2. meaning → word
-    const meaningDistractors = pick(words.map(x => x.word), 3, w.word);
+    // 2. meaning → word (or, for a root entry, meaning → root)
+    const isRootEntry = !!w.lemmas?.length && !!w.root;
+    const answer = isRootEntry ? face(w) : w.word;
+    const meaningDistractors = pick(words.map(x => (isRootEntry ? face(x) : x.word)), 3, answer);
     if (meaningDistractors.length === 3) {
-      const options = shuffleArray([w.word, ...meaningDistractors]);
+      const options = shuffleArray([answer, ...meaningDistractors]);
       items.push({
-        kind: 'meaning', label: w.lemmas?.length ? 'Which root means this?' : 'Which word means this?', word: w,
+        kind: 'meaning', label: isRootEntry ? 'Which root means this?' : 'Which word means this?', word: w,
         promptHtml: escapeAttr(w.meaning),
-        options, answerIdx: options.indexOf(w.word)
+        options, answerIdx: options.indexOf(answer)
       });
     }
 
@@ -4595,8 +4571,8 @@ function buildVocabQuiz(words) {
       if (distractors.length === 3) {
         const options = shuffleArray([correct, ...distractors]);
         items.push({
-          kind: 'lemma', label: `Which word comes from ${w.word}?`, word: w,
-          promptHtml: `<strong>${escapeAttr(w.word)}</strong> — ${escapeAttr(w.meaning)}`,
+          kind: 'lemma', label: `Which word comes from ${face(w)}?`, word: w,
+          promptHtml: `<strong>${escapeAttr(face(w))}</strong> — ${escapeAttr(w.meaning)}`,
           options, answerIdx: options.indexOf(correct)
         });
       }
@@ -4612,51 +4588,14 @@ function buildVocabQuiz(words) {
     kind: 'use',
     label: isRoot ? 'Name a word from this root' : 'Now use it yourself',
     word: target,
-    promptHtml: `<strong>${escapeAttr(target.word)}</strong> — ${escapeAttr(target.meaning)}`,
+    promptHtml: `<strong>${escapeAttr(isRoot ? face(target) : target.word)}</strong> — ${escapeAttr(target.meaning)}`,
     options: [], answerIdx: -1
   });
   return quiz;
 }
 
-// Demo lemmas. Real words for the roots a demo learner meets first, so the
-// keyless path shows the actual shape of a root card rather than placeholders.
-const DEMO_LEMMAS = {
-  alh: [
-    { word: 'اللَّهُ', romanization: 'Allāh', meaning: 'God', form: 'proper noun' },
-    { word: 'إِلَٰه', romanization: 'ilāh', meaning: 'a god, an object of worship', form: 'noun' },
-    { word: 'آلِهَة', romanization: 'āliha', meaning: 'gods', form: 'plural noun' },
-    { word: 'اللَّهُمَّ', romanization: 'Allāhumma', meaning: 'O God', form: 'call, address' },
-    { word: 'إِلَٰهَيْن', romanization: 'ilāhayn', meaning: 'two gods', form: 'dual noun' }
-  ],
-  qwl: [
-    { word: 'قَالَ', romanization: 'qāla', meaning: 'he said', form: 'verb (Form I), past' },
-    { word: 'يَقُولُ', romanization: 'yaqūlu', meaning: 'he says, he will say', form: 'verb (Form I), present' },
-    { word: 'قَوْل', romanization: 'qawl', meaning: 'a saying, a word', form: 'noun' },
-    { word: 'قُلْ', romanization: 'qul', meaning: 'say! (a command)', form: 'verb, command' },
-    { word: 'مَقَالَة', romanization: 'maqāla', meaning: 'something said', form: 'noun of place/thing' }
-  ],
-  ktb: [
-    { word: 'كَتَبَ', romanization: 'kataba', meaning: 'he wrote, he decreed', form: 'verb (Form I), past' },
-    { word: 'كِتَاب', romanization: 'kitāb', meaning: 'a book, a scripture', form: 'noun' },
-    { word: 'كَاتِب', romanization: 'kātib', meaning: 'a writer, a scribe', form: 'doer noun' },
-    { word: 'مَكْتُوب', romanization: 'maktūb', meaning: 'written, decreed', form: 'passive participle' },
-    { word: 'كُتِبَ', romanization: 'kutiba', meaning: 'it was prescribed', form: 'verb, passive' }
-  ]
-};
-
-function demoQuranLemmas(entry) {
-  if (DEMO_LEMMAS[entry.id]) return DEMO_LEMMAS[entry.id];
-  // Everything else gets a shaped stand-in built from its own data, so demo mode
-  // exercises the real rendering path for any root the tester happens to reach.
-  const r = entry.translit;
-  return [
-    { word: entry.root.replace(/ /g, ''), romanization: r, meaning: entry.gloss, form: 'the bare root' },
-    { word: `${entry.root.replace(/ /g, '')}َة`, romanization: `${r}a`, meaning: `an instance of ${entry.gloss}`, form: 'noun' },
-    { word: `مَ${entry.root.replace(/ /g, '')}`, romanization: `ma-${r}`, meaning: `a place of ${entry.gloss}`, form: 'noun of place' },
-    { word: `${entry.root.replace(/ /g, '')}ِين`, romanization: `${r}īn`, meaning: `those who do ${entry.gloss}`, form: 'plural doer noun' },
-    { word: `يَ${entry.root.replace(/ /g, '')}`, romanization: `ya-${r}`, meaning: `he does ${entry.gloss}`, form: 'verb (Form I), present' }
-  ];
-}
+// Demo mode needs no stand-in lemmas any more: every root ships with the same
+// verified family the live path uses, so a keyless tester sees the real cards.
 
 // Demo mode: a shaped stand-in so "I know this" works without an API key.
 function demoSimilarWord(lang, old) {

@@ -94,7 +94,7 @@ const QURAN_GRAMMAR_UNITS = [
     id: 'roots-in-chunks', stage: 'The roots', level: 'A0',
     title: 'How to actually get through 300 roots',
     structure: 'In sets, not in one heap. Sixty at a time, in frequency order, each root attached to two things: a small family of real words grown from it, and one āyah where you meet it. Do not learn a root as three bare letters and a gloss — learn it as ك ت ب → ٱلْكِتَٰب, and one verse that has it in.',
-    whyItMatters: 'Sixty is a set you can finish, and finishing is the point. A list of 300 is something you abandon at 40; six sets of sixty is something you tick off.'
+    whyItMatters: 'Sixty is a set you can finish, and finishing is the point. A list of 300 is something you abandon at 40; five sets of sixty is something you tick off.'
   },
   {
     id: 'bare-roots', stage: 'The roots', level: 'A0',

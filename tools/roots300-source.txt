@@ -1,0 +1,300 @@
+1	كتب	write, book, decree
+2	قال	say, speak
+3	علم	know, knowledge
+4	فعل	do, act
+5	جعل	make, appoint
+6	خلق	create
+7	آمن	believe, trust
+8	هدى	guide
+9	عبد	worship, servant
+10	رحم	mercy, compassion
+11	غفر	forgive
+12	أمر	command, order
+13	رزق	provide, sustenance
+14	نزل	descend, send down
+15	عمل	deed, action
+16	كفر	disbelieve, reject
+17	جهل	ignorance
+18	سمع	hear
+19	بصر	see
+20	نصر	help, victory
+21	صبر	patience, perseverance
+22	شكر	gratitude
+23	ظلم	wrong, oppress
+24	عدل	justice, balance
+25	صدق	truth, sincerity
+26	كذب	lie, deny
+27	قتل	kill
+28	أحسن	do good, excellence
+29	اتقى	protect, piety
+30	أكل	eat, consume
+31	شرب	drink
+32	كتب	write
+33	خرج	go out
+34	دخل	enter
+35	دعا	call, supplicate
+36	ذكر	remember, mention
+37	نسي	forget
+38	سجد	prostrate
+39	صلح	righteous, repair
+40	فسد	corrupt, spoil
+41	ظلم	wrong, injustice
+42	خاف	fear
+43	رجع	return
+44	تبع	follow
+45	آتى	give, bring
+46	ترك	leave, abandon
+47	جاء	come
+48	ذهب	go
+49	رأى	see
+50	علم	know
+51	سكن	dwell, reside
+52	قام	stand, rise, establish
+53	جلس	sit
+54	فتح	open, victory
+55	ختم	seal, close
+56	لبس	wear, cover, confuse
+57	نفع	benefit
+58	ضرر	harm
+59	سعى	strive, effort
+60	عبد	worship
+61	كتب	decree, prescribed
+62	قرأ	read, recite
+63	سأل	ask, question
+64	أجاب	answer, respond
+65	حمد	praise, thank
+66	عبد	worship, servitude
+67	فطر	originate, split, create
+68	بدأ	begin, start
+69	عاد	return, repeat
+70	دعا	call, invite, supplicate
+71	رفع	raise, elevate
+72	وضع	place, set down
+73	نزل	send down, descend
+74	صعد	ascend, rise
+75	بشر	human being, glad tidings
+76	ملك	possess, king, power
+77	حكم	judge, rule, wisdom
+78	قوم	people, stand, establish
+79	نفس	self, soul
+80	قلب	heart, inner self
+81	عين	eye, spring, essence
+82	وجه	face, direction, presence
+83	يد	hand, power
+84	لسان	tongue, language
+85	سمع	hearing, perception
+86	بصر	sight, vision
+87	علم	knowledge, awareness
+88	عقل	reason, intellect
+89	فكر	think, reflect
+90	ذكر	remember, mention
+91	نسي	forget
+92	رغب	desire, incline
+93	خاف	fear, awe
+94	رجاء	hope
+95	حب	love, affection
+96	كره	dislike, detest
+97	صلح	righteousness, reform
+98	فسد	corruption, spoil
+99	حسن	beauty, goodness
+100	قبح	ugliness, evil
+101	ظلم	injustice, wrongdoing
+102	عدل	justice, equity
+103	أمن	safety, security, belief
+104	خوف	fear, dread
+105	صدق	truthfulness
+106	كذب	falsehood, lie
+107	صبر	patience, endurance
+108	جزا	recompense, reward
+109	غفر	forgiveness
+110	رحم	mercy, compassion
+111	رزق	provision, sustenance
+112	برك	blessing, growth, increase
+113	فتح	open, victory
+114	نصر	help, victory
+115	خسر	loss, failure
+116	فاز	success, salvation
+117	خير	good, benefit
+118	شر	evil, harm
+119	يوم	day, time
+120	ليل	night
+121	أرض	earth, land
+122	سماء	sky, heavens
+123	جبل	mountain
+124	بحر	sea
+125	نهر	river
+126	ريح	wind
+127	مطر	rain
+128	شمس	sun
+129	قمر	moon
+130	نجم	star
+131	نار	fire
+132	ماء	water
+133	شجر	tree
+134	ثمر	fruit
+135	زرع	crop, plant
+136	طير	bird
+137	داب	creature, moving being
+138	حيوان	life, living creature
+139	رزق	sustenance, provision
+140	طيب	good, pure
+141	خبيث	impure, wicked
+142	بحر	sea
+143	بر	land, goodness
+144	نفع	benefit
+145	ضر	harm
+146	حياة	life
+147	موت	death
+148	بعث	resurrection, send forth
+149	خلق	create, originate
+150	صور	form, shape
+151	جسد	body
+152	روح	spirit
+153	نفس	self, soul
+154	قلب	heart
+155	صدر	chest, inner self
+156	وجه	face, direction
+157	يد	hand, power
+158	رجل	leg, foot, man
+159	عين	eye, spring
+160	لسان	tongue, speech
+161	أذن	ear
+162	فم	mouth
+163	رأس	head
+164	شعر	hair, perceive
+165	عقل	reason, intellect
+166	فؤاد	heart, emotion
+167	بطن	belly, inner part
+168	ظهر	back, outward
+169	جسد	body
+170	لب	core, intellect
+171	ذر	offspring, progeny
+172	أب	father
+173	أم	mother
+174	ابن	son
+175	بنت	daughter
+176	أخ	brother
+177	أخت	sister
+178	زوج	spouse, pair
+179	قوم	people, community
+180	أمة	nation, community
+181	ملك	king, possess, power
+182	عبد	worship, serve
+183	شيطن	devil, rebellion
+184	جن	unseen beings, concealment
+185	ملك	angels
+186	رزأ	loss, affliction
+187	زكى	purify, grow, charity
+188	صدق	truth, charity
+189	صلو	prayer, connection
+190	زكاة	almsgiving, purification
+191	حج	pilgrimage
+192	صوم	fasting
+193	طهر	purity, cleanliness
+194	قرب	nearness, approach
+195	بعد	distance, remoteness
+196	علم	knowledge, awareness
+197	جهل	ignorance
+198	حكم	rule, judge
+199	شرع	legislate, way, law
+200	أمر	command, order
+201	نهى	forbid, prohibition
+202	حق	truth, right
+203	باطل	falsehood, vanity
+204	عدل	justice, fairness
+205	ظلم	wrong, injustice
+206	شهد	witness, testify
+207	كتب	prescribe, decree
+208	فرض	make obligatory
+209	حرم	forbid, make sacred
+210	حلل	make lawful
+211	صدق	believe, affirm truth
+212	كذب	deny, lie
+213	وعد	promise
+214	وعظ	admonish, counsel
+215	بشر	give good news
+216	أنذر	warn
+217	خوف	fear, warn
+218	رجاء	hope
+219	دعا	supplicate, call
+220	نادى	call aloud, proclaim
+221	ذكر	remember, remind
+222	نسي	forget
+223	استغفر	seek forgiveness
+224	توب	repent, return
+225	آمن	believe, trust
+226	كفر	disbelieve, cover up truth
+227	شرك	associate others with God
+228	طغى	transgress, exceed bounds
+229	عصى	disobey
+230	ظلم	wrong, oppress
+231	فجر	sin openly, immoral
+232	كذب	deny, lie
+233	صدق	truth, sincerity
+234	بر	goodness, righteousness
+235	إثم	sin
+236	ذنب	fault, wrongdoing
+237	غفر	forgive
+238	عفا	pardon, overlook
+239	رحم	mercy
+240	شكر	gratitude, thanks
+241	آخرة	afterlife, hereafter
+242	دنيا	worldly life, nearness
+243	جنة	garden, paradise
+244	نار	fire, hell
+245	سماء	heaven, sky
+246	أرض	earth, land
+247	عرش	throne
+248	كرسي	seat, authority
+249	حساب	reckoning, accounting
+250	ميزان	balance, scale
+251	كتاب	record, book
+252	سجل	scroll, register
+253	أجل	appointed time, term
+254	يوم	day, time
+255	ساعة	hour, moment
+256	قبر	grave
+257	بعث	resurrection
+258	نشور	rising again
+259	حياة	life
+260	موت	death
+261	قدر	decree, measure, power
+262	أمر	command, affair
+263	حكم	judgment, rule
+264	قضاء	decree, determination
+265	عذاب	punishment, torment
+266	جحيم	blazing fire
+267	نار	fire
+268	مغفرة	forgiveness
+269	توبة	repentance
+270	رحمة	mercy, compassion
+271	رزق	provision, sustenance
+272	فضل	grace, bounty
+273	نعمة	blessing, favor
+274	نقمة	retribution
+275	بلاء	trial, test
+276	فتنة	temptation, affliction
+277	ابتلاء	testing, trial
+278	صبر	patience, perseverance
+279	شكر	gratitude
+280	خوف	fear, awe
+281	رجاء	hope
+282	طمع	desire, ambition
+283	حب	love, affection
+284	كره	dislike, aversion
+285	رضا	contentment, satisfaction
+286	غضب	anger, wrath
+287	حزن	sadness, grief
+288	فرح	joy, delight
+289	أمن	safety, security
+290	فزع	fear, panic
+291	رجع	return, go back
+292	لقاء	meeting, encounter
+293	هدى	guidance
+294	ضلال	error, misguidance
+295	فوز	success, salvation
+296	خسر	loss, ruin
+297	نصر	victory, help
+298	فتح	opening, conquest
+299	بشر	glad tidings, good news
+300	نذر	warning, admonition

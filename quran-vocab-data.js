@@ -17,6 +17,13 @@
 // is a real verse found by searching the corpus rather than recalled.
 // ============================================================================
 
+// NOTE: this file is no longer loaded by the app. Its cards were folded into
+// quran-roots-data.js when the root list was rebuilt from the learner's own
+// 300, so the page carries one file instead of two. It is kept because
+// tools/build-roots300.cjs reads it as a source — the verified headwords and
+// families in here are where most of that list's words come from, and deleting
+// it would make the build unreproducible.
+//
 const QURAN_VOCAB = [
  {
   "id": "alh",
