@@ -893,6 +893,9 @@ function confirmAction({ title, body, confirmLabel = 'Delete', danger = true }) 
 //                                    same chunking pattern as bookChapters)
 
 const LANG_CARDS_PER_BATCH = 100;
+// How many cards go out per write. Smaller than a batch so a long file shows
+// progress the whole way through and a failure loses a chunk, not a batch.
+const LANG_CARDS_PER_WRITE = 25;
 
 async function dbPutLanguage(lang) {
   const col = userCol('languages');
@@ -936,20 +939,41 @@ async function dbPutLangCardBatch(langId, batchNum, cards) {
 }
 
 // Append new cards, filling the last partial batch before starting a new one.
-async function dbAppendLangCards(langId, newCards) {
+// `onProgress(written, total)` is called after every write, so a caller filing
+// hundreds of cards can show something moving instead of a bar that sits still
+// until the whole set lands. Writes go out in LANG_CARDS_PER_WRITE chunks rather
+// than one document at a time — one round trip per card would be far slower than
+// the batching it replaced, which is the opposite of the point.
+async function dbAppendLangCards(langId, newCards, onProgress = null) {
   const batches = await dbGetLangCardBatches(langId);
   let queue = [...newCards];
+  const total = newCards.length;
   const before = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
+  let written = 0;
+  const step = (n) => {
+    written += n;
+    if (onProgress) { try { onProgress(written, total); } catch (_) { /* cosmetic */ } }
+  };
 
   const last = batches[batches.length - 1];
   if (last && (last.flashcards || []).length < LANG_CARDS_PER_BATCH) {
     const room = LANG_CARDS_PER_BATCH - last.flashcards.length;
     const fill = queue.splice(0, room);
     await dbPutLangCardBatch(langId, last.batch, [...last.flashcards, ...fill]);
+    step(fill.length);
   }
   let nextBatch = last ? last.batch + 1 : 0;
   while (queue.length) {
-    await dbPutLangCardBatch(langId, nextBatch, queue.splice(0, LANG_CARDS_PER_BATCH));
+    // A batch document is filled across several writes so progress moves during
+    // it, and a failure part-way costs a chunk rather than the whole batch.
+    const batchCards = queue.splice(0, LANG_CARDS_PER_BATCH);
+    const held = [];
+    while (held.length < batchCards.length) {
+      const chunk = batchCards.slice(held.length, held.length + LANG_CARDS_PER_WRITE);
+      held.push(...chunk);
+      await dbPutLangCardBatch(langId, nextBatch, [...held]);
+      step(chunk.length);
+    }
     nextBatch += 1;
   }
 
@@ -2417,7 +2441,8 @@ async function renderLanguages() {
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
   // Runs here too, not only in the Vocabulary Builder: a course hidden by the
   // old shared id should come back the moment you look at your courses.
-  const all = await cleanUpQuranVocabTracks(await dbGetAllLanguages());
+  const all = await removeQuranLessonDeck(
+    await cleanUpQuranVocabTracks(await dbGetAllLanguages()));
 
   // The Qur'anic text is 1.4MB and a lesson cannot start writing until it has
   // loaded, because the verses go INTO the prompt. Fetching it the moment the
@@ -3018,6 +3043,12 @@ const VOCAB_CATALOGUE = [
 // The root-vocabulary track is driven by curated data rather than the model.
 const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
 
+// The other half: the 28-lesson Qur'anic course, on the Languages side. It is
+// identified by its syllabus rather than its id, because the id has moved once
+// already and the syllabus is what actually makes it that course.
+const isQuranCourse = (lang) =>
+  !!lang && getRecipe(lang).ui?.staticSyllabus === 'QURAN_GRAMMAR';
+
 // ── THE EIGHT-UNIT COURSE BECOMES FORTY ──────────────────────────────────────
 // The old course had eight units and the new one has forty, so a learner who
 // had finished five of eight is not five-fortieths of the way through the new
@@ -3135,6 +3166,40 @@ async function cleanUpQuranVocabTracks(languages) {
       .map(l => ({ ...l, recipeId: 'quranic', vocabSet: 0, knownWords: [] })));
 }
 
+// The Qur'anic course's flashcards are removed once, for good.
+//
+// Flashcards listed Qur'anic Arabic twice — (L) for the course and (V) for the
+// roots — two entries under one name where only one was ever wanted. The roots
+// are the deck. This drops what the course had already filed; backfillLessonCards
+// stops it being refilled.
+//
+// A hard purge rather than the 30-day bin: the point is that it stops being on
+// screen, and the bin would leave it there under "Recently deleted decks". The
+// cards were only ever derived from quran-course-data.js, so nothing written by
+// hand is lost, and the course itself — lessons, progress, tutor — is untouched.
+async function removeQuranLessonDeck(languages) {
+  const course = languages.find(l => isQuranCourse(l) && !l.lessonDeckRemoved);
+  if (!course) return languages;
+
+  try {
+    await dbPurgeDeck(course.id);
+    await dbPatchLanguage(course.id, {
+      lessonDeckRemoved: true,
+      // So the backfill has nothing left to think about either.
+      lessonCardsVersion: LESSON_CARDS_VERSION
+    });
+    console.log(`Removed the ${course.name} (L) flashcard deck — the roots deck is the Qur'anic deck now.`);
+  } catch (err) {
+    console.warn('Could not remove the Quranic lesson deck:', err.message);
+    return languages;
+  }
+
+  return languages.map(l => l.id === course.id
+    ? { ...l, lessonDeckRemoved: true, lessonCardsVersion: LESSON_CARDS_VERSION,
+        cardCount: 0, deckDeletedAt: undefined }
+    : l);
+}
+
 // ── THE QUR'ANIC TEXT ────────────────────────────────────────────────────────
 // quran-text.js is a megabyte and only the Quranic course wants it, so it is
 // fetched the first time something asks. A script tag rather than fetch(),
@@ -3220,7 +3285,11 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
   // Nothing to fetch and nothing to generate: every root carries its verified
   // family in quran-roots-data.js, so the whole deck is built from data that is
   // already in the page. It used to cost twenty model calls and a cache.
-  onProgress(entries.length, entries.length);
+  //
+  // What is left is the writing, and that is what the progress now tracks —
+  // cards land in chunks and the bar moves as each one is filed, rather than
+  // sitting still until all 300 are in.
+  onProgress(0, entries.length);
 
   // Cards the deck doesn't already hold. Re-running tops up rather than doubles.
   const have = new Set();
@@ -3244,7 +3313,14 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
     lemmas: (e.family || []).map(f => ({ word: f.word, meaning: f.gloss }))
   }));
 
-  if (cards.length) await dbAppendLangCards(lang.id, cards);
+  // Already-held roots count as done, so a top-up run does not restart the bar
+  // from zero for cards it is not going to write.
+  const already = entries.length - cards.length;
+  onProgress(already, entries.length);
+  if (cards.length) {
+    await dbAppendLangCards(lang.id, cards,
+      (written) => onProgress(Math.min(already + written, entries.length), entries.length));
+  }
 
   lang.rootDeckSeeded = true;
   lang.rootDeckCount = entries.length;
@@ -3325,6 +3401,11 @@ const LESSON_CARDS_VERSION = 1;
 
 async function backfillLessonCards(lang, syllabus) {
   if (!lang || !syllabus?.length) return 0;
+  // The Qur'anic course has no flashcard deck of its own any more. Its roots
+  // are the deck — one Qur'anic entry in Flashcards, not two under one name —
+  // and its lessons are read in the course, where the rule, the summary and the
+  // traps are already written out. Other courses still file their cards.
+  if (isQuranCourse(lang)) return 0;
   if ((lang.lessonCardsVersion || 0) >= LESSON_CARDS_VERSION) return 0;
 
   const done = new Set(lang.unitsMastered || []);
@@ -3450,7 +3531,7 @@ const VocabBuilder = {
 
   async open() {
     let all = await dbGetAllLanguages().catch(() => []);
-    all = await cleanUpQuranVocabTracks(all);
+    all = await removeQuranLessonDeck(await cleanUpQuranVocabTracks(all));
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
@@ -3550,9 +3631,13 @@ const VocabBuilder = {
 
     // The progress replaces the offer strip, not the list — the learner should
     // still be able to read the roots while their deck is being built.
+    //
+    // Found by attribute, and on whichever tab the list is showing in: the root
+    // table lives in Saved vocab now, so looking for an id on the Learn tab
+    // meant the bar never appeared at all.
     const paint = (done, total) => {
-      const strip = document.getElementById('root-deck-offer');
-      if (!strip || this.lang.id !== lang.id || this.tab !== 'learn') return;
+      const strip = document.querySelector('[data-root-deck-offer]');
+      if (!strip || this.lang.id !== lang.id) return;
       strip.innerHTML = `
         <span class="root-deck-offer-text">Adding them to your flashcards — ${done} of ${total}. This runs once.</span>
         <div class="seed-progress"><div class="seed-progress-fill" style="width:${Math.round(done / total * 100)}%"></div></div>`;
@@ -10976,14 +11061,26 @@ function shuffleCards(cards) {
 // Collect flashcards from every source (books + languages), tagged with _src
 // so ratings persist to the exact document slot. dueOnly=false powers the
 // random-practice deck and the source filter list.
-async function collectCards({ dueOnly = true } = {}) {
+// Every card in the app, or every card due. Sources are read concurrently and
+// handed over AS THEY LAND, through `onBatch`, rather than after the slowest of
+// them — because the slowest is a PDF book's chapter documents, which carry the
+// raw chapter text, and waiting for those before showing card one is most of
+// what made opening Flashcards feel slow.
+//
+// The return value is unchanged: the full array, once everything is in. A caller
+// that does not pass `onBatch` behaves exactly as before.
+async function collectCards({ dueOnly = true, onBatch = null } = {}) {
   const out = [];
   AppState._reviewBookCache = {};
   AppState._reviewChapterCache = {};
   AppState._reviewLangCache = {};
 
-  // All Firestore reads happen in parallel — chapter docs are heavy (they
-  // carry the raw chapter text), so sequential awaits made this crawl.
+  const emit = (cards) => {
+    if (!cards.length) return;
+    out.push(...cards);
+    if (onBatch) { try { onBatch(cards); } catch (err) { console.warn('Card batch handler failed:', err.message); } }
+  };
+
   const [languages, books] = await Promise.all([
     dbGetAllLanguages().catch(err => {
       console.warn('Language cards unavailable for review:', err.message);
@@ -11000,85 +11097,79 @@ async function collectCards({ dueOnly = true } = {}) {
   // still on disk for the grace period, they just stop being reviewed.
   const liveDecks = languages.filter(l => !l.deckDeletedAt);
 
-  const [langBatchSets, pdfChapterSets] = await Promise.all([
-    Promise.all(liveDecks.map(lang =>
-      dbGetLangCardBatches(lang.id).then(batches => ({ lang, batches })).catch(() => ({ lang, batches: [] }))
-    )),
-    Promise.all(books.filter(b => b.isPdfBook).map(book =>
-      dbGetChaptersForBook(book.id).then(chapterDocs => ({ book, chapterDocs })).catch(() => ({ book, chapterDocs: [] }))
-    ))
+  const langCards = (lang, batch) => {
+    const cards = batch.flashcards || [];
+    if (cards.length) AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
+    const rows = [];
+    cards.forEach((card, idx) => {
+      // Vocabulary-builder cards from before the script guard can be English
+      // filed under a non-Latin language. Only `precision` cards are tested — a
+      // correction or grammar card is meant to have an English front.
+      if (card.type === 'precision' && card.word &&
+          !wordMatchesScript(card.word, lang.script)) return;
+      if (!dueOnly || isCardDue(card)) {
+        rows.push({
+          ...card,
+          // The tag on the card says which deck it came from, and in a mixed
+          // review that has to include which SIDE of the app.
+          bookTitle: deckLabel(lang),
+          _langName: lang.name,                 // for prose, which wants no tag
+          _langLevel: lang.level,               // drives the romanization fade
+          _ttsLang: lang.ttsLangCode || lang.code,
+          _src: { type: 'langCards', langId: lang.id, batch: batch.batch, index: idx }
+        });
+      }
+    });
+    return rows;
+  };
+
+  // Books already in memory cost nothing to walk, so they go out first and the
+  // reader has something on screen while every read below is still in flight.
+  const plainBooks = books.filter(b => !b.isPdfBook);
+  for (const book of plainBooks) {
+    AppState._reviewBookCache[book.id] = book;
+    const rows = [];
+    (book.chapters || []).forEach(ch => {
+      (ch.flashcards || []).forEach((card, idx) => {
+        if (!dueOnly || isCardDue(card)) {
+          rows.push({ ...card, bookTitle: book.title,
+            _src: { type: 'bookDoc', bookId: book.id, chapterNumber: ch.number, index: idx } });
+        }
+      });
+    });
+    emit(rows);
+  }
+
+  // Decks and chapter documents all start at once; each emits the moment it
+  // resolves, so a fast deck is never held up behind a slow book.
+  await Promise.all([
+    ...liveDecks.map(lang =>
+      dbGetLangCardBatches(lang.id)
+        .then(batches => { for (const b of batches) emit(langCards(lang, b)); })
+        .catch(err => console.warn(`Deck unavailable for review (${lang.id}):`, err.message))
+    ),
+    ...books.filter(b => b.isPdfBook).map(book =>
+      dbGetChaptersForBook(book.id)
+        .then(chapterDocs => {
+          for (const chDoc of chapterDocs) {
+            const cards = chDoc.flashcards || [];
+            if (cards.length) {
+              AppState._reviewChapterCache[`${book.id}_ch_${chDoc.chapterNumber}`] = cards;
+            }
+            const rows = [];
+            cards.forEach((card, idx) => {
+              if (!dueOnly || isCardDue(card)) {
+                rows.push({ ...card, bookTitle: book.title,
+                  _src: { type: 'chapterDoc', bookId: book.id, chapterNumber: chDoc.chapterNumber, index: idx } });
+              }
+            });
+            emit(rows);
+          }
+        })
+        .catch(err => console.warn(`Chapters unavailable for review (${book.id}):`, err.message))
+    )
   ]);
 
-  // Language sentence cards share the deck with book cards — interleaving
-  // review across subjects is itself a retention win.
-  try {
-    for (const { lang, batches } of langBatchSets) {
-      for (const batch of batches) {
-        const cards = batch.flashcards || [];
-        if (cards.length) {
-          AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
-        }
-        cards.forEach((card, idx) => {
-          // Vocabulary-builder cards from before the script guard can be
-          // English filed under a non-Latin language. Only `precision` cards
-          // are tested — a correction or grammar card is meant to have an
-          // English front.
-          if (card.type === 'precision' && card.word &&
-              !wordMatchesScript(card.word, lang.script)) return;
-          if (!dueOnly || isCardDue(card)) {
-            out.push({
-              ...card,
-              // The tag on the card says which deck it came from, and in a
-              // mixed review that has to include which SIDE of the app —
-              // otherwise two Quranic Arabic cards look identical.
-              bookTitle: deckLabel(lang),
-              _langName: lang.name,                 // for prose, which wants no tag
-              _langLevel: lang.level,               // drives the romanization fade
-              _ttsLang: lang.ttsLangCode || lang.code,
-              _src: { type: 'langCards', langId: lang.id, batch: batch.batch, index: idx }
-            });
-          }
-        });
-      }
-    }
-  } catch (err) {
-    console.warn('Language cards unavailable for review:', err.message);
-  }
-
-  const pdfChaptersByBook = new Map(pdfChapterSets.map(s => [s.book.id, s.chapterDocs]));
-  for (const book of books) {
-    if (book.isPdfBook) {
-      const chapterDocs = pdfChaptersByBook.get(book.id) || [];
-      for (const chDoc of chapterDocs) {
-        const cards = chDoc.flashcards || [];
-        if (cards.length) {
-          AppState._reviewChapterCache[`${book.id}_ch_${chDoc.chapterNumber}`] = cards;
-        }
-        cards.forEach((card, idx) => {
-          if (!dueOnly || isCardDue(card)) {
-            out.push({
-              ...card,
-              bookTitle: book.title,
-              _src: { type: 'chapterDoc', bookId: book.id, chapterNumber: chDoc.chapterNumber, index: idx }
-            });
-          }
-        });
-      }
-    } else {
-      AppState._reviewBookCache[book.id] = book;
-      (book.chapters || []).forEach(ch => {
-        (ch.flashcards || []).forEach((card, idx) => {
-          if (!dueOnly || isCardDue(card)) {
-            out.push({
-              ...card,
-              bookTitle: book.title,
-              _src: { type: 'bookDoc', bookId: book.id, chapterNumber: ch.number, index: idx }
-            });
-          }
-        });
-      });
-    }
-  }
   return out;
 }
 
@@ -11089,14 +11180,17 @@ async function collectDueCards() {
 
 // ── SOURCE FILTER + RANDOM PRACTICE ──────────────────────────────────────────
 
-// Which half of the app a deck belongs to. Two decks can share a name —
-// Quranic Arabic is both a course in Languages and a word list in Vocabulary —
-// and in the Flashcards view there is nothing else to tell them apart by. So
-// every language deck says which one it is, not only the ones that collide:
-// a rule you can rely on beats one that appears only sometimes.
+// Which half of the app a deck belongs to. Every language deck says which one
+// it is, not only the ones that would otherwise collide: a rule you can rely on
+// beats one that appears only sometimes.
 //
 //   (L) — the Languages side: a course, its lessons and its tutor
 //   (V) — the Vocabulary side: a word list you build up
+//
+// Qur'anic Arabic used to appear under both, which is what the tag was first
+// for. It no longer does — the course has no deck and the roots are (V) — but
+// the tag stays, because a deck that says which half it came from is still
+// worth more than one that leaves you to guess.
 function deckTag(lang) {
   return getRecipe(lang).id === 'vocabBuilder' ? 'V' : 'L';
 }
@@ -11264,7 +11358,7 @@ function updateReviewBadge(count) {
 async function initReviewSession() {
   AppState.practiceMode = false;
 
-  // Dropdown appears instantly from metadata; the deck loads behind a spinner
+  // Dropdown appears instantly from metadata; cards arrive behind it.
   await populateReviewFilterFromMeta();
   document.getElementById('review-empty-message').style.display = 'none';
   document.getElementById('review-finished-message').style.display = 'none';
@@ -11272,39 +11366,85 @@ async function initReviewSession() {
   const loadingEl = document.getElementById('review-loading');
   if (loadingEl) loadingEl.style.display = 'flex';
 
-  const allCards = await collectCards({ dueOnly: false });
-  if (loadingEl) loadingEl.style.display = 'none';
+  // Each init owns its own session. An older sweep that is still running when
+  // the source filter changes must not push its cards into the new one.
+  const token = (AppState._reviewToken = (AppState._reviewToken || 0) + 1);
+  const mine = () => AppState._reviewToken === token;
 
-  const allDue = allCards.filter(isCardDue);
-  updateReviewBadge(allDue.length); // nav badge always shows the global due count
-  const dueCards = shuffleCards(allDue.filter(matchesReviewFilter));
+  AppState.flashcardSession = [];
+  AppState.flashcardIndex = 0;
+  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 };
 
-  // Honest session estimate: ~30s per card
   const filterLabel = AppState.reviewFilter === 'all' ? '' : ' in this source';
   const subtitle = document.querySelector('#view-review .page-subtitle');
-  if (subtitle) {
-    subtitle.textContent = dueCards.length
-      ? `${dueCards.length} due today${filterLabel} · about ${formatReadingTime(dueCards.length * 0.5)} · keys 1–4 rate, Space flips`
-      : `Nothing due${filterLabel} — spaced repetition schedules cards right before your brain would forget them.`;
-  }
+  const paintCount = (settled) => {
+    const n = AppState.flashcardSession.length;
+    const ratio = document.getElementById('review-cards-ratio');
+    if (ratio) ratio.textContent = `${AppState.reviewStats.done} / ${n}`;
+    AppState.reviewStats.total = n;
+    // The bar reads against the total it has, so it has to be repainted as the
+    // total grows or it sits at a percentage of a number that no longer holds.
+    const fill = document.getElementById('review-progress-fill');
+    if (fill) fill.style.width = n ? `${(AppState.reviewStats.done / n) * 100}%` : '0%';
+    if (!subtitle) return;
+    // Honest session estimate: ~30s per card. While cards are still arriving it
+    // says so, rather than showing a total that is about to change.
+    subtitle.textContent = n
+      ? `${n} due today${filterLabel}${settled ? '' : ' so far'} · about ${formatReadingTime(n * 0.5)} · keys 1–4 rate, Space flips`
+      : (settled
+          ? `Nothing due${filterLabel} — spaced repetition schedules cards right before your brain would forget them.`
+          : `Looking for cards due${filterLabel}…`);
+  };
 
-  if (dueCards.length === 0) {
+  let started = false;
+  let allDue = 0;
+
+  // Cards go on screen the moment the first source that has any comes back. The
+  // rest are appended behind them, and each arriving chunk is shuffled ON ITS
+  // OWN — reshuffling the whole session would move cards the reader has already
+  // been shown, including the one in front of them.
+  const onBatch = (cards) => {
+    if (!mine()) return;
+    const due = cards.filter(isCardDue);
+    allDue += due.length;
+    const mineNow = shuffleCards(due.filter(matchesReviewFilter));
+    if (!mineNow.length) return;
+
+    AppState.flashcardSession.push(...mineNow);
+    paintCount(false);
+
+    if (!started) {
+      started = true;
+      if (loadingEl) loadingEl.style.display = 'none';
+      document.getElementById('review-empty-message').style.display = 'none';
+      document.getElementById('review-finished-message').style.display = 'none';
+      document.getElementById('flashcard-deck').style.display = 'block';
+      showNextCard();
+    } else if (AppState.flashcardIndex >= AppState.flashcardSession.length - mineNow.length) {
+      // The reader had already reached the end of what was loaded and is
+      // looking at the finished screen. More cards arrived, so carry on.
+      const finished = document.getElementById('review-finished-message');
+      if (finished && finished.style.display !== 'none') {
+        finished.style.display = 'none';
+        document.getElementById('flashcard-deck').style.display = 'block';
+        showNextCard();
+      }
+    }
+  };
+
+  paintCount(false);
+  await collectCards({ dueOnly: false, onBatch });
+  if (!mine()) return;
+
+  if (loadingEl) loadingEl.style.display = 'none';
+  updateReviewBadge(allDue);   // global count, correct only once everything is in
+  paintCount(true);
+
+  if (!AppState.flashcardSession.length) {
     document.getElementById('review-empty-message').style.display = 'flex';
     document.getElementById('flashcard-deck').style.display = 'none';
     document.getElementById('review-finished-message').style.display = 'none';
-    return;
   }
-
-  AppState.flashcardSession = dueCards;
-  AppState.flashcardIndex = 0;
-  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: dueCards.length, done: 0 };
-
-  document.getElementById('review-cards-ratio').textContent = `0 / ${dueCards.length}`;
-  document.getElementById('review-empty-message').style.display = 'none';
-  document.getElementById('review-finished-message').style.display = 'none';
-  document.getElementById('flashcard-deck').style.display = 'block';
-
-  showNextCard();
 }
 
 function showNextCard() {
