@@ -625,6 +625,15 @@
             <select id="review-source-filter" class="form-input review-filter">
               <option value="all">All sources</option>
             </select>
+            <!-- How long a sitting is. A capped session also reads less: it
+                 stops pulling cards in once it has the number asked for. -->
+            <select id="review-size" class="form-input review-filter review-size" title="How many cards this session">
+              <option value="10">10 cards</option>
+              <option value="20" selected>20 cards</option>
+              <option value="30">30 cards</option>
+              <option value="50">50 cards</option>
+              <option value="0">All due</option>
+            </select>
             <button id="btn-random-practice" class="btn btn-ghost">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h3.5c1.5 0 2.5 1 3.5 2.5S12 13 13.5 13H17M3 13h3.5c.8 0 1.5-.3 2-.8M17 6h-3.5c-.8 0-1.5.3-2 .8"/><path d="M15 4l2 2-2 2M15 11l2 2-2 2"/></svg>
               Shuffle random cards
@@ -721,8 +730,11 @@
             <!-- Completed message -->
             <div class="empty-state glass-panel" id="review-finished-message">
               <div class="empty-icon">🎉</div>
-              <h2>Daily Review Complete!</h2>
-              <p>You've reviewed all cards due today. Come back tomorrow for your next session.</p>
+              <h2 id="review-finished-title">Daily Review Complete!</h2>
+              <p id="review-finished-text">You've reviewed all cards due today. Come back tomorrow for your next session.</p>
+              <!-- Shown only when the session was capped and more are still due,
+                   because "come back tomorrow" would not be true. -->
+              <button id="btn-review-keep-going" class="btn btn-primary mt-4" style="display:none;">Keep going →</button>
               <button id="btn-restart-review-mock" class="btn btn-primary mt-4">Load Practice Deck</button>
             </div>
 

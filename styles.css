@@ -4701,6 +4701,9 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   font-size: 0.85rem;
   padding: 0.55rem 0.75rem;
 }
+/* The session size is five short options — at the source filter's width it
+   pushed the row onto a second line for no reason. */
+.review-size { max-width: 8.5rem; }
 #btn-random-practice {
   display: inline-flex;
   align-items: center;

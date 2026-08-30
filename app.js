@@ -11479,13 +11479,25 @@ async function populateReviewFilterFromMeta() {
     (bookOpts ? `<optgroup label="Books">${bookOpts}</optgroup>` : '') +
     (langOpts ? `<optgroup label="Languages">${langOpts}</optgroup>` : '');
 
-  // Restore the persisted choice once per app load
+  // Restore the persisted choices once per app load
   if (!AppState._reviewFilterLoaded) {
     AppState._reviewFilterLoaded = true;
     try {
       const rec = await dbGet('settings', 'reviewFilter');
       if (rec?.value) AppState.reviewFilter = rec.value;
     } catch (_) { /* default stands */ }
+    try {
+      const rec = await dbGet('settings', 'reviewSize');
+      if (rec && rec.value !== undefined) AppState.reviewSize = Number(rec.value);
+    } catch (_) { /* default stands */ }
+  }
+  const sizeSel = document.getElementById('review-size');
+  if (sizeSel) {
+    if (AppState.reviewSize === undefined) AppState.reviewSize = REVIEW_SIZE_DEFAULT;
+    sizeSel.value = String(AppState.reviewSize);
+    // A stored size that is no longer offered falls back rather than showing
+    // the select blank.
+    if (!sizeSel.value) { sizeSel.value = String(REVIEW_SIZE_DEFAULT); AppState.reviewSize = REVIEW_SIZE_DEFAULT; }
   }
   const exists = [...select.options].some(o => o.value === AppState.reviewFilter);
   select.value = exists ? AppState.reviewFilter : 'all';
@@ -11523,15 +11535,17 @@ async function startRandomPractice() {
   // Practice draws from the selected source, so it reads the selected source —
   // and a single deck pages until it has enough to pick twenty from.
   const scope = AppState.reviewFilter || 'all';
+  const want = reviewSizeLimit() === Infinity ? 200 : reviewSizeLimit();
   const all = await collectCards({ dueOnly: false, scope });
   let cursor = all.cursor;
-  while (cursor?.more && all.length < 200) {
+  // Enough to draw a varied hand from, then stop reading.
+  while (cursor?.more && all.length < Math.max(want * 2, 40) && all.length < 200) {
     const more = await collectMoreCards(cursor, { dueOnly: false });
     if (!more) break;
     all.push(...more);
   }
   if (loadingEl) loadingEl.style.display = 'none';
-  const pool = shuffleCards(all.filter(matchesReviewFilter)).slice(0, 20);
+  const pool = shuffleCards(all.filter(matchesReviewFilter)).slice(0, want);
 
   if (!pool.length) {
     showToast('No cards in this source yet — study a chapter or add a language first.', 'info');
@@ -11600,6 +11614,17 @@ async function persistCardSchedule(card) {
 // counted until that deck is next opened. The badge can therefore read low by a
 // day. Opening a deck corrects its own number immediately.
 const REVIEW_PREFETCH_AHEAD = 10;
+
+// How many cards a sitting is, unless told otherwise. 0 means everything due.
+// A capped session also READS less — it stops pulling documents in once it has
+// the number asked for — so choosing ten is both a shorter session and a faster
+// one to start.
+const REVIEW_SIZE_DEFAULT = 20;
+const reviewSizeLimit = () => {
+  const n = Number(AppState.reviewSize ?? REVIEW_SIZE_DEFAULT);
+  if (!Number.isFinite(n) || n <= 0) return Infinity;
+  return n + (AppState._reviewExtra || 0);
+};
 
 function tallyDueBySource(cards) {
   const by = new Map();
@@ -11684,6 +11709,9 @@ async function initReviewSession() {
   AppState.flashcardIndex = 0;
   AppState._reviewCursor = null;
   AppState._reviewPaging = false;
+  AppState._reviewTruncated = false;
+  AppState._reviewExtra = 0;
+  AppState._reviewOverflow = [];
   AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 };
 
   const filterLabel = AppState.reviewFilter === 'all' ? '' : ' in this source';
@@ -11718,7 +11746,18 @@ async function initReviewSession() {
     if (!mine()) return;
     const due = cards.filter(isCardDue);
     for (const [k, v] of tallyDueBySource(due)) dueSeen.set(k, (dueSeen.get(k) || 0) + v);
-    const mineNow = shuffleCards(due.filter(matchesReviewFilter));
+    let mineNow = shuffleCards(due.filter(matchesReviewFilter));
+    if (!mineNow.length) return;
+
+    // Stop at the size asked for. What is over the line is HELD rather than
+    // dropped — those cards are due and already read, so "Keep going" hands
+    // them over instead of going back to the database for them.
+    const room = reviewSizeLimit() - AppState.flashcardSession.length;
+    if (mineNow.length > room) {
+      AppState._reviewOverflow.push(...mineNow.slice(Math.max(0, room)));
+      AppState._reviewTruncated = true;
+      mineNow = mineNow.slice(0, Math.max(0, room));
+    }
     if (!mineNow.length) return;
 
     AppState.flashcardSession.push(...mineNow);
@@ -11786,6 +11825,46 @@ async function initReviewSession() {
 // Pull in the deck's next batch document. One at a time and never twice at
 // once: the guard matters because showNextCard runs on every card and would
 // otherwise fire a second read while the first is still in flight.
+// Another sitting's worth, without going back to the dropdown. It raises the
+// ceiling rather than restarting, so the cards already rated stay rated and the
+// stats carry on from where they were.
+async function keepReviewingMore() {
+  const step = Number(AppState.reviewSize) > 0 ? Number(AppState.reviewSize) : REVIEW_SIZE_DEFAULT;
+  AppState._reviewExtra = (AppState._reviewExtra || 0) + step;
+  AppState._reviewTruncated = false;
+
+  const finished = document.getElementById('review-finished-message');
+  const before = AppState.flashcardSession.length;
+
+  // Cards already read but held back cost nothing to hand over.
+  const held = AppState._reviewOverflow || [];
+  const room = reviewSizeLimit() - AppState.flashcardSession.length;
+  if (held.length && room > 0) {
+    AppState.flashcardSession.push(...held.splice(0, room));
+    AppState._reviewTruncated = held.length > 0;
+  }
+
+  // Still short, and the deck has more documents: read the next one.
+  if (AppState.flashcardSession.length < reviewSizeLimit() && AppState._reviewCursor?.more) {
+    const loading = document.getElementById('review-loading');
+    if (finished) finished.style.display = 'none';
+    if (loading) loading.style.display = 'flex';
+    await pageInMoreCards();
+    if (loading) loading.style.display = 'none';
+  }
+
+  if (AppState.flashcardSession.length > before) {
+    if (finished) finished.style.display = 'none';
+    document.getElementById('flashcard-deck').style.display = 'block';
+    showNextCard();
+  } else {
+    // Nothing more to be had after all — say so rather than leaving the button
+    // sitting there doing nothing.
+    AppState._reviewTruncated = false;
+    showNextCard();
+  }
+}
+
 async function pageInMoreCards() {
   const cursor = AppState._reviewCursor;
   if (!cursor?.more || AppState._reviewPaging) return;
@@ -11809,7 +11888,16 @@ async function pageInMoreCards() {
     const due = rows.filter(isCardDue);
     const seen = AppState._reviewDueSeen;
     if (seen) for (const [k, v] of tallyDueBySource(due)) seen.set(k, (seen.get(k) || 0) + v);
-    const mine = shuffleCards(due.filter(matchesReviewFilter));
+    let mine = shuffleCards(due.filter(matchesReviewFilter));
+    // A document holds up to a hundred cards; the session takes only as many as
+    // it is still short of, and holds the rest. Without this, "Keep going" for
+    // another twenty would hand over the whole next document.
+    const room = reviewSizeLimit() - AppState.flashcardSession.length;
+    if (mine.length > room) {
+      AppState._reviewOverflow.push(...mine.slice(Math.max(0, room)));
+      AppState._reviewTruncated = true;
+      mine = mine.slice(0, Math.max(0, room));
+    }
     if (mine.length) AppState.flashcardSession.push(...mine);
   }
 
@@ -11849,14 +11937,19 @@ function showNextCard() {
   // Ten cards of runway before the end of what is loaded, which at half a minute
   // a card is minutes of cover for one document read. The reader should never
   // see this happen.
-  if (AppState._reviewCursor?.more && cards.length - idx <= REVIEW_PREFETCH_AHEAD) {
+  //
+  // A full session pages no further: if ten cards were asked for and ten are
+  // loaded, the rest of the deck is not worth a single read.
+  const sessionFull = cards.length >= reviewSizeLimit();
+  if (AppState._reviewCursor?.more && !sessionFull &&
+      cards.length - idx <= REVIEW_PREFETCH_AHEAD) {
     pageInMoreCards();
   }
 
   // Out of cards but not out of deck: the next document is on its way, so this
   // waits for it. Showing "you've reviewed everything" here would be a lie the
   // reader acts on by leaving.
-  if (idx >= cards.length && AppState._reviewCursor?.more) {
+  if (idx >= cards.length && AppState._reviewCursor?.more && !sessionFull) {
     document.getElementById('flashcard-deck').style.display = 'none';
     document.getElementById('review-finished-message').style.display = 'none';
     const loading = document.getElementById('review-loading');
@@ -11865,16 +11958,46 @@ function showNextCard() {
   }
 
   if (idx >= cards.length) {
-    // Session complete
     document.getElementById('flashcard-deck').style.display = 'none';
+    const loading = document.getElementById('review-loading');
+    if (loading) loading.style.display = 'none';
     const finished = document.getElementById('review-finished-message');
     finished.style.display = 'flex';
-    const finishedText = finished.querySelector('p');
-    if (finishedText) {
-      finishedText.textContent = AppState.practiceMode
-        ? 'Practice round done — extra reps never hurt, and your scheduled reviews are untouched.'
-        : "You've reviewed all cards due today. Come back tomorrow for your next session.";
+
+    // Three different endings, and they must not be confused for each other.
+    // A session that stopped because it hit the number asked for has NOT
+    // finished the day's cards, and saying so would send the reader away with
+    // work left.
+    // What we KNOW is left: cards trimmed off, and cards held back. The
+    // cursor's `more` is only a guess from a stored card count, so it counts
+    // only when the session was capped — an uncapped session that still had
+    // documents to read would have paged instead of finishing, so reaching here
+    // uncapped means the deck really is spent. Trusting the guess unconditionally
+    // made a finished deck claim there was more to do.
+    const sessionWasFull = cards.length >= reviewSizeLimit();
+    const more = AppState._reviewTruncated ||
+      (AppState._reviewOverflow || []).length > 0 ||
+      (sessionWasFull && AppState._reviewCursor?.more);
+    const title = document.getElementById('review-finished-title');
+    const text = document.getElementById('review-finished-text');
+    const keep = document.getElementById('btn-review-keep-going');
+    const practice = document.getElementById('btn-restart-review-mock');
+
+    if (AppState.practiceMode) {
+      if (title) title.textContent = 'Practice round done';
+      if (text) text.textContent = 'Extra reps never hurt, and your scheduled reviews are untouched.';
+    } else if (more) {
+      const n = cards.length;
+      if (title) title.textContent = `That's your ${n}`;
+      if (text) text.textContent =
+        `${n} card${n === 1 ? '' : 's'} done — the size you set. More are still due whenever you want them.`;
+    } else {
+      if (title) title.textContent = 'Daily Review Complete!';
+      if (text) text.textContent =
+        "You've reviewed all cards due today. Come back tomorrow for your next session.";
     }
+    if (keep) keep.style.display = (!AppState.practiceMode && more) ? '' : 'none';
+    if (practice) practice.style.display = (!AppState.practiceMode && more) ? 'none' : '';
     return;
   }
 
@@ -12537,6 +12660,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     dbPut('settings', { key: 'reviewFilter', value: e.target.value }).catch(() => {});
     initReviewSession();
   });
+  document.getElementById('review-size').addEventListener('change', (e) => {
+    AppState.reviewSize = Number(e.target.value);
+    dbPut('settings', { key: 'reviewSize', value: AppState.reviewSize }).catch(() => {});
+    initReviewSession();
+  });
+  document.getElementById('btn-review-keep-going').addEventListener('click', keepReviewingMore);
   document.getElementById('btn-random-practice').addEventListener('click', startRandomPractice);
   document.getElementById('btn-random-practice-empty').addEventListener('click', startRandomPractice);
 
