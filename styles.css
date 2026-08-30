@@ -42,6 +42,13 @@
   --font-display:  'Lora', serif;
   --font-body:     'Inter', sans-serif;
   --font-reading:  'Lora', serif;
+  /* Qur'anic text, everywhere it appears. Neither Lora nor Inter covers Arabic,
+     so a rule that named one of them was really choosing whatever the system
+     pairs with `serif` or `sans-serif` — two different Arabic faces for the same
+     word, depending on which surface it was on. Naming the stack once means كتب
+     is drawn by the same font in the list and on the card. */
+  --font-arabic:   'Scheherazade New', 'Amiri', 'Traditional Arabic',
+                   'Noto Naskh Arabic', 'Geeza Pro', 'Times New Roman', serif;
 
   /* Spacing */
   --radius-sm:  8px;
@@ -1738,12 +1745,19 @@ img { max-width: 100%; }
 }
 
 /* ── Root cards ──────────────────────────────────────────────────────────────
-   Front: the three letters, large and alone. Back: the root again with its
-   meaning, then the words the Qur'an builds from it. The back has several
-   stacked pieces, so it opts out of the single-child centring above. */
+   Front: the root, joined, large and alone — كتب, the same word the list shows.
+   Back: the root again with its meaning, then the words the Qur'an builds from
+   it. The back has several stacked pieces, so it opts out of the single-child
+   centring above.
+
+   NO LETTER-SPACING ON ARABIC. It used to carry 0.18em, from when the front was
+   three separate letters and spreading them was the point. Arabic is cursive:
+   the glyphs are drawn with connecting strokes, so space inserted between them
+   tears the joins open and كتب reads as ك ت ب. */
 #flashcard-element.root-card #card-front-text {
+  font-family: var(--font-arabic);
   font-size: 3rem;
-  letter-spacing: 0.18em;
+  letter-spacing: normal;
   direction: rtl;
   text-align: center;
 }
@@ -1766,10 +1780,10 @@ img { max-width: 100%; }
   border-bottom: 1px solid var(--border);
 }
 .card-back-root-word {
-  font-family: var(--font-display);
+  font-family: var(--font-arabic);
   font-size: 2rem;
   font-weight: 700;
-  letter-spacing: 0.15em;
+  letter-spacing: normal;
   direction: rtl;
   color: var(--text-primary);
 }
@@ -1796,7 +1810,7 @@ img { max-width: 100%; }
 }
 .card-lemma:last-child { border-bottom: none; }
 .card-lemma-ar {
-  font-family: var(--font-display);
+  font-family: var(--font-arabic);
   font-size: 1.05rem;
   direction: rtl;
   flex-shrink: 0;
@@ -5207,8 +5221,9 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 
 /* A root card: the three letters, then the words the Qur'an builds from them */
 .vocab-root-word {
+  font-family: var(--font-arabic);
   font-size: 1.9rem;
-  letter-spacing: 0.12em;
+  letter-spacing: normal;
   direction: rtl;
 }
 .root-lemmas {
@@ -5232,7 +5247,7 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 }
 .root-lemma:last-child { border-bottom: none; }
 .root-lemma-ar {
-  font-family: var(--font-display);
+  font-family: var(--font-arabic);
   font-size: 1.15rem;
   color: var(--text-primary);
   direction: rtl;
@@ -5329,10 +5344,13 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 }
 .root-col-root { text-align: right; }
 /* Only the rows carry the Arabic at reading size — the column header is a
-   label, and inheriting 1.3rem made it shout. */
+   label, and inheriting 1.3rem made it shout. Same font and same (absent)
+   letter-spacing as the flashcard, so one word looks like one word wherever it
+   is shown. */
 .root-row-main .root-col-root {
+  font-family: var(--font-arabic);
   font-size: 1.3rem; line-height: 1.9; color: var(--text-primary);
-  letter-spacing: 0.02em;
+  letter-spacing: normal;
 }
 .root-col-gloss {
   font-family: var(--font-body); font-size: 0.92rem; color: var(--text-secondary);
@@ -5351,7 +5369,7 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
   margin-bottom: 0.7rem;
 }
-.root-chip-word { font-size: 1rem; }
+.root-chip.root-chip-word { font-size: 1rem; font-family: var(--font-arabic); letter-spacing: normal; }
 .root-chip-gloss { font-family: var(--font-body); font-size: 0.78rem; color: var(--text-muted); }
 
 @media (max-width: 640px) {
@@ -6436,8 +6454,8 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   background: var(--bg-elevated); border-radius: 999px; padding: 0.15rem 0.55rem;
 }
 .root-chip b {
-  color: var(--text-secondary); font-weight: 600; letter-spacing: 0.1em;
-  direction: rtl; font-size: 0.85rem;
+  color: var(--text-secondary); font-weight: 600; letter-spacing: normal;
+  direction: rtl; font-size: 0.85rem; font-family: var(--font-arabic);
 }
 
 /* The verse the word actually appears in — the anchor that stops a card being
@@ -6449,6 +6467,7 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   display: flex; flex-direction: column; gap: 0.35rem;
 }
 .root-verse-ar, .card-verse-ar {
+  font-family: var(--font-arabic);
   font-size: 1.15rem; line-height: 2; color: var(--text-primary); text-align: right;
 }
 .root-verse-ref, .card-verse-ref {

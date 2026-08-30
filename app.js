@@ -4705,7 +4705,7 @@ function rootCardHtml(w, i) {
   return `
     <article class="vocab-card vocab-card-script vocab-card-root" data-idx="${i}">
       <div class="vocab-card-head">
-        <h3 class="vocab-word vocab-root-word">${escapeAttr(w.word)}</h3>
+        <h3 class="vocab-word vocab-root-word" dir="rtl" lang="ar">${escapeAttr(w.word)}</h3>
         <button class="vocab-speak" data-idx="${i}" title="Hear it">🔊</button>
       </div>
       <div class="vocab-meta">
@@ -4717,7 +4717,7 @@ function rootCardHtml(w, i) {
         <div class="root-lemmas-head">Words built from it</div>
         ${w.lemmas.map(l => `
           <div class="root-lemma">
-            <span class="root-lemma-ar">${escapeAttr(l.word)}</span>
+            <span class="root-lemma-ar" dir="rtl" lang="ar">${escapeAttr(l.word)}</span>
             <span class="root-lemma-body">
               ${l.romanization ? `<span class="root-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
               <span class="root-lemma-meaning">${escapeAttr(l.meaning)}</span>
@@ -11890,6 +11890,17 @@ function showNextCard() {
   frontText.textContent = card.front;
   backText.textContent = card.back;
 
+  // MARK THE ARABIC AS ARABIC. The list does — `dir="rtl" lang="ar"` on every
+  // span — and the card did not, so the same string was shaped and font-matched
+  // as though it were English text that happened to contain Arabic characters.
+  // That is enough to have the two surfaces pick different faces and, on some
+  // systems, to lose the cursive joins altogether.
+  const arabicFront = card.type === 'root' ||
+    (card._src?.type === 'langCards' && /[\u0600-\u06FF]/.test(card.front || ''));
+  if (arabicFront) { frontText.lang = 'ar'; frontText.dir = 'rtl'; }
+  else { frontText.removeAttribute('lang'); frontText.removeAttribute('dir'); }
+  backText.removeAttribute('lang'); backText.removeAttribute('dir');
+
   // Long text steps down in size and scrolls inside the card instead of
   // overflowing onto the rating buttons below it
   frontText.classList.toggle('long', (card.front || '').length > 220);
@@ -11914,7 +11925,9 @@ function showNextCard() {
     if (isRootCard) {
       // The front is the root, so the back leads with the root and its sound
       // rather than printing the same word again and calling it an answer.
-      document.getElementById('card-back-root-word').textContent = card.root || card.front;
+      const backWord = document.getElementById('card-back-root-word');
+      backWord.textContent = card.root || card.front;
+      backWord.lang = 'ar'; backWord.dir = 'rtl';
       document.getElementById('card-back-root-rom').textContent = [
         card.romanization,
         card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : ''
@@ -11927,7 +11940,7 @@ function showNextCard() {
       <div class="card-lemmas-head">Words built from ${escapeAttr(card.root || card.front)}</div>
       ${card.lemmas.map(l => `
         <div class="card-lemma">
-          <span class="card-lemma-ar">${escapeAttr(l.word)}</span>
+          <span class="card-lemma-ar" dir="rtl" lang="ar">${escapeAttr(l.word)}</span>
           <span class="card-lemma-body">
             ${l.romanization ? `<span class="card-lemma-rom">${escapeAttr(l.romanization)}</span>` : ''}
             <span class="card-lemma-meaning">${escapeAttr(l.meaning)}</span>
