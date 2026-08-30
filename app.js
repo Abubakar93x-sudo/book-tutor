@@ -11535,7 +11535,7 @@ async function startRandomPractice() {
   // Practice draws from the selected source, so it reads the selected source —
   // and a single deck pages until it has enough to pick twenty from.
   const scope = AppState.reviewFilter || 'all';
-  const want = reviewSizeLimit() === Infinity ? 200 : reviewSizeLimit();
+  const want = reviewSizeChoice() === Infinity ? 200 : reviewSizeChoice();
   const all = await collectCards({ dueOnly: false, scope });
   let cursor = all.cursor;
   // Enough to draw a varied hand from, then stop reading.
@@ -11620,10 +11620,20 @@ const REVIEW_PREFETCH_AHEAD = 10;
 // the number asked for — so choosing ten is both a shorter session and a faster
 // one to start.
 const REVIEW_SIZE_DEFAULT = 20;
-const reviewSizeLimit = () => {
+
+// The number chosen in the dropdown. Infinity for "All due".
+const reviewSizeChoice = () => {
   const n = Number(AppState.reviewSize ?? REVIEW_SIZE_DEFAULT);
-  if (!Number.isFinite(n) || n <= 0) return Infinity;
-  return n + (AppState._reviewExtra || 0);
+  return Number.isFinite(n) && n > 0 ? n : Infinity;
+};
+
+// How many MORE this session may load. The chosen size is a target for the day,
+// not for each visit — so twelve already rated today leaves eight of a twenty,
+// and the ratio reads 12 / 20 rather than 12 / 32.
+const reviewSizeLimit = () => {
+  const n = reviewSizeChoice();
+  if (n === Infinity) return Infinity;
+  return Math.max(0, n + (AppState._reviewExtra || 0) - (AppState._reviewDoneBefore || 0));
 };
 
 function tallyDueBySource(cards) {
@@ -11689,6 +11699,55 @@ function updateReviewBadge(count) {
     });
 }
 
+// Opening the Flashcards view. It used to call initReviewSession every time,
+// which reset the counters, reshuffled the queue and re-read a document — so
+// stepping out to Vocabulary and back cost you your place and your tally.
+//
+// A session that is still going is picked up where it was. Only a genuinely new
+// one — nothing loaded, the last one finished, or the source or size changed
+// under it — starts from scratch.
+function openReviewView() {
+  const live = (AppState.flashcardSession || []).length > 0 &&
+    AppState.flashcardIndex < AppState.flashcardSession.length &&
+    AppState._reviewFor === reviewSessionKey() &&
+    !AppState.practiceMode;
+
+  if (!live) return initReviewSession();
+
+  // Put the reader back exactly where they were.
+  document.getElementById('review-loading').style.display = 'none';
+  document.getElementById('review-empty-message').style.display = 'none';
+  document.getElementById('review-finished-message').style.display = 'none';
+  document.getElementById('flashcard-deck').style.display = 'block';
+  showNextCard();
+  return Promise.resolve();
+}
+
+// What a session is "of". Changing either of these is a deliberate restart.
+const reviewSessionKey = () =>
+  `${AppState.reviewFilter || 'all'}|${AppState.reviewSize ?? REVIEW_SIZE_DEFAULT}`;
+
+// ── TODAY'S TALLY ───────────────────────────────────────────────────────────
+// Resuming in place survives navigation but not a reload, and "progress" is
+// better read as what you have done TODAY than as this run of the app. The
+// counts live in the settings store — local, beside reviewFilter and reviewSize
+// — stamped with the day they belong to.
+const reviewToday = () => new Date().toISOString().slice(0, 10);
+
+async function loadReviewProgress() {
+  try {
+    const rec = await dbGet('settings', 'reviewProgress');
+    if (rec?.value?.day === reviewToday()) return rec.value;
+  } catch (_) { /* a missing tally is just a fresh day */ }
+  return null;
+}
+
+function saveReviewProgress(stats) {
+  const { done, forgot, hard, good, easy } = stats;
+  dbPut('settings', { key: 'reviewProgress',
+    value: { day: reviewToday(), done, forgot, hard, good, easy } }).catch(() => {});
+}
+
 async function initReviewSession() {
   AppState.practiceMode = false;
 
@@ -11712,12 +11771,25 @@ async function initReviewSession() {
   AppState._reviewTruncated = false;
   AppState._reviewExtra = 0;
   AppState._reviewOverflow = [];
-  AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 };
+  AppState._reviewFor = reviewSessionKey();
+
+  // Cards rated earlier today are not due any more, so they are not in the
+  // queue — but they were still done, and the tally should say so. Without this
+  // a reload after twelve cards reads 0, which is what "not saving my progress"
+  // looked like.
+  const today = await loadReviewProgress();
+  AppState.reviewStats = today
+    ? { forgot: today.forgot || 0, hard: today.hard || 0, good: today.good || 0,
+        easy: today.easy || 0, done: today.done || 0, total: today.done || 0 }
+    : { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 };
+  AppState._reviewDoneBefore = AppState.reviewStats.done;
 
   const filterLabel = AppState.reviewFilter === 'all' ? '' : ' in this source';
   const subtitle = document.querySelector('#view-review .page-subtitle');
   const paintCount = (settled) => {
-    const n = AppState.flashcardSession.length;
+    // Done today plus still to do — so coming back after twelve reads 12 / 20,
+    // not 0 / 8.
+    const n = (AppState._reviewDoneBefore || 0) + AppState.flashcardSession.length;
     const ratio = document.getElementById('review-cards-ratio');
     if (ratio) ratio.textContent = `${AppState.reviewStats.done} / ${n}`;
     AppState.reviewStats.total = n;
@@ -11726,10 +11798,11 @@ async function initReviewSession() {
     const fill = document.getElementById('review-progress-fill');
     if (fill) fill.style.width = n ? `${(AppState.reviewStats.done / n) * 100}%` : '0%';
     if (!subtitle) return;
+    const left = AppState.flashcardSession.length;
     // Honest session estimate: ~30s per card. While cards are still arriving it
     // says so, rather than showing a total that is about to change.
-    subtitle.textContent = n
-      ? `${n} due today${filterLabel}${settled ? '' : ' so far'} · about ${formatReadingTime(n * 0.5)} · keys 1–4 rate, Space flips`
+    subtitle.textContent = left
+      ? `${left} due today${filterLabel}${settled ? '' : ' so far'} · about ${formatReadingTime(left * 0.5)} · keys 1–4 rate, Space flips`
       : (settled
           ? `Nothing due${filterLabel} — spaced repetition schedules cards right before your brain would forget them.`
           : `Looking for cards due${filterLabel}…`);
@@ -11816,9 +11889,20 @@ async function initReviewSession() {
   paintCount(!AppState._reviewCursor?.more);
 
   if (!AppState.flashcardSession.length && !AppState._reviewCursor?.more) {
-    document.getElementById('review-empty-message').style.display = 'flex';
-    document.getElementById('flashcard-deck').style.display = 'none';
-    document.getElementById('review-finished-message').style.display = 'none';
+    // Two different empties. "Nothing due" and "you have already done your
+    // twenty today" look the same to the code and nothing like each other to
+    // the reader, so they get different screens.
+    const targetMet = reviewSizeChoice() !== Infinity &&
+      (AppState._reviewDoneBefore || 0) >= reviewSizeChoice();
+    if (targetMet) {
+      document.getElementById('review-empty-message').style.display = 'none';
+      document.getElementById('flashcard-deck').style.display = 'none';
+      showNextCard();          // paints the finished panel, which knows the wording
+    } else {
+      document.getElementById('review-empty-message').style.display = 'flex';
+      document.getElementById('flashcard-deck').style.display = 'none';
+      document.getElementById('review-finished-message').style.display = 'none';
+    }
   }
 }
 
@@ -11829,7 +11913,7 @@ async function initReviewSession() {
 // ceiling rather than restarting, so the cards already rated stay rated and the
 // stats carry on from where they were.
 async function keepReviewingMore() {
-  const step = Number(AppState.reviewSize) > 0 ? Number(AppState.reviewSize) : REVIEW_SIZE_DEFAULT;
+  const step = reviewSizeChoice() === Infinity ? REVIEW_SIZE_DEFAULT : reviewSizeChoice();
   AppState._reviewExtra = (AppState._reviewExtra || 0) + step;
   AppState._reviewTruncated = false;
 
@@ -11975,8 +12059,11 @@ function showNextCard() {
     // uncapped means the deck really is spent. Trusting the guess unconditionally
     // made a finished deck claim there was more to do.
     const sessionWasFull = cards.length >= reviewSizeLimit();
+    const targetMet = reviewSizeChoice() !== Infinity &&
+      AppState.reviewStats.done >= reviewSizeChoice();
     const more = AppState._reviewTruncated ||
       (AppState._reviewOverflow || []).length > 0 ||
+      targetMet ||
       (sessionWasFull && AppState._reviewCursor?.more);
     const title = document.getElementById('review-finished-title');
     const text = document.getElementById('review-finished-text');
@@ -11987,8 +12074,8 @@ function showNextCard() {
       if (title) title.textContent = 'Practice round done';
       if (text) text.textContent = 'Extra reps never hurt, and your scheduled reviews are untouched.';
     } else if (more) {
-      const n = cards.length;
-      if (title) title.textContent = `That's your ${n}`;
+      const n = AppState.reviewStats.done || cards.length;
+      if (title) title.textContent = `That's your ${n} for today`;
       if (text) text.textContent =
         `${n} card${n === 1 ? '' : 's'} done — the size you set. More are still due whenever you want them.`;
     } else {
@@ -12127,6 +12214,8 @@ function rateCard(score) {
     persistCardSchedule(scheduled)
       .catch(err => console.warn('Could not save card schedule:', err.message));
   }
+
+  if (!AppState.practiceMode) saveReviewProgress(stats);
 
   // Update UI stats
   const ratio = `${stats.done} / ${stats.total}`;
@@ -12295,7 +12384,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.preventDefault();
       const view = link.dataset.view;
       navigateTo(view);
-      if (view === 'review') initReviewSession();
+      if (view === 'review') openReviewView();
       if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
       if (view === 'vocab') VocabBuilder.open();
@@ -12309,7 +12398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const view = link.dataset.view;
       navigateTo(view);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      if (view === 'review') initReviewSession();
+      if (view === 'review') openReviewView();
       if (view === 'languages') renderLanguages();
       if (view === 'sandbox') populateSandboxSelectors();
       if (view === 'vocab') VocabBuilder.open();
