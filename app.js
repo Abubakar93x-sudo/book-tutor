@@ -202,6 +202,14 @@ function userCol(collectionName) {
   return firestoreDB.collection('users').doc(uid).collection(collectionName);
 }
 
+// A few fields on a book document, without rewriting the whole thing — the due
+// count is written on every review pass and a book document carries chapters.
+async function dbPatchBookMeta(bookId, fields) {
+  const col = userCol('books');
+  if (!col) return;
+  await col.doc(String(bookId)).set({ ...fields, updatedAt: Date.now() }, { merge: true });
+}
+
 async function dbPut(storeName, data) {
   if (storeName === 'settings') return idbPut(storeName, data);
   if (storeName === 'books') {
@@ -928,6 +936,21 @@ async function dbGetLangCardBatches(langId) {
   return snap.docs
     .map(d => d.data())
     .sort((a, b) => (a.batch || 0) - (b.batch || 0));
+}
+
+// ONE batch document, by id. Batch documents are named deterministically —
+// `${langId}_batch_${n}` counting from zero — so a reader that wants the deck a
+// document at a time never needs the collection query: it asks for batch 0,
+// then batch 1, and stops when a document is not there.
+//
+// That is what makes a review session start after one 67KB read instead of the
+// whole deck. dbGetLangCardBatches stays for the callers that genuinely want all
+// of it at once (filing cards, counting a deck).
+async function dbGetLangCardBatch(langId, batchNum) {
+  const col = userCol('langCards');
+  if (!col) return null;
+  const snap = await col.doc(`${langId}_batch_${batchNum}`).get();
+  return snap.exists ? snap.data() : null;
 }
 
 async function dbPutLangCardBatch(langId, batchNum, cards) {
@@ -5278,8 +5301,16 @@ const LangSession = {
     `;
 
     try {
-      const allDue = await collectDueCards();
-      this.reviewQueue = allDue.filter(c => c._src?.type === 'langCards' && c._src.langId === lang.id).slice(0, 10);
+      // This only ever wanted THIS language's cards. It used to read every deck
+      // and every book's chapter text to get them.
+      const due = await collectCards({ dueOnly: true, scope: `lang:${lang.id}` });
+      let cursor = due.cursor;
+      while (cursor?.more && due.length < 10) {
+        const more = await collectMoreCards(cursor, { dueOnly: true });
+        if (!more) break;
+        due.push(...more);
+      }
+      this.reviewQueue = due.filter(c => c._src?.type === 'langCards').slice(0, 10);
     } catch (err) {
       console.warn('Review collection failed:', err.message);
       this.reviewQueue = [];
@@ -11061,19 +11092,26 @@ function shuffleCards(cards) {
 // Collect flashcards from every source (books + languages), tagged with _src
 // so ratings persist to the exact document slot. dueOnly=false powers the
 // random-practice deck and the source filter list.
-// Every card in the app, or every card due. Sources are read concurrently and
-// handed over AS THEY LAND, through `onBatch`, rather than after the slowest of
-// them — because the slowest is a PDF book's chapter documents, which carry the
-// raw chapter text, and waiting for those before showing card one is most of
-// what made opening Flashcards feel slow.
+// Every card in the app, or every card in ONE source. `scope` is the review
+// filter — 'all', 'lang:<id>' or 'book:<id>' — and it decides what is READ, not
+// just what survives afterwards. Reviewing one deck used to fetch every other
+// deck and every PDF book's chapter text and then throw it all away; chapter
+// documents carry raw chapter text, so that was most of the wait.
 //
-// The return value is unchanged: the full array, once everything is in. A caller
-// that does not pass `onBatch` behaves exactly as before.
-async function collectCards({ dueOnly = true, onBatch = null } = {}) {
+// Sources are still handed over as they land through `onBatch`, so a scope that
+// does span several sources shows its first card without waiting for the rest.
+//
+// Under a 'lang:' scope only the FIRST batch document is read — 100 cards, one
+// document — and `cursor` comes back saying where to continue. The caller
+// fetches the next document as the reader approaches the end of this one.
+async function collectCards({ dueOnly = true, onBatch = null, scope = 'all' } = {}) {
   const out = [];
   AppState._reviewBookCache = {};
   AppState._reviewChapterCache = {};
   AppState._reviewLangCache = {};
+
+  const wantLang = scope.startsWith('lang:') ? scope.slice(5) : null;
+  const wantBook = scope.startsWith('book:') ? scope.slice(5) : null;
 
   const emit = (cards) => {
     if (!cards.length) return;
@@ -11081,12 +11119,14 @@ async function collectCards({ dueOnly = true, onBatch = null } = {}) {
     if (onBatch) { try { onBatch(cards); } catch (err) { console.warn('Card batch handler failed:', err.message); } }
   };
 
+  // A book scope never needs the languages, and a language scope never needs the
+  // books — and skipping the books is what skips the chapter documents.
   const [languages, books] = await Promise.all([
-    dbGetAllLanguages().catch(err => {
+    wantBook ? [] : dbGetAllLanguages().catch(err => {
       console.warn('Language cards unavailable for review:', err.message);
       return [];
     }),
-    dbGetAll('books')
+    wantLang ? [] : dbGetAll('books').catch(() => [])
   ]);
 
   // Backfills `script` on any profile saved before that field existed, so the
@@ -11095,7 +11135,9 @@ async function collectCards({ dueOnly = true, onBatch = null } = {}) {
 
   // A deck in the bin is out of the deck until it is restored — the cards are
   // still on disk for the grace period, they just stop being reviewed.
-  const liveDecks = languages.filter(l => !l.deckDeletedAt);
+  const liveDecks = languages
+    .filter(l => !l.deckDeletedAt)
+    .filter(l => !wantLang || l.id === wantLang);
 
   const langCards = (lang, batch) => {
     const cards = batch.flashcards || [];
@@ -11123,9 +11165,28 @@ async function collectCards({ dueOnly = true, onBatch = null } = {}) {
     return rows;
   };
 
+  // ── ONE DECK: one document, and a cursor for the next ────────────────────
+  if (wantLang) {
+    const lang = liveDecks[0];
+    if (!lang) return out;
+    const batch = await dbGetLangCardBatch(lang.id, 0).catch(err => {
+      console.warn(`Deck unavailable for review (${lang.id}):`, err.message);
+      return null;
+    });
+    if (batch) emit(langCards(lang, batch));
+    // Where to pick up. `more` is a guess from the stored card count, and the
+    // reader below stops on the first document that is not there anyway — so a
+    // stale count costs one wasted read, never a missing card.
+    out.cursor = {
+      type: 'lang', lang, next: 1,
+      more: !batch || (lang.cardCount || 0) > LANG_CARDS_PER_BATCH
+    };
+    return out;
+  }
+
   // Books already in memory cost nothing to walk, so they go out first and the
   // reader has something on screen while every read below is still in flight.
-  const plainBooks = books.filter(b => !b.isPdfBook);
+  const plainBooks = books.filter(b => !b.isPdfBook && (!wantBook || b.id === wantBook));
   for (const book of plainBooks) {
     AppState._reviewBookCache[book.id] = book;
     const rows = [];
@@ -11148,7 +11209,7 @@ async function collectCards({ dueOnly = true, onBatch = null } = {}) {
         .then(batches => { for (const b of batches) emit(langCards(lang, b)); })
         .catch(err => console.warn(`Deck unavailable for review (${lang.id}):`, err.message))
     ),
-    ...books.filter(b => b.isPdfBook).map(book =>
+    ...books.filter(b => b.isPdfBook && (!wantBook || b.id === wantBook)).map(book =>
       dbGetChaptersForBook(book.id)
         .then(chapterDocs => {
           for (const chDoc of chapterDocs) {
@@ -11173,9 +11234,40 @@ async function collectCards({ dueOnly = true, onBatch = null } = {}) {
   return out;
 }
 
-// Kept for existing callers (badge refresh, session review activity)
-async function collectDueCards() {
-  return collectCards({ dueOnly: true });
+// The next batch document of a deck already part-loaded. Returns the cards it
+// held and advances the cursor, or null once the deck runs out.
+async function collectMoreCards(cursor, { dueOnly = true } = {}) {
+  if (!cursor || cursor.type !== 'lang' || !cursor.more) return null;
+  const { lang } = cursor;
+  let batch = null;
+  try {
+    batch = await dbGetLangCardBatch(lang.id, cursor.next);
+  } catch (err) {
+    console.warn(`Deck page unavailable (${lang.id} batch ${cursor.next}):`, err.message);
+  }
+  // A missing document is the end of the deck — the batches are numbered without
+  // gaps, so there is nothing after it to look for.
+  if (!batch) { cursor.more = false; return null; }
+
+  cursor.next += 1;
+  const cards = batch.flashcards || [];
+  AppState._reviewLangCache[`${lang.id}_batch_${batch.batch}`] = cards;
+  const rows = [];
+  cards.forEach((card, idx) => {
+    if (card.type === 'precision' && card.word &&
+        !wordMatchesScript(card.word, lang.script)) return;
+    if (!dueOnly || isCardDue(card)) {
+      rows.push({
+        ...card,
+        bookTitle: deckLabel(lang),
+        _langName: lang.name,
+        _langLevel: lang.level,
+        _ttsLang: lang.ttsLangCode || lang.code,
+        _src: { type: 'langCards', langId: lang.id, batch: batch.batch, index: idx }
+      });
+    }
+  });
+  return rows;
 }
 
 // ── SOURCE FILTER + RANDOM PRACTICE ──────────────────────────────────────────
@@ -11265,6 +11357,10 @@ async function populateReviewFilterFromMeta() {
   // Deleting is per-deck, so the button only exists once a deck is selected.
   // Book cards live inside their chapters — a book is deleted in the Library.
   AppState._reviewDecks = withCards;
+  // The badge sums stored per-source counts, and this is where those documents
+  // are already in hand.
+  AppState._reviewMeta = { languages, books };
+  refreshReviewBadge();
   syncDeleteDeckButton();
   await renderDeckTrash();
 }
@@ -11287,7 +11383,16 @@ async function startRandomPractice() {
   document.getElementById('review-empty-message').style.display = 'none';
   document.getElementById('flashcard-deck').style.display = 'none';
   if (loadingEl) loadingEl.style.display = 'flex';
-  const all = await collectCards({ dueOnly: false });
+  // Practice draws from the selected source, so it reads the selected source —
+  // and a single deck pages until it has enough to pick twenty from.
+  const scope = AppState.reviewFilter || 'all';
+  const all = await collectCards({ dueOnly: false, scope });
+  let cursor = all.cursor;
+  while (cursor?.more && all.length < 200) {
+    const more = await collectMoreCards(cursor, { dueOnly: false });
+    if (!more) break;
+    all.push(...more);
+  }
   if (loadingEl) loadingEl.style.display = 'none';
   const pool = shuffleCards(all.filter(matchesReviewFilter)).slice(0, 20);
 
@@ -11346,6 +11451,73 @@ async function persistCardSchedule(card) {
   }
 }
 
+// ── THE DUE BADGE, FROM WHAT EACH SOURCE LAST REPORTED ──────────────────────
+// Nothing reads every deck any more, so the badge cannot count the whole app on
+// the spot. Instead each source records how many of its cards were due the last
+// time it was read in full, on its own document, and the badge adds those up.
+//
+// The numbers arrive free: populateReviewFilterFromMeta already reads every
+// language and every book to build the dropdown.
+//
+// The cost is honest and worth stating: a card that comes due overnight is not
+// counted until that deck is next opened. The badge can therefore read low by a
+// day. Opening a deck corrects its own number immediately.
+const REVIEW_PREFETCH_AHEAD = 10;
+
+function tallyDueBySource(cards) {
+  const by = new Map();
+  for (const card of cards) {
+    if (!isCardDue(card)) continue;
+    const key = reviewSourceKey(card);
+    by.set(key, (by.get(key) || 0) + 1);
+  }
+  return by;
+}
+
+// Only ever called for a source that was read IN FULL — a partial read would
+// write a count lower than the truth and the badge would keep it.
+function recordDueCounts(bySource) {
+  AppState._dueCounts = AppState._dueCounts || {};
+  for (const [key, n] of bySource) {
+    AppState._dueCounts[key] = n;
+    if (key.startsWith('lang:')) {
+      dbPatchLanguage(key.slice(5), { dueCount: n, dueCountAt: Date.now() }).catch(() => {});
+    } else if (key.startsWith('book:')) {
+      dbPatchBookMeta(key.slice(5), { dueCount: n, dueCountAt: Date.now() }).catch(() => {});
+    }
+  }
+}
+
+// Sources that reported nothing at all are counted as zero rather than skipped:
+// a deck that was read and had nothing due must not keep an old number.
+function recordDueCount(scope, n, seen) {
+  const by = new Map();
+  if (scope === 'all') {
+    for (const [k, v] of seen) by.set(k, v);
+    for (const l of AppState._reviewMeta?.languages || []) {
+      if (!by.has(`lang:${l.id}`)) by.set(`lang:${l.id}`, 0);
+    }
+    for (const b of AppState._reviewMeta?.books || []) {
+      if (!by.has(`book:${b.id}`)) by.set(`book:${b.id}`, 0);
+    }
+  } else {
+    by.set(scope, n);
+  }
+  recordDueCounts(by);
+}
+
+function refreshReviewBadge() {
+  const recorded = AppState._dueCounts || {};
+  const meta = AppState._reviewMeta || { languages: [], books: [] };
+  let total = 0;
+  for (const l of meta.languages) {
+    if (l.deckDeletedAt) continue;
+    total += recorded[`lang:${l.id}`] ?? (l.dueCount || 0);
+  }
+  for (const b of meta.books) total += recorded[`book:${b.id}`] ?? (b.dueCount || 0);
+  updateReviewBadge(total);
+}
+
 function updateReviewBadge(count) {
   [document.getElementById('review-badge'), document.getElementById('mobile-review-badge')]
     .forEach(badge => {
@@ -11373,6 +11545,8 @@ async function initReviewSession() {
 
   AppState.flashcardSession = [];
   AppState.flashcardIndex = 0;
+  AppState._reviewCursor = null;
+  AppState._reviewPaging = false;
   AppState.reviewStats = { forgot: 0, hard: 0, good: 0, easy: 0, total: 0, done: 0 };
 
   const filterLabel = AppState.reviewFilter === 'all' ? '' : ' in this source';
@@ -11397,7 +11571,7 @@ async function initReviewSession() {
   };
 
   let started = false;
-  let allDue = 0;
+  const dueSeen = new Map();
 
   // Cards go on screen the moment the first source that has any comes back. The
   // rest are appended behind them, and each arriving chunk is shuffled ON ITS
@@ -11406,7 +11580,7 @@ async function initReviewSession() {
   const onBatch = (cards) => {
     if (!mine()) return;
     const due = cards.filter(isCardDue);
-    allDue += due.length;
+    for (const [k, v] of tallyDueBySource(due)) dueSeen.set(k, (dueSeen.get(k) || 0) + v);
     const mineNow = shuffleCards(due.filter(matchesReviewFilter));
     if (!mineNow.length) return;
 
@@ -11433,23 +11607,116 @@ async function initReviewSession() {
   };
 
   paintCount(false);
-  await collectCards({ dueOnly: false, onBatch });
+  // Only the selected source is read. Everything else used to be fetched and
+  // then discarded by matchesReviewFilter, which is most of what made this slow.
+  const collected = await collectCards({
+    dueOnly: false, onBatch, scope: AppState.reviewFilter || 'all'
+  });
   if (!mine()) return;
 
-  if (loadingEl) loadingEl.style.display = 'none';
-  updateReviewBadge(allDue);   // global count, correct only once everything is in
-  paintCount(true);
+  // A single deck comes back one document at a time; showNextCard pulls the
+  // next one in as the reader approaches the end of what is loaded.
+  AppState._reviewCursor = collected.cursor || null;
 
-  if (!AppState.flashcardSession.length) {
+  if (loadingEl) loadingEl.style.display = 'none';
+  // A deck read one document at a time is not fully counted yet, so its number
+  // is written down only once the last document has been pulled in — a partial
+  // count would stick in the badge and read low forever.
+  AppState._reviewDueSeen = dueSeen;
+  if (!AppState._reviewCursor?.more) {
+    recordDueCount(AppState.reviewFilter || 'all',
+      [...dueSeen.values()].reduce((a, b) => a + b, 0), dueSeen);
+  }
+  refreshReviewBadge();
+  paintCount(!AppState._reviewCursor?.more);
+
+  if (!AppState.flashcardSession.length && !AppState._reviewCursor?.more) {
     document.getElementById('review-empty-message').style.display = 'flex';
     document.getElementById('flashcard-deck').style.display = 'none';
     document.getElementById('review-finished-message').style.display = 'none';
   }
 }
 
+// Pull in the deck's next batch document. One at a time and never twice at
+// once: the guard matters because showNextCard runs on every card and would
+// otherwise fire a second read while the first is still in flight.
+async function pageInMoreCards() {
+  const cursor = AppState._reviewCursor;
+  if (!cursor?.more || AppState._reviewPaging) return;
+  AppState._reviewPaging = true;
+  const token = AppState._reviewToken;
+
+  let rows = null;
+  try {
+    rows = await collectMoreCards(cursor, { dueOnly: false });
+  } catch (err) {
+    console.warn('Could not load more cards:', err.message);
+    cursor.more = false;
+  } finally {
+    AppState._reviewPaging = false;
+  }
+  // The source filter changed while that was in flight — those cards belong to
+  // a session that no longer exists.
+  if (AppState._reviewToken !== token) return;
+
+  if (rows) {
+    const due = rows.filter(isCardDue);
+    const seen = AppState._reviewDueSeen;
+    if (seen) for (const [k, v] of tallyDueBySource(due)) seen.set(k, (seen.get(k) || 0) + v);
+    const mine = shuffleCards(due.filter(matchesReviewFilter));
+    if (mine.length) AppState.flashcardSession.push(...mine);
+  }
+
+  // The deck is fully read now, so its count is finally worth recording.
+  if (!cursor.more && AppState._reviewDueSeen) {
+    const seen = AppState._reviewDueSeen;
+    recordDueCount(AppState.reviewFilter || 'all',
+      [...seen.values()].reduce((a, b) => a + b, 0), seen);
+    refreshReviewBadge();
+  }
+
+  const stats = AppState.reviewStats;
+  if (stats) {
+    stats.total = AppState.flashcardSession.length;
+    const ratio = document.getElementById('review-cards-ratio');
+    if (ratio) ratio.textContent = `${stats.done} / ${stats.total}`;
+  }
+
+  // If the reader was waiting on this, put them back on a card.
+  const loading = document.getElementById('review-loading');
+  if (loading && loading.style.display === 'flex' &&
+      AppState.flashcardIndex < AppState.flashcardSession.length) {
+    loading.style.display = 'none';
+    document.getElementById('flashcard-deck').style.display = 'block';
+    showNextCard();
+  } else if (AppState.flashcardIndex >= AppState.flashcardSession.length && !cursor.more) {
+    // Nothing arrived and there is nothing more coming: it really is finished.
+    if (loading) loading.style.display = 'none';
+    showNextCard();
+  }
+}
+
 function showNextCard() {
   const cards = AppState.flashcardSession;
   const idx = AppState.flashcardIndex;
+
+  // Ten cards of runway before the end of what is loaded, which at half a minute
+  // a card is minutes of cover for one document read. The reader should never
+  // see this happen.
+  if (AppState._reviewCursor?.more && cards.length - idx <= REVIEW_PREFETCH_AHEAD) {
+    pageInMoreCards();
+  }
+
+  // Out of cards but not out of deck: the next document is on its way, so this
+  // waits for it. Showing "you've reviewed everything" here would be a lie the
+  // reader acts on by leaving.
+  if (idx >= cards.length && AppState._reviewCursor?.more) {
+    document.getElementById('flashcard-deck').style.display = 'none';
+    document.getElementById('review-finished-message').style.display = 'none';
+    const loading = document.getElementById('review-loading');
+    if (loading) loading.style.display = 'flex';
+    return;
+  }
 
   if (idx >= cards.length) {
     // Session complete
@@ -11581,8 +11848,16 @@ function rateCard(score) {
   document.getElementById('review-good-count').textContent = stats.good;
   document.getElementById('review-easy-count').textContent = stats.easy;
 
-  // Update review badge with remaining due cards (practice doesn't change it)
-  if (!AppState.practiceMode) updateReviewBadge(stats.total - stats.done);
+  // One fewer due in the deck it came from. The badge is a sum of stored counts
+  // now, so it is decremented at the source rather than recomputed.
+  if (!AppState.practiceMode) {
+    const key = reviewSourceKey(card);
+    AppState._dueCounts = AppState._dueCounts || {};
+    if (typeof AppState._dueCounts[key] === 'number') {
+      recordDueCounts(new Map([[key, Math.max(0, AppState._dueCounts[key] - 1)]]));
+    }
+    refreshReviewBadge();
+  }
 
   AppState.flashcardIndex++;
   showNextCard();
