@@ -2464,8 +2464,8 @@ async function renderLanguages() {
   grid.querySelectorAll('.lang-card').forEach(c => c.remove());
   // Runs here too, not only in the Vocabulary Builder: a course hidden by the
   // old shared id should come back the moment you look at your courses.
-  const all = await removeQuranLessonDeck(
-    await cleanUpQuranVocabTracks(await dbGetAllLanguages()));
+  const all = scheduleRootDeckSync(await removeQuranLessonDeck(
+    await cleanUpQuranVocabTracks(await dbGetAllLanguages())));
 
   // The Qur'anic text is 1.4MB and a lesson cannot start writing until it has
   // loaded, because the verses go INTO the prompt. Fetching it the moment the
@@ -3200,6 +3200,14 @@ async function cleanUpQuranVocabTracks(languages) {
 // screen, and the bin would leave it there under "Recently deleted decks". The
 // cards were only ever derived from quran-course-data.js, so nothing written by
 // hand is lost, and the course itself — lessons, progress, tutor — is untouched.
+// Not awaited: it reads the whole deck, and the app start path is not the place
+// for that. The review session awaits it when those cards are about to be shown.
+function scheduleRootDeckSync(languages) {
+  const roots = languages.find(l => isQuranVocab(l));
+  if (roots) ensureQuranRootDeckCurrent(roots);
+  return languages;
+}
+
 async function removeQuranLessonDeck(languages) {
   const course = languages.find(l => isQuranCourse(l) && !l.lessonDeckRemoved);
   if (!course) return languages;
@@ -3302,6 +3310,60 @@ function versesInHistory(history = []) {
 // The only per-root work is the lemmas, so that is what's batched: fifteen
 // roots per call, every batch in flight at once, and any root already in the
 // lemma cache is never asked for again. All 305 arrive due immediately.
+// A root card IS its row in the list: the joined root on the front, the same
+// wording underneath. `كتب`, not `ك ت ب` — which is not a word — and not
+// `ٱلْكِتَٰبِ` either, which is a word but not the one the list shows, and a deck
+// that disagrees with the list it came from is worse than either.
+//
+// The vowelled wordform is not lost: it goes on the back among the words built
+// from the root, which is where it belongs. For 118 of the 300 it is not
+// otherwise in the family, so merging it there keeps the commonest form of
+// those roots on the card.
+// Arabic down to its bare consonants, so two spellings of one word — with and
+// without vowel marks, ٱ against ا — compare equal.
+function bareArabic(str) {
+  return String(str)
+    .replace(/[\u064B-\u0652\u0653-\u0655\u0670\u06D6-\u06ED\u0640]/g, '')
+    .replace(/[\u0622\u0623\u0625\u0671]/g, '\u0627')
+    .replace(/\u0649/g, '\u064A')
+    .replace(/\u0629/g, '\u0647')
+    .trim();
+}
+
+function rootCardFor(entry) {
+  const seen = new Set();
+  const lemmas = [];
+  for (const f of [...(entry.family || []),
+                   ...(entry.headword ? [{ word: entry.headword, gloss: entry.headwordGloss }] : [])]) {
+    if (!f.word) continue;
+    const key = bareArabic(f.word);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lemmas.push({ word: f.word, meaning: f.gloss || f.meaning || '' });
+  }
+  return {
+    front: entry.root,
+    back: entry.gloss,
+    word: entry.root,
+    root: entry.root,
+    romanization: entry.translit,
+    headword: entry.headword || '',
+    headwordGloss: entry.headwordGloss || '',
+    verse: entry.verse || null,
+    type: 'root',
+    rootId: entry.id,
+    rootN: entry.n,
+    quranCount: entry.count,
+    lemmas
+  };
+}
+
+// The fields SM-2 owns. A card whose wording changed is the SAME card — its
+// schedule must survive a rebuild, or every rebuild would silently reset months
+// of review history.
+const CARD_SCHEDULE_FIELDS = ['efactor', 'repetitionCount', 'interval',
+  'nextDueDate', 'lastRating', 'lastReviewedAt'];
+
 async function buildQuranRootDeck(lang, onProgress = () => {}) {
   const entries = QURAN_SEQUENCE;
 
@@ -3320,21 +3382,7 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
     for (const c of batch.flashcards || []) if (c.rootId) have.add(c.rootId);
   }
 
-  const cards = entries.filter(e => !have.has(e.id)).map(e => ({
-    // A real Quranic word on the front, not the three root letters. The root
-    // goes on the back with the family — the list is where roots are read.
-    front: e.headword || e.root,
-    back: e.gloss,
-    word: e.headword || e.root,
-    root: e.root,
-    romanization: e.translit,
-    headwordGloss: e.headwordGloss || '',
-    verse: e.verse || null,
-    type: 'root',
-    rootId: e.id,
-    quranCount: e.count,
-    lemmas: (e.family || []).map(f => ({ word: f.word, meaning: f.gloss }))
-  }));
+  const cards = entries.filter(e => !have.has(e.id)).map(rootCardFor);
 
   // Already-held roots count as done, so a top-up run does not restart the bar
   // from zero for cards it is not going to write.
@@ -3347,8 +3395,97 @@ async function buildQuranRootDeck(lang, onProgress = () => {}) {
 
   lang.rootDeckSeeded = true;
   lang.rootDeckCount = entries.length;
-  await dbPatchLanguage(lang.id, { rootDeckSeeded: true, rootDeckCount: entries.length });
+  // Stamped, so a deck built from the current list is not then "synced" to it.
+  lang.rootDeckVersion = ROOT_DECK_VERSION;
+  await dbPatchLanguage(lang.id, {
+    rootDeckSeeded: true, rootDeckCount: entries.length,
+    rootDeckVersion: ROOT_DECK_VERSION
+  });
   return cards.length;
+}
+
+// ── BRINGING THE DECK BACK IN LINE WITH THE LIST ────────────────────────────
+// buildQuranRootDeck only ever ADDED — it filtered on root id and appended what
+// was missing. So a deck seeded before the list was rebuilt kept every card the
+// list no longer contains: 42 roots that were dropped, and the five old particle
+// bundles whose fronts read مِن · فِي · عَلَى · إِلَى. The cards that did survive
+// kept their old wording. That is why the flashcards stopped matching Saved
+// vocab, and why topping up again could never fix it.
+//
+// This makes the deck equal the list: refresh what is still there, drop what is
+// not, add what is missing, in list order.
+//
+// REVIEW HISTORY SURVIVES. A card whose wording changed is the same card, so
+// its SM-2 fields are carried across untouched. Rebuilding is not a reason to
+// make someone re-learn 300 roots.
+const ROOT_DECK_VERSION = 2;
+
+async function syncQuranRootDeck(lang) {
+  const entries = QURAN_SEQUENCE;
+  const byRoot = new Map();
+  for (const batch of await dbGetLangCardBatches(lang.id)) {
+    for (const card of batch.flashcards || []) {
+      if (card.rootId && !byRoot.has(card.rootId)) byRoot.set(card.rootId, card);
+    }
+  }
+
+  const stats = { kept: 0, added: 0, dropped: 0 };
+  const cards = entries.map(entry => {
+    const fresh = rootCardFor(entry);
+    const old = byRoot.get(entry.id);
+    if (!old) { stats.added++; return fresh; }
+    stats.kept++;
+    byRoot.delete(entry.id);
+    // Content from the list, schedule from the card that is already there.
+    const schedule = {};
+    for (const f of CARD_SCHEDULE_FIELDS) {
+      if (old[f] !== undefined) schedule[f] = old[f];
+    }
+    return { ...fresh, ...schedule };
+  });
+  stats.dropped = byRoot.size;
+
+  // Write the deck back in list order, then remove any batch documents the new
+  // deck does not reach — a shorter deck must not leave the old tail behind.
+  const batchCount = Math.ceil(cards.length / LANG_CARDS_PER_BATCH);
+  for (let i = 0; i < batchCount; i++) {
+    await dbPutLangCardBatch(lang.id, i,
+      cards.slice(i * LANG_CARDS_PER_BATCH, (i + 1) * LANG_CARDS_PER_BATCH));
+  }
+  const col = userCol('langCards');
+  if (col) {
+    for (let i = batchCount; i < batchCount + 8; i++) {
+      await col.doc(`${lang.id}_batch_${i}`).delete().catch(() => {});
+    }
+  }
+
+  await dbPatchLanguage(lang.id, {
+    cardCount: cards.length,
+    rootDeckSeeded: true,
+    rootDeckCount: cards.length,
+    rootDeckVersion: ROOT_DECK_VERSION
+  });
+  lang.cardCount = cards.length;
+  lang.rootDeckVersion = ROOT_DECK_VERSION;
+
+  console.log(`Root deck brought in line with the list: ${stats.kept} refreshed ` +
+    `(schedules kept), ${stats.added} added, ${stats.dropped} removed.`);
+  return stats;
+}
+
+// Runs at most once per deck version, and never twice at the same time — the
+// review session awaits it and the startup sweep fires it, and both can land
+// together.
+const _rootDeckSyncs = {};
+function ensureQuranRootDeckCurrent(lang) {
+  if (!lang || !isQuranVocab(lang)) return Promise.resolve(null);
+  if ((lang.rootDeckVersion || 0) >= ROOT_DECK_VERSION) return Promise.resolve(null);
+  if (!lang.rootDeckSeeded && !lang.cardCount) return Promise.resolve(null); // nothing filed yet
+  if (_rootDeckSyncs[lang.id]) return _rootDeckSyncs[lang.id];
+  _rootDeckSyncs[lang.id] = syncQuranRootDeck(lang)
+    .catch(err => { console.warn('Could not sync the root deck:', err.message); return null; })
+    .finally(() => { delete _rootDeckSyncs[lang.id]; });
+  return _rootDeckSyncs[lang.id];
 }
 
 // ── RECOVERING LOST COURSE PROGRESS ──────────────────────────────────────────
@@ -3554,7 +3691,7 @@ const VocabBuilder = {
 
   async open() {
     let all = await dbGetAllLanguages().catch(() => []);
-    all = await removeQuranLessonDeck(await cleanUpQuranVocabTracks(all));
+    all = scheduleRootDeckSync(await removeQuranLessonDeck(await cleanUpQuranVocabTracks(all)));
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
@@ -11606,6 +11743,15 @@ async function initReviewSession() {
     }
   };
 
+  // A stale root deck would put the wrong words in front of the reader, so the
+  // one deck about to be shown is brought in line first. It runs once.
+  if ((AppState.reviewFilter || '').startsWith('lang:')) {
+    const deck = (AppState._reviewMeta?.languages || [])
+      .find(l => l.id === AppState.reviewFilter.slice(5));
+    if (deck && isQuranVocab(deck)) await ensureQuranRootDeckCurrent(deck);
+    if (!mine()) return;
+  }
+
   paintCount(false);
   // Only the selected source is read. Everything else used to be fetched and
   // then discarded by matchesReviewFilter, which is most of what made this slow.
@@ -11766,10 +11912,11 @@ function showNextCard() {
   if (rootHead) {
     rootHead.style.display = isRootCard ? 'flex' : 'none';
     if (isRootCard) {
-      document.getElementById('card-back-root-word').textContent = card.front;
+      // The front is the root, so the back leads with the root and its sound
+      // rather than printing the same word again and calling it an answer.
+      document.getElementById('card-back-root-word').textContent = card.root || card.front;
       document.getElementById('card-back-root-rom').textContent = [
-        card.headwordGloss,
-        card.root ? `root ${card.root}` : card.romanization,
+        card.romanization,
         card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : ''
       ].filter(Boolean).join(' · ');
     }
@@ -11777,7 +11924,7 @@ function showNextCard() {
   if (lemmaBox) {
     lemmaBox.style.display = isRootCard ? 'block' : 'none';
     lemmaBox.innerHTML = isRootCard ? `
-      <div class="card-lemmas-head">Others from the same root</div>
+      <div class="card-lemmas-head">Words built from ${escapeAttr(card.root || card.front)}</div>
       ${card.lemmas.map(l => `
         <div class="card-lemma">
           <span class="card-lemma-ar">${escapeAttr(l.word)}</span>
@@ -11803,7 +11950,10 @@ function showNextCard() {
   speakBtn.style.display = isLangCard ? 'inline-flex' : 'none';
   speakBtn.onclick = isLangCard ? (e) => {
     e.stopPropagation(); // don't flip the card
-    if (!NarrationEngine.speakLang(card.front, card._ttsLang)) {
+    // A root is not pronounceable as written — كتب on its own is three letters,
+    // not a word — so the button says the commonest real form built from it.
+    const say = isRootCard ? (card.headword || card.lemmas?.[0]?.word || card.front) : card.front;
+    if (!NarrationEngine.speakLang(say, card._ttsLang)) {
       showToast(`No ${card._langName || card.bookTitle} voice on this device — audio unavailable.`,
         'info', 3500);
     }
@@ -11812,7 +11962,10 @@ function showNextCard() {
   // Romanization fade: fully shown at A0-A1, hidden from A2 up (learners
   // should be reading the script itself by then). Front shows it while
   // learning; the back always carries it as the answer's pronunciation.
-  const showRom = isLangCard && !!card.romanization;
+  //
+  // A root card prints its own transliteration in the heading line above, so
+  // this would be the second k-t-b on the same face.
+  const showRom = isLangCard && !!card.romanization && !isRootCard;
   const earlyLevel = ['A0', 'A1'].includes(card._langLevel);
   frontRom.style.display = showRom && earlyLevel ? 'block' : 'none';
   frontRom.textContent = showRom ? card.romanization : '';
