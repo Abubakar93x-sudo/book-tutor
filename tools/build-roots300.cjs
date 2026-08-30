@@ -52,7 +52,13 @@ const NEW_FAM  = JSON.parse(fs.readFileSync(path.join(__dirname, 'roots300-new-f
 const EXTRA_PATH = path.join(__dirname, 'roots300-extra-families.json');
 const EXTRA = fs.existsSync(EXTRA_PATH)
   ? JSON.parse(fs.readFileSync(EXTRA_PATH, 'utf8')) : {};
-delete MAP._comment; delete NEW_FAM._comment; delete EXTRA._comment;
+// The audit layer, written by audit-roots.cjs: corrected root meanings and
+// corrected words. It goes LAST because it is a correction of the others —
+// where it has an opinion, that opinion wins.
+const FIX_PATH = path.join(__dirname, 'roots300-corrections.json');
+const FIXES = fs.existsSync(FIX_PATH)
+  ? JSON.parse(fs.readFileSync(FIX_PATH, 'utf8')) : {};
+delete MAP._comment; delete NEW_FAM._comment; delete EXTRA._comment; delete FIXES._comment;
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'roots300-source.txt'), 'utf8')
   .trim().split('\n').map(line => {
@@ -80,7 +86,26 @@ function findVerse(word) {
   }
   return best && { ref: best.ref, surah: `Sūrat ${surahName(+best.ref.split(':')[0])}`, text: best.text };
 }
-const occurs = w => VERSES.some(([, , flat]) => flat.includes(bare(w)));
+// EVERY DISTINCT WORD IN THE QUR'AN, as a word.
+//
+// This used to be `someVerse.includes(word)` — a substring of a whole verse —
+// and that let two kinds of rubbish through: phrases like مِنَ ٱلنَّاسِ, which of
+// course occur inside a verse, and dictionary citation forms like رَحْمَٰنٌ that
+// sit inside a longer real token. 286 of 1,631 family entries were not words the
+// muṣḥaf contains, while the file claimed every string in it occurred.
+//
+// A card teaches a WORD, so the test is word membership.
+const TOKENS = new Set();
+for (const text of Object.values(QURAN_TEXT)) {
+  for (const w of String(text).split(/\s+/)) {
+    const clean = bare(w.replace(/[^\u0621-\u065F\u0670-\u06ED]/g, ''));
+    if (clean) TOKENS.add(clean);
+  }
+}
+const occurs = w => {
+  const n = bare(w);
+  return n.length > 1 && !/\s/.test(n) && TOKENS.has(n);
+};
 
 // How often the family's forms are actually in the text. An undercount rather
 // than a guess: it counts the forms this root ships with, not every form it
@@ -180,12 +205,18 @@ const entries = rows.filter(r => r.root).map((row, i) => {
   // its only word.
   const proposed = card?.family?.length ? card.family
     : (fresh?.family?.map(([word, gloss]) => ({ word, gloss })) || []);
-  // The card's family first, then the top-up, deduplicated on the bare form so
-  // the same word written two ways cannot appear twice.
+  // The audited family replaces the others outright where it exists — it was
+  // built to correct them, so merging would put back what it removed.
+  const fix = FIXES[row.root];
   const seenForm = new Set();
-  let family = [...proposed, ...(EXTRA[row.root] || [])]
+  let family = (fix?.family?.length ? fix.family : [...proposed, ...(EXTRA[row.root] || [])])
     .filter(f => f.word && occurs(f.word))
-    .filter(f => { const k = bare(f.word); if (seenForm.has(k)) return false; seenForm.add(k); return true; })
+    // Two spellings of one word, and the same word under a different prefix,
+    // both count as already listed.
+    .filter(f => {
+      const k = bare(f.word).replace(/^(وبال|فبال|وال|فال|بال|كال|لل|ال|و|ف|ب|ك|ل)/, '');
+      if (seenForm.has(k)) return false; seenForm.add(k); return true;
+    })
     .slice(0, 6);
 
   // The card front stays a real vowelled wordform — never the bare letters,
@@ -202,7 +233,8 @@ const entries = rows.filter(r => r.root).map((row, i) => {
     kind: 'root',
     root: row.root,                                   // joined, as he wrote it
     translit: old?.translit || fresh?.translit || '',
-    gloss: row.backfilled ? row.meaning : mergedMeaning(row.root, row.meaning),
+    gloss: fix?.gloss || (row.backfilled ? row.meaning : mergedMeaning(row.root, row.meaning)),
+    ...(fix?.note ? { note: fix.note } : {}),
     count: old?.count || countForms(family),
     headword, headwordGloss,
     family, verse

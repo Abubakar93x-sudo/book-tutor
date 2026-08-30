@@ -43,8 +43,19 @@ const ROOTS = load('quran-roots-data.js', 'QURAN_ROOTS');
 const bare = s => String(s)
   .replace(/[ً-ْٓ-ٰٕۖ-ۭـ]/g, '').replace(/[آأإٱ]/g, 'ا')
   .replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/\s+/g, ' ').trim();
-const FLAT = Object.values(QURAN_TEXT).map(bare);
-const occurs = w => { const n = bare(w); return n.length > 1 && FLAT.some(v => v.includes(n)); };
+// Word membership, not substring-of-a-verse. The old test passed phrases and
+// citation forms alike — see the note in build-roots300.cjs.
+const TOKENS = new Set();
+for (const text of Object.values(QURAN_TEXT)) {
+  for (const w of String(text).split(/\s+/)) {
+    const clean = bare(w.replace(/[^\u0621-\u065F\u0670-\u06ED]/g, ''));
+    if (clean) TOKENS.add(clean);
+  }
+}
+const occurs = w => {
+  const n = bare(w);
+  return n.length > 1 && !/\s/.test(n) && TOKENS.has(n);
+};
 
 // Already-collected work survives a crash or a second run.
 let extra = {};
