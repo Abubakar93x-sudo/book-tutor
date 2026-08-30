@@ -4704,6 +4704,47 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
 /* The session size is five short options — at the source filter's width it
    pushed the row onto a second line for no reason. */
 .review-size { max-width: 8.5rem; }
+
+/* ── Revision ──────────────────────────────────────────────────────────────
+   Sets already learned, coming back on their third day. Sits above the card so
+   what is waiting is visible before a session is started. */
+.revision-section {
+  margin: 1.2rem 0 0;
+  padding: 0.9rem 1.1rem 1rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.revision-title {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 0 0 0.6rem;
+}
+.revision-list { display: flex; flex-direction: column; gap: 0.15rem; }
+.revision-row {
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.revision-row:last-child { border-bottom: none; }
+/* Not due yet: still listed, still startable, visibly not today's work. */
+.revision-row.is-waiting { opacity: 0.62; }
+.revision-count {
+  font-family: var(--font-body); font-size: 0.9rem; font-weight: 600;
+  color: var(--text-primary); min-width: 5.5rem;
+}
+.revision-when {
+  font-family: var(--font-body); font-size: 0.82rem; color: var(--text-muted);
+  flex: 1;
+}
+.revision-deck {
+  font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted);
+  background: var(--bg-elevated); border-radius: 999px; padding: 0.1rem 0.5rem;
+}
+@media (max-width: 640px) {
+  .revision-count { min-width: 4.5rem; font-size: 0.85rem; }
+  .revision-when { flex: 1 0 100%; order: 3; font-size: 0.78rem; }
+}
 #btn-random-practice {
   display: inline-flex;
   align-items: center;

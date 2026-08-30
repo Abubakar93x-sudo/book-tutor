@@ -11175,6 +11175,28 @@ async function submitSandboxExplanation() {
 
 const SM2_QUALITY = { forgot: 1, hard: 3, good: 4, easy: 5 };
 
+// EVERY REVIEWED CARD COMES BACK IN TWO DAYS.
+//
+// A word learned today returns the day after tomorrow, with the rest of the set
+// it was learned in — not tomorrow, and not on an expanding SM-2 interval. That
+// is the rule he chose, including for a card rated Forgot: giving forgotten
+// cards a shorter interval of their own would split a set across two days, which
+// is the thing this exists to prevent.
+//
+// The list is closed at 300 and half returns each day, so this settles at ~150
+// due per day rather than growing without limit, and the session size decides
+// how many of those he actually sees.
+//
+// efactor and repetitionCount are still tracked. They cost nothing, they record
+// how a card is going, and they mean expanding intervals can be turned back on
+// without having lost the history.
+const REVISION_GAP_DAYS = 2;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The day a card belongs to, as a plain date — the thing that makes "the 30
+// words from Saturday" a set rather than a feeling.
+const dayStamp = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+
 function sm2Schedule(card, score) {
   const q = SM2_QUALITY[score] ?? 3;
   let ef       = card.efactor ?? 2.5;
@@ -11193,14 +11215,19 @@ function sm2Schedule(card, score) {
     ef = Math.max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
   }
 
+  const now = Date.now();
   return {
     ...card,
     efactor: ef,
     repetitionCount: reps,
-    interval,
-    nextDueDate: Date.now() + interval * 24 * 60 * 60 * 1000,
+    // What SM-2 would have chosen, kept for the record; the due date does not
+    // use it.
+    interval: REVISION_GAP_DAYS,
+    smInterval: interval,
+    nextDueDate: now + REVISION_GAP_DAYS * DAY_MS,
+    setDay: dayStamp(now),
     lastRating: score,
-    lastReviewedAt: Date.now()
+    lastReviewedAt: now
   };
 }
 
@@ -11209,6 +11236,20 @@ function isCardDue(card) {
   const endOfToday = new Date();
   endOfToday.setHours(23, 59, 59, 999);
   return card.nextDueDate <= endOfToday.getTime();
+}
+
+// Oldest first, varied within a day. Cards are grouped by the date they came
+// due and shuffled inside each group, so a long-overdue set is always served
+// before a fresh one while the order within it still changes day to day.
+function byDueDateThenShuffled(cards) {
+  const groups = new Map();
+  for (const c of cards) {
+    const key = c.nextDueDate ? dayStamp(c.nextDueDate) : '0000-00-00';  // never reviewed = oldest
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  return [...groups.keys()].sort()
+    .flatMap(k => shuffleCards(groups.get(k)));
 }
 
 // Fisher–Yates shuffle: interleaves due cards across books and chapters,
@@ -11510,8 +11551,66 @@ async function populateReviewFilterFromMeta() {
   // are already in hand.
   AppState._reviewMeta = { languages, books };
   refreshReviewBadge();
+  renderRevisionSets();
   syncDeleteDeckButton();
   await renderDeckTrash();
+}
+
+// The Revision list. Built from the per-deck set index, so it paints with no
+// card reads at all — the deck documents were already fetched to fill the
+// source dropdown.
+function renderRevisionSets() {
+  const wrap = document.getElementById('revision-section');
+  const list = document.getElementById('revision-list');
+  if (!wrap || !list) return;
+
+  // Whatever deck is selected; "all sources" shows every deck's sets.
+  const langs = (AppState._reviewMeta?.languages || [])
+    .filter(l => !l.deckDeletedAt)
+    .filter(l => (AppState.reviewFilter || 'all') === 'all' ||
+                 AppState.reviewFilter === `lang:${l.id}`);
+
+  const rows = langs.flatMap(lang =>
+    revisionSetsFor(lang).map(set => ({ ...set, lang })));
+
+  if (!rows.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+  wrap.style.display = '';
+
+  const when = (day) => {
+    const d = new Date(day + 'T00:00:00');
+    if (day === dayStamp()) return 'today';
+    if (day === dayStamp(Date.now() - DAY_MS)) return 'yesterday';
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  list.innerHTML = rows.map(r => `
+    <div class="revision-row${r.due ? '' : ' is-waiting'}"
+         data-lang="${escapeAttr(r.lang.id)}" data-day="${escapeAttr(r.day)}">
+      <span class="revision-count">${r.count} word${r.count === 1 ? '' : 's'}</span>
+      <span class="revision-when">learned ${when(r.day)}${
+        r.due ? '' : ` — due ${when(r.dueOn)}`}</span>
+      ${langs.length > 1 ? `<span class="revision-deck">${escapeAttr(r.lang.name || '')}</span>` : ''}
+      <button class="btn btn-sm ${r.due ? 'btn-primary' : 'btn-ghost'}"
+              data-start-set>${r.due ? 'Start' : 'Revise early'}</button>
+    </div>`).join('');
+
+  list.querySelectorAll('[data-start-set]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.revision-row');
+      startRevisionSet(row.dataset.lang, row.dataset.day);
+    });
+  });
+}
+
+// Review one set, whether or not it is due. "Revise early" is the same journey
+// as "Start" — the only difference is that the cards have not come round yet, so
+// it does not filter on being due.
+async function startRevisionSet(langId, day) {
+  AppState.reviewFilter = `lang:${langId}`;
+  AppState.reviewSet = day;
+  const sizeSel = document.getElementById('review-source-filter');
+  if (sizeSel) sizeSel.value = `lang:${langId}`;
+  await initReviewSession();
 }
 
 function syncDeleteDeckButton() {
@@ -11600,6 +11699,54 @@ async function persistCardSchedule(card) {
     ch.flashcards[src.index] = clean;
     await dbPut('books', book);
   }
+}
+
+// ── THE SETS A DECK HOLDS ───────────────────────────────────────────────────
+// "The 30 words from Saturday" has to be answerable before any card is read, or
+// the Revision list would cost a full deck read every time the page opens. So
+// each deck keeps a count per day on its own document — { "2026-08-30": 30 } —
+// updated as cards are rated. populateReviewFilterFromMeta already reads every
+// language document to build the dropdown, so the list arrives free.
+//
+// Sets MERGE. Revise Saturday's thirty on Monday while learning thirty new ones
+// and Wednesday holds one set of sixty. That follows from a set being a day's
+// work, and it is what stops the number of sets growing forever.
+function noteCardInSet(langId, day, previousDay) {
+  if (!langId || !day) return;
+  const decks = AppState._reviewSets = AppState._reviewSets || {};
+  if (!decks[langId]) {
+    const stored = (AppState._reviewMeta?.languages || []).find(l => l.id === langId)?.cardSets;
+    decks[langId] = { ...(stored || {}) };
+  }
+  const sets = decks[langId];
+  sets[day] = (sets[day] || 0) + 1;
+  // It left the set it was in — otherwise every day's count would only grow and
+  // the list would claim sets that no longer have any cards.
+  if (previousDay && previousDay !== day) {
+    sets[previousDay] = Math.max(0, (sets[previousDay] || 0) - 1);
+    if (!sets[previousDay]) delete sets[previousDay];
+  }
+  clearTimeout(AppState._setIndexTimer);
+  AppState._setIndexTimer = setTimeout(() => {
+    dbPatchLanguage(langId, { cardSets: sets }).catch(() => {});
+  }, 400);   // one write per burst of ratings, not one per card
+}
+
+// Every set a deck holds, newest information first: due ones oldest-first —
+// with everything on a two-day cycle, serving the newest first would starve the
+// oldest permanently — then the ones not due yet.
+function revisionSetsFor(lang) {
+  const sets = (AppState._reviewSets?.[lang?.id]) || lang?.cardSets || {};
+  const today = dayStamp();
+  const rows = Object.entries(sets)
+    .filter(([, n]) => n > 0)
+    .map(([day, count]) => {
+      const dueOn = dayStamp(Date.parse(day) + REVISION_GAP_DAYS * DAY_MS);
+      return { day, count, dueOn, due: dueOn <= today };
+    });
+  const byDay = (a, b) => a.day.localeCompare(b.day);
+  return [...rows.filter(r => r.due).sort(byDay),
+          ...rows.filter(r => !r.due).sort(byDay)];
 }
 
 // ── THE DUE BADGE, FROM WHAT EACH SOURCE LAST REPORTED ──────────────────────
@@ -11725,19 +11872,18 @@ function openReviewView() {
 
 // What a session is "of". Changing either of these is a deliberate restart.
 const reviewSessionKey = () =>
-  `${AppState.reviewFilter || 'all'}|${AppState.reviewSize ?? REVIEW_SIZE_DEFAULT}`;
+  `${AppState.reviewFilter || 'all'}|${AppState.reviewSize ?? REVIEW_SIZE_DEFAULT}` +
+  `|${AppState.reviewSet || ''}`;
 
 // ── TODAY'S TALLY ───────────────────────────────────────────────────────────
 // Resuming in place survives navigation but not a reload, and "progress" is
 // better read as what you have done TODAY than as this run of the app. The
 // counts live in the settings store — local, beside reviewFilter and reviewSize
 // — stamped with the day they belong to.
-const reviewToday = () => new Date().toISOString().slice(0, 10);
-
 async function loadReviewProgress() {
   try {
     const rec = await dbGet('settings', 'reviewProgress');
-    if (rec?.value?.day === reviewToday()) return rec.value;
+    if (rec?.value?.day === dayStamp()) return rec.value;
   } catch (_) { /* a missing tally is just a fresh day */ }
   return null;
 }
@@ -11745,7 +11891,7 @@ async function loadReviewProgress() {
 function saveReviewProgress(stats) {
   const { done, forgot, hard, good, easy } = stats;
   dbPut('settings', { key: 'reviewProgress',
-    value: { day: reviewToday(), done, forgot, hard, good, easy } }).catch(() => {});
+    value: { day: dayStamp(), done, forgot, hard, good, easy } }).catch(() => {});
 }
 
 async function initReviewSession() {
@@ -11815,11 +11961,19 @@ async function initReviewSession() {
   // rest are appended behind them, and each arriving chunk is shuffled ON ITS
   // OWN — reshuffling the whole session would move cards the reader has already
   // been shown, including the one in front of them.
+  // Reviewing one named set takes that set's cards, due or not — "revise early"
+  // is the whole point of being able to pick a set that has not come round yet.
+  const wantSet = AppState.reviewSet || null;
+  const eligible = (card) => wantSet ? card.setDay === wantSet : isCardDue(card);
+
   const onBatch = (cards) => {
     if (!mine()) return;
-    const due = cards.filter(isCardDue);
+    const due = cards.filter(eligible);
     for (const [k, v] of tallyDueBySource(due)) dueSeen.set(k, (dueSeen.get(k) || 0) + v);
-    let mineNow = shuffleCards(due.filter(matchesReviewFilter));
+    // Oldest due first, shuffled only within a due date. On a two-day cycle a
+    // straight shuffle lets recent sets crowd out old ones for good, and a
+    // straight sort would show the same order every day.
+    let mineNow = byDueDateThenShuffled(due.filter(matchesReviewFilter));
     if (!mineNow.length) return;
 
     // Stop at the size asked for. What is over the line is HELD rather than
@@ -11969,10 +12123,10 @@ async function pageInMoreCards() {
   if (AppState._reviewToken !== token) return;
 
   if (rows) {
-    const due = rows.filter(isCardDue);
+    const due = rows.filter(c => AppState.reviewSet ? c.setDay === AppState.reviewSet : isCardDue(c));
     const seen = AppState._reviewDueSeen;
     if (seen) for (const [k, v] of tallyDueBySource(due)) seen.set(k, (seen.get(k) || 0) + v);
-    let mine = shuffleCards(due.filter(matchesReviewFilter));
+    let mine = byDueDateThenShuffled(due.filter(matchesReviewFilter));
     // A document holds up to a hundred cards; the session takes only as many as
     // it is still short of, and holds the rest. Without this, "Keep going" for
     // another twenty would hand over the whole next document.
@@ -12085,6 +12239,9 @@ function showNextCard() {
     }
     if (keep) keep.style.display = (!AppState.practiceMode && more) ? '' : 'none';
     if (practice) practice.style.display = (!AppState.practiceMode && more) ? 'none' : '';
+    // What is waiting has just changed — the set that was reviewed has moved on
+    // by two days and any others are a day closer.
+    renderRevisionSets();
     return;
   }
 
@@ -12211,6 +12368,9 @@ function rateCard(score) {
   if (!AppState.practiceMode) {
     const scheduled = sm2Schedule(card, score);
     signalCardGrade(card, score);
+    if (card._src?.type === 'langCards') {
+      noteCardInSet(card._src.langId, scheduled.setDay, card.setDay);
+    }
     persistCardSchedule(scheduled)
       .catch(err => console.warn('Could not save card schedule:', err.message));
   }
@@ -12745,12 +12905,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Source filter + random practice
   document.getElementById('review-source-filter').addEventListener('change', (e) => {
     AppState.reviewFilter = e.target.value;
+    AppState.reviewSet = null;      // a deck was chosen, not a set
     // Remember the chosen topic across sessions (local-only, like other settings)
     dbPut('settings', { key: 'reviewFilter', value: e.target.value }).catch(() => {});
     initReviewSession();
   });
   document.getElementById('review-size').addEventListener('change', (e) => {
     AppState.reviewSize = Number(e.target.value);
+    AppState.reviewSet = null;
     dbPut('settings', { key: 'reviewSize', value: AppState.reviewSize }).catch(() => {});
     initReviewSession();
   });
