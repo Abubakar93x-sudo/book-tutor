@@ -3373,11 +3373,29 @@ function rootCardFor(entry) {
   };
 }
 
-// The fields SM-2 owns. A card whose wording changed is the SAME card — its
-// schedule must survive a rebuild, or every rebuild would silently reset months
-// of review history.
-const CARD_SCHEDULE_FIELDS = ['efactor', 'repetitionCount', 'interval',
-  'nextDueDate', 'lastRating', 'lastReviewedAt'];
+// A card whose wording changed is the SAME card, so a rebuild must not lose
+// anything the learner put there — its schedule, the set it belongs to, whether
+// it has been retired.
+//
+// This used to be an allow-list of six SM-2 fields, and that was a trap: adding
+// `setDay` and `retiredAt` later meant a rebuild silently erased every revision
+// set and un-retired everything, with nothing to notice it. So the rule is
+// inverted. rootCardFor defines exactly what the LIST owns; everything else on
+// the existing card is the learner's and is carried across untouched, including
+// fields that do not exist yet.
+const CARD_CONTENT_FIELDS = Object.keys(rootCardFor({ root: '', family: [] }));
+
+function carryLearnerState(fresh, old) {
+  if (!old) return fresh;
+  const kept = {};
+  for (const [k, v] of Object.entries(old)) {
+    if (v === undefined) continue;
+    if (CARD_CONTENT_FIELDS.includes(k)) continue;   // the list owns this
+    if (k.startsWith('_')) continue;                 // session-only
+    kept[k] = v;
+  }
+  return { ...fresh, ...kept };
+}
 
 async function buildQuranRootDeck(lang, onProgress = () => {}) {
   const entries = QURAN_SEQUENCE;
@@ -3451,12 +3469,8 @@ async function syncQuranRootDeck(lang) {
     if (!old) { stats.added++; return fresh; }
     stats.kept++;
     byRoot.delete(entry.id);
-    // Content from the list, schedule from the card that is already there.
-    const schedule = {};
-    for (const f of CARD_SCHEDULE_FIELDS) {
-      if (old[f] !== undefined) schedule[f] = old[f];
-    }
-    return { ...fresh, ...schedule };
+    // Content from the list; everything the learner accumulated stays.
+    return carryLearnerState(fresh, old);
   });
   stats.dropped = byRoot.size;
 
@@ -12049,6 +12063,22 @@ function updateReviewBadge(count) {
 // A session that is still going is picked up where it was. Only a genuinely new
 // one — nothing loaded, the last one finished, or the source or size changed
 // under it — starts from scratch.
+// A promise that gives up rather than hanging. A Firestore read that never
+// settles used to leave the review view on a spinner for good — the source
+// dropdown empty, no cards, and no way out but reloading the page, which is
+// exactly what he described.
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    })
+  ]);
+}
+const REVIEW_LOAD_TIMEOUT = 12000;
+const DECK_SYNC_TIMEOUT = 4000;
+
 function openReviewView() {
   const live = (AppState.flashcardSession || []).length > 0 &&
     AppState.flashcardIndex < AppState.flashcardSession.length &&
@@ -12056,6 +12086,11 @@ function openReviewView() {
     !AppState.practiceMode;
 
   if (!live) return initReviewSession();
+
+  // Resuming still refreshes the two small metadata reads behind the source
+  // dropdown, the badge and the Revision list — without them, a visit that
+  // resumed could leave the dropdown empty if the load that filled it failed.
+  populateReviewFilterFromMeta().catch(() => {});
 
   // Put the reader back exactly where they were.
   document.getElementById('review-loading').style.display = 'none';
@@ -12093,8 +12128,13 @@ function saveReviewProgress(stats) {
 async function initReviewSession() {
   AppState.practiceMode = false;
 
-  // Dropdown appears instantly from metadata; cards arrive behind it.
-  await populateReviewFilterFromMeta();
+  // Dropdown appears instantly from metadata; cards arrive behind it. Bounded,
+  // because a read that never comes back must not take the whole view with it.
+  try {
+    await withTimeout(populateReviewFilterFromMeta(), REVIEW_LOAD_TIMEOUT, 'Loading your decks');
+  } catch (err) {
+    console.warn('Deck list unavailable:', err.message);
+  }
   document.getElementById('review-empty-message').style.display = 'none';
   document.getElementById('review-finished-message').style.display = 'none';
   document.getElementById('flashcard-deck').style.display = 'none';
@@ -12210,16 +12250,33 @@ async function initReviewSession() {
   if ((AppState.reviewFilter || '').startsWith('lang:')) {
     const deck = (AppState._reviewMeta?.languages || [])
       .find(l => l.id === AppState.reviewFilter.slice(5));
-    if (deck && isQuranVocab(deck)) await ensureQuranRootDeckCurrent(deck);
+    // Bounded, and off the critical path if it is slow. This reads the whole
+    // deck and writes it back — worth waiting a moment for so the first card is
+    // not a stale one, never worth a blank screen. If it does not finish in
+    // time it carries on in the background and the next visit gets the benefit.
+    if (deck && isQuranVocab(deck)) {
+      try {
+        await withTimeout(ensureQuranRootDeckCurrent(deck), DECK_SYNC_TIMEOUT, 'Updating the deck');
+      } catch (err) {
+        console.warn('Deck update still running:', err.message);
+      }
+    }
     if (!mine()) return;
   }
 
   paintCount(false);
   // Only the selected source is read. Everything else used to be fetched and
   // then discarded by matchesReviewFilter, which is most of what made this slow.
-  const collected = await collectCards({
-    dueOnly: false, onBatch, scope: AppState.reviewFilter || 'all'
-  });
+  let collected = [];
+  let loadFailed = null;
+  try {
+    collected = await withTimeout(collectCards({
+      dueOnly: false, onBatch, scope: AppState.reviewFilter || 'all'
+    }), REVIEW_LOAD_TIMEOUT, 'Loading your cards');
+  } catch (err) {
+    loadFailed = err;
+    console.warn('Card load failed:', err.message);
+  }
   if (!mine()) return;
 
   // A single deck comes back one document at a time; showNextCard pulls the
@@ -12244,12 +12301,36 @@ async function initReviewSession() {
     // the reader, so they get different screens.
     const targetMet = reviewSizeChoice() !== Infinity &&
       (AppState._reviewDoneBefore || 0) >= reviewSizeChoice();
-    if (targetMet) {
+    if (loadFailed) {
+      // Not "nothing due" — nothing LOADED. Saying the former would be a lie,
+      // and leaving the spinner up was what made a refresh the only way out.
+      const empty = document.getElementById('review-empty-message');
+      empty.style.display = 'flex';
+      const h = empty.querySelector('h2'), p = empty.querySelector('p');
+      if (h) h.textContent = 'Could not load your cards';
+      if (p) p.textContent = 'The connection did not come back in time. Nothing is lost — try again.';
+      const retry = document.getElementById('btn-random-practice-empty');
+      if (retry) {
+        retry.textContent = 'Try again';
+        retry.onclick = (e) => { e.preventDefault(); e.stopImmediatePropagation(); initReviewSession(); };
+      }
+      document.getElementById('flashcard-deck').style.display = 'none';
+      document.getElementById('review-finished-message').style.display = 'none';
+    } else if (targetMet) {
       document.getElementById('review-empty-message').style.display = 'none';
       document.getElementById('flashcard-deck').style.display = 'none';
       showNextCard();          // paints the finished panel, which knows the wording
     } else {
-      document.getElementById('review-empty-message').style.display = 'flex';
+      // The genuine empty state. Its heading and button are shared with the
+      // load-failure message above, so they are put back rather than left
+      // saying "Try again" for the rest of the session.
+      const empty = document.getElementById('review-empty-message');
+      const h = empty.querySelector('h2'), p = empty.querySelector('p');
+      if (h) h.textContent = 'No Cards Due Today';
+      if (p) p.textContent = "Study some chapters to generate flashcards. They'll appear here when they're due.";
+      const btn = document.getElementById('btn-random-practice-empty');
+      if (btn) { btn.textContent = 'Shuffle random cards instead'; btn.onclick = null; }
+      empty.style.display = 'flex';
       document.getElementById('flashcard-deck').style.display = 'none';
       document.getElementById('review-finished-message').style.display = 'none';
     }
