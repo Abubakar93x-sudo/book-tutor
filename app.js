@@ -717,11 +717,26 @@ async function purgeExpiredTrash() {
     // A deck whose language is itself being purged needs no separate sweep.
     const staleDecks = langs.filter(l =>
       l.deckDeletedAt && l.deckDeletedAt < cutoff && !staleLangs.includes(l));
+    // A retired set leaving the bin makes the retirement permanent. The CARDS
+    // are not touched — he chose retiring over removing, and a bin that quietly
+    // escalated to destroying them would not be that.
+    let staleSets = 0;
+    for (const l of langs) {
+      const kept = Object.fromEntries(Object.entries(l.retiredSets || {})
+        .filter(([, info]) => (info?.at || 0) >= cutoff));
+      const had = Object.keys(l.retiredSets || {}).length;
+      if (had && Object.keys(kept).length !== had) {
+        staleSets += had - Object.keys(kept).length;
+        await dbPatchLanguage(l.id, { retiredSets: kept }).catch(() => {});
+      }
+    }
+
     for (const b of staleBooks) await dbPurgeBook(b.id).catch(() => {});
     for (const l of staleLangs) await dbPurgeLanguage(l.id).catch(() => {});
     for (const l of staleDecks) await dbPurgeDeck(l.id).catch(() => {});
-    if (staleBooks.length || staleLangs.length || staleDecks.length) {
-      console.log(`Trash: purged ${staleBooks.length} book(s), ${staleLangs.length} language(s), ${staleDecks.length} deck(s) past ${TRASH_DAYS} days.`);
+    if (staleBooks.length || staleLangs.length || staleDecks.length || staleSets) {
+      console.log(`Trash: purged ${staleBooks.length} book(s), ${staleLangs.length} language(s), ` +
+        `${staleDecks.length} deck(s), ${staleSets} retired set(s) past ${TRASH_DAYS} days.`);
     }
   } catch (err) {
     console.warn('Trash purge failed:', err.message);
@@ -11232,6 +11247,11 @@ function sm2Schedule(card, score) {
 }
 
 function isCardDue(card) {
+  // A retired set is out of the rotation. Every session, every due count and the
+  // nav badge ask this one question, so one line here takes those words out of
+  // all of them — and nothing else about the card is touched, which is what
+  // makes restoring it a matter of removing the field again.
+  if (card.retiredAt) return false;
   if (!card.nextDueDate) return true; // never reviewed — due now
   const endOfToday = new Date();
   endOfToday.setHours(23, 59, 59, 999);
@@ -11556,9 +11576,76 @@ async function populateReviewFilterFromMeta() {
   await renderDeckTrash();
 }
 
+// ── RETIRING A SET ──────────────────────────────────────────────────────────
+// Words that have stuck should be able to leave the rotation without deleting
+// the deck they live in. Retiring adds ONE field to each card of the set and
+// changes nothing else — not its due date, not the day it belongs to — so the
+// set comes back exactly as it was if it is restored, and there is no date
+// arithmetic to get wrong in either direction.
+//
+// The cards are never destroyed. They stay in the deck, they stay in Saved
+// vocab; they simply stop being asked about.
+async function retireRevisionSet(langId, day, count) {
+  let stamped = 0;
+  const batches = await dbGetLangCardBatches(langId);
+  for (const batch of batches) {
+    const cards = batch.flashcards || [];
+    let touched = false;
+    for (const card of cards) {
+      if (card.setDay !== day || card.retiredAt) continue;
+      card.retiredAt = Date.now();
+      touched = true; stamped++;
+    }
+    if (touched) await dbPutLangCardBatch(langId, batch.batch, cards);
+  }
+
+  const lang = (AppState._reviewMeta?.languages || []).find(l => l.id === langId) || {};
+  const retiredSets = { ...(lang.retiredSets || {}),
+    [day]: { count: stamped || count || 0, at: Date.now() } };
+  lang.retiredSets = retiredSets;
+  await dbPatchLanguage(langId, { retiredSets });
+  AppState._reviewLangCache = {};   // a session's snapshot no longer matches disk
+  return stamped;
+}
+
+async function restoreRevisionSet(langId, day) {
+  const batches = await dbGetLangCardBatches(langId);
+  for (const batch of batches) {
+    const cards = batch.flashcards || [];
+    let touched = false;
+    for (const card of cards) {
+      if (card.setDay !== day || !card.retiredAt) continue;
+      delete card.retiredAt;
+      touched = true;
+    }
+    if (touched) await dbPutLangCardBatch(langId, batch.batch, cards);
+  }
+  await forgetRetiredSet(langId, day);
+  AppState._reviewLangCache = {};
+}
+
+// Drop the bin entry without touching the cards. Used by "Delete now" and by the
+// 30-day sweep: the retirement becomes permanent, which is what he chose —
+// a bin that quietly escalated to destroying the cards would not be retiring.
+async function forgetRetiredSet(langId, day) {
+  const lang = (AppState._reviewMeta?.languages || []).find(l => l.id === langId) || {};
+  const retiredSets = { ...(lang.retiredSets || {}) };
+  delete retiredSets[day];
+  lang.retiredSets = retiredSets;
+  await dbPatchLanguage(langId, { retiredSets });
+}
+
 // The Revision list. Built from the per-deck set index, so it paints with no
 // card reads at all — the deck documents were already fetched to fill the
 // source dropdown.
+// "learned Fri 28 Aug", or "today"/"yesterday" where that reads better.
+function revisionDayLabel(day) {
+  if (day === dayStamp()) return 'today';
+  if (day === dayStamp(Date.now() - DAY_MS)) return 'yesterday';
+  return new Date(day + 'T00:00:00')
+    .toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
 function renderRevisionSets() {
   const wrap = document.getElementById('revision-section');
   const list = document.getElementById('revision-list');
@@ -11576,28 +11663,136 @@ function renderRevisionSets() {
   if (!rows.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
   wrap.style.display = '';
 
-  const when = (day) => {
-    const d = new Date(day + 'T00:00:00');
-    if (day === dayStamp()) return 'today';
-    if (day === dayStamp(Date.now() - DAY_MS)) return 'yesterday';
-    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-  };
-
   list.innerHTML = rows.map(r => `
     <div class="revision-row${r.due ? '' : ' is-waiting'}"
          data-lang="${escapeAttr(r.lang.id)}" data-day="${escapeAttr(r.day)}">
       <span class="revision-count">${r.count} word${r.count === 1 ? '' : 's'}</span>
-      <span class="revision-when">learned ${when(r.day)}${
-        r.due ? '' : ` — due ${when(r.dueOn)}`}</span>
+      <span class="revision-when">learned ${revisionDayLabel(r.day)}${
+        r.due ? '' : ` — due ${revisionDayLabel(r.dueOn)}`}</span>
       ${langs.length > 1 ? `<span class="revision-deck">${escapeAttr(r.lang.name || '')}</span>` : ''}
       <button class="btn btn-sm ${r.due ? 'btn-primary' : 'btn-ghost'}"
               data-start-set>${r.due ? 'Start' : 'Revise early'}</button>
+      <button class="revision-retire" data-retire-set
+              title="Stop revising these" aria-label="Stop revising these ${r.count} words">✕</button>
     </div>`).join('');
 
   list.querySelectorAll('[data-start-set]').forEach(btn => {
     btn.addEventListener('click', () => {
       const row = btn.closest('.revision-row');
       startRevisionSet(row.dataset.lang, row.dataset.day);
+    });
+  });
+
+  list.querySelectorAll('[data-retire-set]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.revision-row');
+      const set = rows.find(r => r.lang.id === row.dataset.lang && r.day === row.dataset.day);
+      if (!set) return;
+      const ok = await confirmAction({
+        title: 'Delete this revision stack?',
+        body: `<strong>${set.count} word${set.count === 1 ? '' : 's'}</strong>, learned ${revisionDayLabel(set.day)}.
+          <br><br>They stop coming back for revision. They stay in your deck and
+          in Saved vocab — you just won't be asked about them again.
+          <br><br>Restorable from <strong>Recently retired</strong> for the next
+          ${TRASH_DAYS} days.`,
+        confirmLabel: 'Delete stack'
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const n = await retireRevisionSet(set.lang.id, set.day, set.count);
+        showToast(`${n} word${n === 1 ? '' : 's'} retired — restorable for ${TRASH_DAYS} days.`,
+          'success', 4500);
+        renderRevisionSets();
+        await renderRetiredSets();
+        refreshReviewBadge();
+      } catch (err) {
+        showToast('Could not retire that stack: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  renderRetiredSets();
+}
+
+// The bin for retired sets — same shape and classes as the deck bin above it,
+// so the two read as one idea rather than two.
+async function renderRetiredSets() {
+  const wrap = document.getElementById('trash-revision');
+  const list = document.getElementById('trash-revision-list');
+  const count = document.getElementById('trash-revision-count');
+  if (!wrap || !list) return;
+
+  const items = (AppState._reviewMeta?.languages || [])
+    .filter(l => !l.deckDeletedAt)
+    .flatMap(lang => Object.entries(lang.retiredSets || {})
+      .map(([day, info]) => ({ lang, day, count: info.count || 0, at: info.at || 0 })));
+
+  if (!items.length) { wrap.style.display = 'none'; list.innerHTML = ''; return; }
+  wrap.style.display = '';
+  items.sort((a, b) => b.at - a.at);
+  if (count) count.textContent = items.length;
+
+  const dayLabel = (day) => new Date(day + 'T00:00:00')
+    .toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+  list.innerHTML = items.map(it => {
+    const left = trashDaysLeft({ deletedAt: it.at });
+    return `
+      <div class="trash-item" data-lang="${escapeAttr(it.lang.id)}" data-day="${escapeAttr(it.day)}">
+        <div class="trash-item-body">
+          <span class="trash-item-name">${it.count} word${it.count === 1 ? '' : 's'} · learned ${dayLabel(it.day)}</span>
+          <span class="trash-item-meta">${left > 0
+            ? `${left} day${left === 1 ? '' : 's'} left to restore`
+            : 'will drop out of the bin shortly'}</span>
+        </div>
+        <button class="trash-btn trash-restore">Restore</button>
+        <button class="trash-btn trash-purge">Delete now</button>
+      </div>`;
+  }).join('');
+
+  const rowOf = (btn) => {
+    const el = btn.closest('.trash-item');
+    return items.find(i => i.lang.id === el.dataset.lang && i.day === el.dataset.day);
+  };
+
+  list.querySelectorAll('.trash-restore').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const it = rowOf(btn); if (!it) return;
+      btn.disabled = true;
+      try {
+        await restoreRevisionSet(it.lang.id, it.day);
+        showToast('Revision stack restored.', 'success', 3000);
+        renderRevisionSets();
+        refreshReviewBadge();
+      } catch (err) {
+        showToast('Could not restore: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  list.querySelectorAll('.trash-purge').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const it = rowOf(btn); if (!it) return;
+      const ok = await confirmAction({
+        title: 'Keep these retired for good?',
+        body: `${it.count} word${it.count === 1 ? '' : 's'} from ${dayLabel(it.day)}.
+          <br><br>They stay in your deck and in Saved vocab — this only removes
+          the entry from the bin, so they can no longer be put back into
+          revision from here.`,
+        confirmLabel: 'Keep retired'
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await forgetRetiredSet(it.lang.id, it.day);
+        await renderRetiredSets();
+      } catch (err) {
+        showToast('Could not update: ' + err.message, 'error', 6000);
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -11737,9 +11932,10 @@ function noteCardInSet(langId, day, previousDay) {
 // oldest permanently — then the ones not due yet.
 function revisionSetsFor(lang) {
   const sets = (AppState._reviewSets?.[lang?.id]) || lang?.cardSets || {};
+  const retired = lang?.retiredSets || {};
   const today = dayStamp();
   const rows = Object.entries(sets)
-    .filter(([, n]) => n > 0)
+    .filter(([day, n]) => n > 0 && !retired[day])
     .map(([day, count]) => {
       const dueOn = dayStamp(Date.parse(day) + REVISION_GAP_DAYS * DAY_MS);
       return { day, count, dueOn, due: dueOn <= today };
