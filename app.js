@@ -956,17 +956,30 @@ async function dbPutLanguage(lang) {
 // object. dbPutLanguage writes every field it holds, which can clobber a
 // levelScore that flushLevelEstimate wrote while the session was open — so any
 // targeted update should come through here instead.
+// A merge write CREATES the document if it is not there, so patching an id that
+// does not exist mints a language with nothing in it — no name, no recipe — which
+// then appeared in the flashcard sources as the word "Deck". An id that is
+// missing or the literal string "undefined" is a bug upstream, not a document to
+// create, so it writes nothing. And the id is written INTO the document, so
+// nothing this touches can end up unable to say what it is.
 async function dbPatchLanguage(langId, fields) {
   const col = userCol('languages');
   if (!col) return;
-  await col.doc(langId).set({ ...fields, updatedAt: Date.now() }, { merge: true });
+  if (!langId || langId === 'undefined') {
+    console.warn('Refused to patch a language with no id:', Object.keys(fields).join(', '));
+    return;
+  }
+  await col.doc(langId).set({ id: langId, ...fields, updatedAt: Date.now() }, { merge: true });
 }
 
 async function dbGetAllLanguages(opts = {}) {
   const col = userCol('languages');
   if (!col) return [];
   const snap = await col.get();
-  const all = snap.docs.map(d => d.data());
+  // The document id is the language id. Stamping it means a document whose `id`
+  // field is missing is still addressable — otherwise it reads back as
+  // `id: undefined`, and every patch keyed off it lands on `languages/undefined`.
+  const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   return opts.includeDeleted ? all : all.filter(l => !l.deletedAt);
 }
 
@@ -2506,7 +2519,7 @@ async function renderLanguages() {
   // Runs here too, not only in the Vocabulary Builder: a course hidden by the
   // old shared id should come back the moment you look at your courses.
   const all = scheduleRootDeckSync(await removeQuranLessonDeck(
-    await cleanUpQuranVocabTracks(await dbGetAllLanguages())));
+    await sweepPhantomLanguages(await cleanUpQuranVocabTracks(await dbGetAllLanguages()))));
 
   // The Qur'anic text is 1.4MB and a lesson cannot start writing until it has
   // loaded, because the verses go INTO the prompt. Fetching it the moment the
@@ -3230,6 +3243,48 @@ async function cleanUpQuranVocabTracks(languages) {
       .map(l => ({ ...l, recipeId: 'quranic', vocabSet: 0, knownWords: [] })));
 }
 
+// ── THE NAMELESS DOCUMENT ────────────────────────────────────────────────────
+// A language with no name rendered in the flashcard sources as the bare word
+// "Deck", because deckLabel falls back to it. It was never created by anyone: a
+// merge write against an id that did not exist minted it. dbPatchLanguage no
+// longer can, and isListableDeck no longer offers it — this clears away the one
+// already sitting in the collection.
+//
+// Deleting is the only irreversible step in any of this, so the test is as
+// narrow as it can be made: no name, no recipe, no cards on disk, and none of
+// the four fields a learner's own work lives in. A document like that holds
+// nothing that anybody did. Anything that fails even one of those is left
+// exactly where it is, merely unlisted.
+const LEARNER_STATE_FIELDS = ['cardSets', 'retiredSets', 'knownWords', 'unitsMastered'];
+
+async function sweepPhantomLanguages(languages) {
+  const suspects = languages.filter(l =>
+    l.id && l.id !== 'undefined' && !l.name && !l.recipeId &&
+    !LEARNER_STATE_FIELDS.some(f => {
+      const v = l[f];
+      return Array.isArray(v) ? v.length : v && Object.keys(v).length;
+    }));
+  if (!suspects.length) return languages;
+
+  const gone = new Set();
+  for (const l of suspects) {
+    try {
+      const batches = await dbGetLangCardBatches(l.id);
+      const cards = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
+      // Cards outrank every other signal. Something holding cards is a deck,
+      // however little else it can say about itself.
+      if (cards) { console.warn(`Left the unnamed language ${l.id} alone — it holds ${cards} card(s).`); continue; }
+      await dbPurgeLanguage(l.id);
+      gone.add(l.id);
+      console.log(`Removed an empty unnamed language document (${l.id}).`);
+    } catch (err) {
+      console.warn(`Could not remove the unnamed language ${l.id}:`, err.message);
+    }
+  }
+
+  return gone.size ? languages.filter(l => !gone.has(l.id)) : languages;
+}
+
 // The Qur'anic course's flashcards are removed once, for good.
 //
 // Flashcards listed Qur'anic Arabic twice — (L) for the course and (V) for the
@@ -3822,7 +3877,8 @@ const VocabBuilder = {
   async open() {
     await whenAuthReady();     // same exposure: an early read returns nothing
     let all = await dbGetAllLanguages().catch(() => []);
-    all = scheduleRootDeckSync(await removeQuranLessonDeck(await cleanUpQuranVocabTracks(all)));
+    all = scheduleRootDeckSync(await removeQuranLessonDeck(
+      await sweepPhantomLanguages(await cleanUpQuranVocabTracks(all))));
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
@@ -11612,6 +11668,30 @@ function deckLabel(lang) {
   return `${lang?.name || 'Deck'} (${deckTag(lang)})`;
 }
 
+// ── WHAT COUNTS AS A DECK ────────────────────────────────────────────────────
+// "Never hide a deck" was the fix for a stored cardCount of 0 hiding the only
+// real deck forever. It was too absolute: it also listed the two entries that
+// should never have been offered — the Qur'anic COURSE deck, whose cards were
+// deleted on purpose and which backfillLessonCards refuses to refill, and a
+// nameless language document that deckLabel rendered as the word "Deck".
+//
+// So the rule is: never hide a deck you could FILL. One predicate, used by the
+// dropdown and by the badge, so the list and the number over the tab cannot
+// disagree.
+//
+// The order of the tests matters. A deck holding cards is listed whatever else
+// is true of it — if a purge ever half-failed, those cards stay reachable.
+// Only an EMPTY deck is ever excluded.
+const canHoldCards = (lang) => !(isQuranCourse(lang) || lang.lessonDeckRemoved);
+
+function isListableDeck(lang) {
+  if (!lang || !lang.id || lang.id === 'undefined') return false;  // not addressable
+  if (lang.deckDeletedAt) return false;                            // in the 30-day bin
+  if (lang.cardCount > 0) return true;                             // has cards: always
+  if (!canHoldCards(lang)) return false;                           // retired, and empty
+  return !!lang.name;                                              // nameless + empty
+}
+
 function reviewSourceKey(card) {
   const src = card._src || {};
   return src.type === 'langCards' ? `lang:${src.langId}` : `book:${src.bookId}`;
@@ -11649,7 +11729,7 @@ async function populateReviewFilterFromMeta() {
   // A real count is still trusted, so this costs one small read only for decks
   // claiming to be empty.
   await Promise.all(languages.map(async (l) => {
-    if (l.deckDeletedAt) { l.cardCount = 0; l._binned = true; return; }
+    if (l.deckDeletedAt) { l.cardCount = 0; return; }
     if (typeof l.cardCount === 'number' && l.cardCount > 0) return;
     try {
       const batches = await dbGetLangCardBatches(l.id);
@@ -11667,13 +11747,20 @@ async function populateReviewFilterFromMeta() {
     }
   }));
 
-  // A DECK IS NEVER HIDDEN. One with no cards is listed and says so; being able
-  // to see that it exists and is empty is the difference between a problem you
-  // can act on and one you can only report.
-  const live = languages.filter(l => !l._binned);
+  // A DECK YOU COULD FILL IS NEVER HIDDEN. One with no cards is listed and says
+  // so; being able to see that it exists and is empty is the difference between
+  // a problem you can act on and one you can only report. A deck that CANNOT be
+  // filled — the retired course deck — is not a deck, and nor is a nameless
+  // document; isListableDeck is the whole rule.
+  const live = languages.filter(isListableDeck);
   console.log('Flashcard decks: ' + (live.length
     ? live.map(l => `${l.name || l.id}=${l._countUnknown ? '?' : l.cardCount}`).join(', ')
     : '(none)'));
+  const dropped = languages.filter(l => !isListableDeck(l) && !l.deckDeletedAt);
+  if (dropped.length) {
+    console.log('Not offered as decks: ' +
+      dropped.map(l => `${l.name || l.id || '(unnamed)'}`).join(', '));
+  }
 
   const bookOpts = books
     .sort((a, b) => a.title.localeCompare(b.title))
@@ -12146,6 +12233,9 @@ function recordDueCounts(bySource) {
   AppState._dueCounts = AppState._dueCounts || {};
   for (const [key, n] of bySource) {
     AppState._dueCounts[key] = n;
+    // A key with no id behind it is a card whose source went missing. Recording
+    // it would write the count to a document named after the word "undefined".
+    if (key === 'lang:undefined' || key === 'book:undefined') continue;
     if (key.startsWith('lang:')) {
       dbPatchLanguage(key.slice(5), { dueCount: n, dueCountAt: Date.now() }).catch(() => {});
     } else if (key.startsWith('book:')) {
@@ -12177,7 +12267,10 @@ function refreshReviewBadge() {
   const meta = AppState._reviewMeta || { languages: [], books: [] };
   let total = 0;
   for (const l of meta.languages) {
-    if (l.deckDeletedAt) continue;
+    // The same rule the dropdown uses. A deck that is no longer offered must not
+    // keep adding to the number over the tab — that would be a badge counting
+    // cards nobody can reach.
+    if (!isListableDeck(l)) continue;
     total += recorded[`lang:${l.id}`] ?? (l.dueCount || 0);
   }
   for (const b of meta.books) total += recorded[`book:${b.id}`] ?? (b.dueCount || 0);
