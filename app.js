@@ -11493,9 +11493,14 @@ async function collectCards({ dueOnly = true, onBatch = null, scope = 'all' } = 
     // Where to pick up. `more` is a guess from the stored card count, and the
     // reader below stops on the first document that is not there anyway — so a
     // stale count costs one wasted read, never a missing card.
+    //
+    // NO BATCH ZERO MEANS AN EMPTY DECK, not "there might be more". Batches are
+    // numbered from zero without gaps. Reading `!batch` as "keep looking" left
+    // an empty deck permanently claiming more was coming, so the view never
+    // reached its own empty state and just sat there showing nothing.
     out.cursor = {
       type: 'lang', lang, next: 1,
-      more: !batch || (lang.cardCount || 0) > LANG_CARDS_PER_BATCH
+      more: !!batch && (lang.cardCount || 0) > LANG_CARDS_PER_BATCH
     };
     return out;
   }
@@ -11634,24 +11639,52 @@ async function populateReviewFilterFromMeta() {
   // and the root vocabulary — and listing both by name gave two identical
   // entries, one of which was empty. Only decks that actually hold cards are
   // offered, and where two survive under one name they say which is which.
+  // A ZERO IS CHECKED, NOT BELIEVED.
+  //
+  // This used to skip any deck whose cardCount was already a number, so a stored
+  // 0 hid that deck from the dropdown FOREVER — never re-counted, and no way
+  // through the interface to notice or fix it. Zero is precisely the value worth
+  // verifying, because it is the one that makes a deck disappear.
+  //
+  // A real count is still trusted, so this costs one small read only for decks
+  // claiming to be empty.
   await Promise.all(languages.map(async (l) => {
-    if (l.deckDeletedAt) { l.cardCount = 0; return; }   // in the bin, not on offer
-    if (typeof l.cardCount === 'number') return;
+    if (l.deckDeletedAt) { l.cardCount = 0; l._binned = true; return; }
+    if (typeof l.cardCount === 'number' && l.cardCount > 0) return;
     try {
       const batches = await dbGetLangCardBatches(l.id);
-      l.cardCount = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
-      dbPatchLanguage(l.id, { cardCount: l.cardCount }).catch(() => {});
-    } catch (_) { l.cardCount = 1; }   // unreadable: keep it rather than hide it
+      const counted = batches.reduce((n, b) => n + (b.flashcards || []).length, 0);
+      if (counted !== l.cardCount) {
+        // Write the corrected number back so this is a one-off, not every visit.
+        dbPatchLanguage(l.id, { cardCount: counted }).catch(() => {});
+      }
+      l.cardCount = counted;
+    } catch (err) {
+      // Unreadable is not empty. It is listed with its state unknown rather
+      // than hidden, and rather than invented — this used to guess 1.
+      console.warn(`Could not count ${l.id}'s cards:`, err.message);
+      l._countUnknown = true;
+    }
   }));
 
-  const withCards = languages.filter(l => l.cardCount > 0);
+  // A DECK IS NEVER HIDDEN. One with no cards is listed and says so; being able
+  // to see that it exists and is empty is the difference between a problem you
+  // can act on and one you can only report.
+  const live = languages.filter(l => !l._binned);
+  console.log('Flashcard decks: ' + (live.length
+    ? live.map(l => `${l.name || l.id}=${l._countUnknown ? '?' : l.cardCount}`).join(', ')
+    : '(none)'));
 
   const bookOpts = books
     .sort((a, b) => a.title.localeCompare(b.title))
     .map(b => `<option value="book:${b.id}">${b.title}</option>`).join('');
-  const langOpts = withCards
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map(l => `<option value="lang:${l.id}">${deckLabel(l)}</option>`).join('');
+  const langOpts = live
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map(l => {
+      const empty = !l._countUnknown && !l.cardCount;
+      return `<option value="lang:${l.id}">${deckLabel(l)}${
+        empty ? ' — no cards yet' : ''}</option>`;
+    }).join('');
 
   select.innerHTML =
     '<option value="all">Random — everything mixed</option>' +
@@ -11684,7 +11717,7 @@ async function populateReviewFilterFromMeta() {
 
   // Deleting is per-deck, so the button only exists once a deck is selected.
   // Book cards live inside their chapters — a book is deleted in the Library.
-  AppState._reviewDecks = withCards;
+  AppState._reviewDecks = live;
   // The badge sums stored per-source counts, and this is where those documents
   // are already in hand.
   AppState._reviewMeta = { languages, books };
@@ -12411,6 +12444,12 @@ async function initReviewSession() {
     // the reader, so they get different screens.
     const targetMet = reviewSizeChoice() !== Infinity &&
       (AppState._reviewDoneBefore || 0) >= reviewSizeChoice();
+    // "Nothing due" and "this deck is empty" are different problems with
+    // different answers, and only one of them is the learner's to solve.
+    const selected = (AppState.reviewFilter || '').startsWith('lang:')
+      ? (AppState._reviewDecks || []).find(l => l.id === AppState.reviewFilter.slice(5))
+      : null;
+    const emptyDeck = selected && !selected._countUnknown && !selected.cardCount ? selected : null;
     if (!AppState.currentUser) {
       // Not empty — not signed in. Telling someone with three hundred cards
       // that they have none is the kind of wrong that stops them trusting the
@@ -12424,6 +12463,34 @@ async function initReviewSession() {
         e.preventDefault(); e.stopImmediatePropagation();
         document.getElementById('signin-overlay').style.display = 'flex';
       }; }
+      empty.style.display = 'flex';
+      document.getElementById('flashcard-deck').style.display = 'none';
+      document.getElementById('review-finished-message').style.display = 'none';
+    } else if (emptyDeck) {
+      // The deck exists but holds nothing. Saying "no cards due" would be true
+      // and useless; this says what is actually wrong and offers the repair,
+      // which is instant because the roots are static data already in the page.
+      const empty = document.getElementById('review-empty-message');
+      const h = empty.querySelector('h2'), p = empty.querySelector('p');
+      if (h) h.textContent = 'This deck has no cards yet';
+      if (p) p.textContent = isQuranVocab(emptyDeck)
+        ? 'The 300 roots can go in right now — they are already in the app, so it takes a moment and costs nothing.'
+        : 'Study a lesson or add some vocabulary and its cards will appear here.';
+      const btn = document.getElementById('btn-random-practice-empty');
+      if (btn && isQuranVocab(emptyDeck)) {
+        btn.textContent = 'Add the 300 roots to your flashcards';
+        btn.onclick = async (e) => {
+          e.preventDefault(); e.stopImmediatePropagation();
+          btn.disabled = true; btn.textContent = 'Adding…';
+          try {
+            const n = await buildQuranRootDeck(emptyDeck);
+            showToast(`${n} root cards are in your deck and due now.`, 'success', 4000);
+            await initReviewSession();
+          } catch (err) {
+            showToast('Could not add them: ' + err.message, 'error', 6000);
+          } finally { btn.disabled = false; }
+        };
+      }
       empty.style.display = 'flex';
       document.getElementById('flashcard-deck').style.display = 'none';
       document.getElementById('review-finished-message').style.display = 'none';
