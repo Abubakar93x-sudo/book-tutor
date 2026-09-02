@@ -196,6 +196,32 @@ function idbClearStore(storeName) {
 // books / chatHistory → Firestore (cloud, synced across devices)
 // settings           → IndexedDB  (local only, API key stays private)
 
+// ── KNOWING WHO THE LEARNER IS, BEFORE READING THEIR DATA ───────────────────
+// onAuthStateChanged lands asynchronously, and until it does userCol() returns
+// null and every read comes back EMPTY rather than failing. A view that read
+// too early showed no decks, no cards and no error — and said "No Cards Due
+// Today" to someone with three hundred. Refreshing worked only because auth
+// sometimes won the race.
+//
+// So anything that reads the learner's own data waits for this first. It
+// resolves on the first auth callback either way — signed in or signed out —
+// and resolves anyway after a few seconds, because a Firebase that never
+// answers must not wedge the app in a spinner.
+const AUTH_READY_TIMEOUT = 8000;
+let _authReadyResolve;
+const _authReady = new Promise(resolve => { _authReadyResolve = resolve; });
+let _authSettled = false;
+function markAuthReady() {
+  if (_authSettled) return;
+  _authSettled = true;
+  _authReadyResolve();
+}
+setTimeout(() => {
+  if (!_authSettled) console.warn('Sign-in state never arrived — continuing without it.');
+  markAuthReady();
+}, AUTH_READY_TIMEOUT);
+const whenAuthReady = () => _authReady;
+
 function userCol(collectionName) {
   const uid = AppState.currentUser?.uid;
   if (!uid) return null; // Not signed in — callers handle null gracefully
@@ -3219,7 +3245,13 @@ async function cleanUpQuranVocabTracks(languages) {
 // for that. The review session awaits it when those cards are about to be shown.
 function scheduleRootDeckSync(languages) {
   const roots = languages.find(l => isQuranVocab(l));
-  if (roots) ensureQuranRootDeckCurrent(roots);
+  // Repair AFTER the sync, never before: the sync rewrites every card, so a
+  // repair that ran first would be undone by it.
+  if (roots) {
+    Promise.resolve(ensureQuranRootDeckCurrent(roots))
+      .then(() => ensureRevisionStateRepaired(roots))
+      .catch(() => {});
+  }
   return languages;
 }
 
@@ -3502,6 +3534,75 @@ async function syncQuranRootDeck(lang) {
   return stats;
 }
 
+// ── PUTTING BACK WHAT THE REBUILD ERASED ────────────────────────────────────
+// syncQuranRootDeck once kept only an allow-list of SM-2 fields, so it wiped
+// `setDay` and `retiredAt` from every card and took the revision sets with them.
+// None of it is actually lost:
+//
+//   · sm2Schedule writes `setDay` and `lastReviewedAt` from THE SAME timestamp,
+//     and `lastReviewedAt` was on the allow-list — so the day a card was last
+//     reviewed still says exactly which set it was in.
+//   · which sets were RETIRED is recorded in `retiredSets` on the language
+//     document, and the rebuild merge-patched four fields there and touched
+//     nothing else.
+//
+// So this reconstructs both. It never overwrites a `setDay` that is already
+// there, which makes it safe to run twice, or after more reviewing — a card
+// that has been rated since the damage keeps the set it is in now.
+const REVISION_REPAIR_VERSION = 1;
+
+async function repairRevisionState(lang) {
+  const retiredSets = lang.retiredSets || {};
+  const counts = {};
+  let recovered = 0, reRetired = 0;
+
+  for (const batch of await dbGetLangCardBatches(lang.id)) {
+    const cards = batch.flashcards || [];
+    let touched = false;
+    for (const card of cards) {
+      if (!card.setDay && card.lastReviewedAt) {
+        card.setDay = dayStamp(card.lastReviewedAt);
+        recovered++; touched = true;
+      }
+      if (!card.setDay) continue;                  // never reviewed, never in a set
+      counts[card.setDay] = (counts[card.setDay] || 0) + 1;
+      const retired = retiredSets[card.setDay];
+      if (retired && !card.retiredAt) {
+        card.retiredAt = retired.at || Date.now();
+        reRetired++; touched = true;
+      }
+    }
+    if (touched) await dbPutLangCardBatch(lang.id, batch.batch, cards);
+  }
+
+  // The per-day counts follow from the days themselves, so they are rebuilt
+  // rather than trusted.
+  await dbPatchLanguage(lang.id, { cardSets: counts, revisionRepairVersion: REVISION_REPAIR_VERSION });
+  lang.cardSets = counts;
+  lang.revisionRepairVersion = REVISION_REPAIR_VERSION;
+  if (AppState._reviewSets) delete AppState._reviewSets[lang.id];
+
+  if (recovered || reRetired) {
+    console.log(`Revision sets rebuilt: ${recovered} card(s) put back in their set, ` +
+      `${reRetired} re-retired, ${Object.keys(counts).length} set(s) restored.`);
+  }
+  return { recovered, reRetired, sets: Object.keys(counts).length };
+}
+
+// Once per version, and only for a deck that has actually been reviewed —
+// there is nothing to rebuild for a deck with no history.
+const _revisionRepairs = {};
+function ensureRevisionStateRepaired(lang) {
+  if (!lang || !isQuranVocab(lang)) return Promise.resolve(null);
+  if ((lang.revisionRepairVersion || 0) >= REVISION_REPAIR_VERSION) return Promise.resolve(null);
+  if (!lang.rootDeckSeeded && !lang.cardCount) return Promise.resolve(null);
+  if (_revisionRepairs[lang.id]) return _revisionRepairs[lang.id];
+  _revisionRepairs[lang.id] = repairRevisionState(lang)
+    .catch(err => { console.warn('Could not rebuild the revision sets:', err.message); return null; })
+    .finally(() => { delete _revisionRepairs[lang.id]; });
+  return _revisionRepairs[lang.id];
+}
+
 // Runs at most once per deck version, and never twice at the same time — the
 // review session awaits it and the startup sweep fires it, and both can land
 // together.
@@ -3719,6 +3820,7 @@ const VocabBuilder = {
   quiz: null,
 
   async open() {
+    await whenAuthReady();     // same exposure: an early read returns nothing
     let all = await dbGetAllLanguages().catch(() => []);
     all = scheduleRootDeckSync(await removeQuranLessonDeck(await cleanUpQuranVocabTracks(all)));
     this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
@@ -8872,6 +8974,7 @@ function initAuth() {
     if (user) {
       // ── User is signed in ──
       AppState.currentUser = user;
+      markAuthReady();
       overlay.style.display = 'none';
       sidebarUser.style.display = 'flex';
 
@@ -8889,6 +8992,7 @@ function initAuth() {
     } else {
       // ── User is signed out ──
       AppState.currentUser = null;
+      markAuthReady();
       overlay.style.display = 'flex';
       sidebarUser.style.display = 'none';
     }
@@ -12079,7 +12183,8 @@ function withTimeout(promise, ms, label) {
 const REVIEW_LOAD_TIMEOUT = 12000;
 const DECK_SYNC_TIMEOUT = 4000;
 
-function openReviewView() {
+async function openReviewView() {
+  await whenAuthReady();
   const live = (AppState.flashcardSession || []).length > 0 &&
     AppState.flashcardIndex < AppState.flashcardSession.length &&
     AppState._reviewFor === reviewSessionKey() &&
@@ -12127,6 +12232,11 @@ function saveReviewProgress(stats) {
 
 async function initReviewSession() {
   AppState.practiceMode = false;
+
+  // Before anything is read. Without this the whole view is built from the
+  // empty results a signed-out session returns, which is what left him with no
+  // decks in the dropdown and no cards.
+  await whenAuthReady();
 
   // Dropdown appears instantly from metadata; cards arrive behind it. Bounded,
   // because a read that never comes back must not take the whole view with it.
@@ -12301,7 +12411,23 @@ async function initReviewSession() {
     // the reader, so they get different screens.
     const targetMet = reviewSizeChoice() !== Infinity &&
       (AppState._reviewDoneBefore || 0) >= reviewSizeChoice();
-    if (loadFailed) {
+    if (!AppState.currentUser) {
+      // Not empty — not signed in. Telling someone with three hundred cards
+      // that they have none is the kind of wrong that stops them trusting the
+      // number at all.
+      const empty = document.getElementById('review-empty-message');
+      const h = empty.querySelector('h2'), p = empty.querySelector('p');
+      if (h) h.textContent = 'Sign in to see your flashcards';
+      if (p) p.textContent = 'Your cards and your progress are saved to your account.';
+      const btn = document.getElementById('btn-random-practice-empty');
+      if (btn) { btn.textContent = 'Sign in'; btn.onclick = (e) => {
+        e.preventDefault(); e.stopImmediatePropagation();
+        document.getElementById('signin-overlay').style.display = 'flex';
+      }; }
+      empty.style.display = 'flex';
+      document.getElementById('flashcard-deck').style.display = 'none';
+      document.getElementById('review-finished-message').style.display = 'none';
+    } else if (loadFailed) {
       // Not "nothing due" — nothing LOADED. Saying the former would be a lie,
       // and leaving the spinner up was what made a refresh the only way out.
       const empty = document.getElementById('review-empty-message');
