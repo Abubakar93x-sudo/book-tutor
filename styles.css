@@ -77,8 +77,26 @@ body {
   font-size: 15px;
   line-height: 1.6;
   min-height: 100vh;
+  /* CLIP, NOT HIDDEN. `overflow-x: hidden` on its own is not a horizontal-only
+     rule: when one axis is not visible/clip, the other computes from `visible`
+     to `auto`, so this quietly made <body> a SCROLLING BOX. Three of those were
+     nested inside each other (body → .main-content → .view), none of which ever
+     scrolled — the document does — and that is the state in which iOS Safari
+     re-anchors position:fixed elements badly while its address bar grows and
+     shrinks. The phone's bottom nav wandered down the page.
+     `clip` clips exactly the same and is not a scroll container, so overflow-y
+     stays `visible`. The `hidden` line above it is the fallback for Safari < 16,
+     which ignores a value it does not know and keeps today's behaviour. */
   overflow-x: hidden;
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
+}
+/* iOS resolves 100vh against the LARGE viewport — the height with the toolbar
+   hidden — so the layout is taller than the screen whenever the toolbar shows.
+   100dvh is that same measurement, honestly. Used elsewhere in this file
+   already; these two just catch up. */
+@supports (min-height: 100dvh) {
+  body { min-height: 100dvh; }
 }
 
 a { text-decoration: none; color: inherit; }
@@ -281,9 +299,22 @@ img { max-width: 100%; }
 /* ── 9. MAIN CONTENT ── */
 .main-content {
   flex: 1;
+  /* THE OTHER HALF OF WHAT `hidden` WAS DOING. This is a flex item, and a flex
+     item's automatic minimum size lets it grow past its container to fit its
+     widest content — a long unbroken string, a wide table — which is how a
+     phone ends up scrolling sideways. `overflow-x: hidden` was suppressing that
+     as a side effect, because the rule is waived for scroll containers, and
+     `clip` is not a scroll container, so the cap has to be asked for. Measured:
+     without this, a 3000px child took the document to 3000px wide.
+     Saying it outright is better than getting it back by accident. */
+  min-width: 0;
   margin-left: var(--sidebar-w);
   min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: hidden;   /* Safari < 16 */
+  overflow-x: clip;     /* clips without becoming a scroll container — see body */
+}
+@supports (min-height: 100dvh) {
+  .main-content { min-height: 100dvh; }
 }
 
 /* ── 10. VIEWS ── */
@@ -2147,6 +2178,16 @@ img { max-width: 100%; }
   z-index: 300;
   /* iPhone safe area */
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* A blurred position:fixed element gets its own compositor layer on iOS, and
+     that layer is prone to being painted at a stale position while the address
+     bar animates. Promoting it explicitly keeps the layer stable rather than
+     letting it be created and destroyed mid-gesture.
+     Belt and braces beside the overflow fix above, which is the actual cause.
+     If the bar still drifts on a real iPhone, the next step is to drop the blur
+     there — @supports (-webkit-touch-callout: none) — and give it a solid
+     background. Not done pre-emptively: it changes how the app looks. */
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .mobile-nav-item {
@@ -4826,8 +4867,14 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
    MOBILE OVERFLOW GUARDS — nothing may push past the viewport
 ============================================================ */
 @media (max-width: 768px) {
-  /* Belt-and-braces: horizontal scroll is never the answer on a phone */
-  .main-content, .view { overflow-x: hidden; }
+  /* Belt-and-braces: horizontal scroll is never the answer on a phone.
+     `clip` because this only ever meant "do not let anything stick out
+     sideways" — it never meant "make these scrolling boxes", which is what
+     `hidden` alone does. See the note on body. */
+  .main-content, .view {
+    overflow-x: hidden;   /* Safari < 16 */
+    overflow-x: clip;
+  }
 
   /* Tutor header: switcher + Teach/Quiz pills were a nowrap row wider than
      the screen — let it wrap onto two lines and ellipsize the title */
@@ -5871,7 +5918,13 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
-  overflow: hidden;
+  /* Here to clip the rounded corners — but `hidden` also made this a scrollport,
+     which killed the `position: sticky` on the .root-head inside it. The search
+     bar over the roots and the particles is supposed to stay at the top while
+     the list scrolls; it was sliding straight off instead. `clip` rounds the
+     corners identically and leaves sticky working. */
+  overflow: hidden;   /* Safari < 16 */
+  overflow: clip;
 }
 .vocab-saved-head {
   padding: 0.85rem 1rem;
