@@ -645,6 +645,16 @@
           </div>
         </div>
 
+        <!-- Which section of Quranic Arabic (V) you are working through. Shown
+             only when that deck is the source: the roots and the prefixes,
+             suffixes and pronouns are two sections of one thing, so they are
+             two tabs rather than two entries in the dropdown above. -->
+        <div class="review-tabs" id="review-tabs" style="display:none;" role="tablist"
+             aria-label="Quranic section">
+          <button type="button" class="review-tab" role="tab" data-deck-tab="roots">Vocab</button>
+          <button type="button" class="review-tab" role="tab" data-deck-tab="particles">Pronouns</button>
+        </div>
+
         <!-- Sets you have already learned, coming back on their third day.
              Hidden until there is something in it. -->
         <section class="revision-section" id="revision-section" style="display:none;">
@@ -1191,6 +1201,7 @@
   <script src="ai-agents.js"></script>
   <script src="lang-recipes.js"></script>
   <script src="quran-roots-data.js"></script>
+  <script src="quran-particles-data.js"></script>
   <script src="quran-grammar-data.js"></script>
   <!-- The forty lessons, written out. Loaded up front rather than lazily: it
        is a few hundred KB against the megabyte of Qur'anic text, and a lesson

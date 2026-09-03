@@ -6598,3 +6598,51 @@ body.focus-mode .mobile-bottom-nav { display: none !important; }
   user-select: none;
 }
 @media (prefers-reduced-motion: reduce) { .reveal-mark { transition: none; } }
+
+/* ── The two Qur'anic sections ─────────────────────────────────────────────
+   Roots and the prefixes/suffixes/pronouns. The same strip appears in Saved
+   vocab and on the Flashcards page, because they name the same two things and
+   a learner should not have to work out that they correspond. */
+.review-tabs,
+.vocab-sub-tabs {
+  display: flex; gap: 0.4rem; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin: 1.2rem 0 0;
+}
+.vocab-sub-tabs { margin: 0 0 1.1rem; }
+.review-tab,
+.vocab-sub-tab {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.55rem 1rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.15s ease;
+}
+.review-tab:hover,
+.vocab-sub-tab:hover { color: var(--text-secondary); }
+.review-tab.active,
+.vocab-sub-tab.active { color: var(--purple); border-bottom-color: var(--purple); }
+
+/* A group of particles says what it is for before the table starts — twelve
+   endings mean nothing until you know they are all answering "which job is
+   this noun doing?" */
+.root-set-blurb {
+  font-size: 0.88rem; line-height: 1.55; color: var(--text-secondary);
+  margin: -0.3rem 0 0.8rem; max-width: 60ch;
+}
+
+/* Where a form genuinely is not in the Qur'an, the row says so rather than
+   inventing an example for it. */
+.root-particle-note,
+.card-particle-note {
+  font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary);
+  background: var(--bg-subtle, rgba(127,127,127,0.08));
+  border-left: 2px solid var(--border);
+  padding: 0.5rem 0.7rem; margin: 0 0 0.7rem; border-radius: 0 4px 4px 0;
+}

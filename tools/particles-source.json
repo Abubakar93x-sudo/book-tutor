@@ -1,0 +1,1522 @@
+{
+  "_note": "Consonantal skeletons + English glosses ONLY. No vowelled Arabic is typed here — tools/build-particles.cjs looks each skeleton up in quran-text.js and writes back the exact spelling the mushaf uses. `prefer` is a regex used to disambiguate when one skeleton has several vowellings (كنت is both 'I was' and 'you were').",
+  "groups": [
+    {
+      "id": "prefix",
+      "title": "Prefixes — what attaches in front",
+      "blurb": "One or two letters glued to the front of a word. Miss them and the word looks unfamiliar; know them and you strip them off on sight.",
+      "entries": [
+        {
+          "id": "pre-bi",
+          "form": "بِـ",
+          "translit": "bi-",
+          "gloss": "with, by, in",
+          "role": "preposition prefixed to a noun",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "بسم",
+              "gloss": "in the name of"
+            },
+            {
+              "bare": "بالحق",
+              "gloss": "with the truth"
+            },
+            {
+              "bare": "بالله",
+              "gloss": "in Allah"
+            }
+          ]
+        },
+        {
+          "id": "pre-li",
+          "form": "لِـ",
+          "translit": "li-",
+          "gloss": "for, to, belonging to",
+          "role": "preposition prefixed to a noun",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "لله",
+              "gloss": "for Allah / belonging to Allah"
+            },
+            {
+              "bare": "للناس",
+              "gloss": "for the people"
+            }
+          ]
+        },
+        {
+          "id": "pre-ka",
+          "form": "كَـ",
+          "translit": "ka-",
+          "gloss": "like, as",
+          "role": "comparison prefixed to a noun",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "كمثل",
+              "gloss": "like the likeness of"
+            },
+            {
+              "bare": "كالذين",
+              "gloss": "like those who"
+            }
+          ]
+        },
+        {
+          "id": "pre-wa",
+          "form": "وَ",
+          "translit": "wa-",
+          "gloss": "and",
+          "role": "joining particle",
+          "attaches": "anything",
+          "seek": [
+            {
+              "bare": "والله",
+              "gloss": "and Allah"
+            },
+            {
+              "bare": "وقال",
+              "gloss": "and he said"
+            }
+          ]
+        },
+        {
+          "id": "pre-fa",
+          "form": "فَـ",
+          "translit": "fa-",
+          "gloss": "so, then, and so",
+          "role": "consequence particle",
+          "attaches": "anything",
+          "seek": [
+            {
+              "bare": "فقال",
+              "gloss": "so he said"
+            },
+            {
+              "bare": "فان",
+              "gloss": "so indeed / then if"
+            }
+          ]
+        },
+        {
+          "id": "pre-sa",
+          "form": "سَـ",
+          "translit": "sa-",
+          "gloss": "will, shall (future)",
+          "role": "future marker on a present verb",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "سيقول",
+              "gloss": "he will say"
+            },
+            {
+              "bare": "سنريهم",
+              "gloss": "We will show them"
+            }
+          ]
+        },
+        {
+          "id": "pre-al",
+          "form": "ٱلْـ",
+          "translit": "al-",
+          "gloss": "the",
+          "role": "definite article",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "الناس",
+              "gloss": "the people"
+            },
+            {
+              "bare": "الرحمن",
+              "gloss": "the Most Merciful"
+            }
+          ]
+        },
+        {
+          "id": "pre-a",
+          "form": "أَ",
+          "translit": "a-",
+          "gloss": "(turns the sentence into a question)",
+          "role": "interrogative prefix",
+          "attaches": "anything",
+          "seek": [
+            {
+              "bare": "افلا",
+              "gloss": "do they not…?"
+            },
+            {
+              "bare": "اتجعل",
+              "gloss": "will You place…?"
+            }
+          ]
+        },
+        {
+          "id": "pre-la",
+          "form": "لَـ",
+          "translit": "la-",
+          "gloss": "surely, indeed",
+          "role": "emphasis prefix",
+          "attaches": "anything",
+          "seek": [
+            {
+              "bare": "لقد",
+              "gloss": "indeed, certainly"
+            },
+            {
+              "bare": "لفي",
+              "gloss": "is surely in"
+            }
+          ]
+        },
+        {
+          "id": "pre-wa-oath",
+          "form": "وَ",
+          "translit": "wa-",
+          "gloss": "by — (swearing an oath)",
+          "role": "oath particle",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "والعصر",
+              "gloss": "by time"
+            },
+            {
+              "bare": "والضحي",
+              "gloss": "by the morning brightness"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pronoun",
+      "title": "Pronouns that stand on their own",
+      "blurb": "The fourteen separate pronouns. Arabic marks gender and has a form for exactly two, so there are more of them than English has.",
+      "entries": [
+        {
+          "id": "pro-huwa",
+          "form": "هُوَ",
+          "translit": "huwa",
+          "gloss": "he, it",
+          "role": "3rd person masculine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هو",
+              "gloss": "he, it"
+            },
+            {
+              "bare": "وهو",
+              "gloss": "and he"
+            }
+          ]
+        },
+        {
+          "id": "pro-hiya",
+          "form": "هِىَ",
+          "translit": "hiya",
+          "gloss": "she, it",
+          "role": "3rd person feminine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هي",
+              "gloss": "she, it"
+            },
+            {
+              "bare": "وهي",
+              "gloss": "and she"
+            }
+          ]
+        },
+        {
+          "id": "pro-huma",
+          "form": "هُمَا",
+          "translit": "humā",
+          "gloss": "they two",
+          "role": "3rd person dual",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هما",
+              "gloss": "they two"
+            }
+          ]
+        },
+        {
+          "id": "pro-hum",
+          "form": "هُمْ",
+          "translit": "hum",
+          "gloss": "they (men, or mixed)",
+          "role": "3rd person masculine plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هم",
+              "gloss": "they"
+            },
+            {
+              "bare": "وهم",
+              "gloss": "and they"
+            }
+          ]
+        },
+        {
+          "id": "pro-hunna",
+          "form": "هُنَّ",
+          "translit": "hunna",
+          "gloss": "they (women)",
+          "role": "3rd person feminine plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هن",
+              "gloss": "they (fem.)"
+            }
+          ]
+        },
+        {
+          "id": "pro-anta",
+          "form": "أَنتَ",
+          "translit": "anta",
+          "gloss": "you (one man)",
+          "role": "2nd person masculine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "انت",
+              "gloss": "you",
+              "prefer": "نتَ"
+            },
+            {
+              "bare": "وانت",
+              "gloss": "and you"
+            }
+          ]
+        },
+        {
+          "id": "pro-anti",
+          "form": "أَنتِ",
+          "translit": "anti",
+          "gloss": "you (one woman)",
+          "role": "2nd person feminine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "ربك",
+              "gloss": "your Lord (speaking to a woman)",
+              "prefer": "كِ"
+            },
+            {
+              "bare": "لك",
+              "gloss": "for you (fem.)",
+              "prefer": "كِ"
+            }
+          ],
+          "note": "This exact word is not in the Qur'an. You meet this person as ـكِ attached to a word — رَبُّكِ, لَكِ — and as كُنتِ on a verb."
+        },
+        {
+          "id": "pro-antuma",
+          "form": "أَنتُمَا",
+          "translit": "antumā",
+          "gloss": "you two",
+          "role": "2nd person dual",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "انتما",
+              "gloss": "you two"
+            }
+          ]
+        },
+        {
+          "id": "pro-antum",
+          "form": "أَنتُمْ",
+          "translit": "antum",
+          "gloss": "you (men, or mixed)",
+          "role": "2nd person masculine plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "انتم",
+              "gloss": "you (pl.)"
+            },
+            {
+              "bare": "وانتم",
+              "gloss": "while you"
+            }
+          ]
+        },
+        {
+          "id": "pro-antunna",
+          "form": "أَنتُنَّ",
+          "translit": "antunna",
+          "gloss": "you (women)",
+          "role": "2nd person feminine plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "كنتن",
+              "gloss": "you (women) were"
+            },
+            {
+              "bare": "لهن",
+              "gloss": "for them (women)"
+            }
+          ],
+          "note": "This exact word is not in the Qur'an. You meet this person as ـكُنَّ attached to a word and as ـتُنَّ on a verb."
+        },
+        {
+          "id": "pro-ana",
+          "form": "أَنَا۠",
+          "translit": "anā",
+          "gloss": "I",
+          "role": "1st person singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "انا",
+              "gloss": "I"
+            },
+            {
+              "bare": "وانا",
+              "gloss": "and I"
+            }
+          ]
+        },
+        {
+          "id": "pro-nahnu",
+          "form": "نَحْنُ",
+          "translit": "naḥnu",
+          "gloss": "we",
+          "role": "1st person plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "نحن",
+              "gloss": "we"
+            },
+            {
+              "bare": "ونحن",
+              "gloss": "and we"
+            }
+          ]
+        },
+        {
+          "id": "pro-iyyaka",
+          "form": "إِيَّاكَ",
+          "translit": "iyyāka",
+          "gloss": "you — as the object, brought forward",
+          "role": "detached object pronoun",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "اياك",
+              "gloss": "You (alone)"
+            }
+          ]
+        },
+        {
+          "id": "pro-iyyahu",
+          "form": "إِيَّاهُ",
+          "translit": "iyyāhu",
+          "gloss": "him — as the object, brought forward",
+          "role": "detached object pronoun",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "اياه",
+              "gloss": "Him (alone)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "attached",
+      "title": "Pronouns that cling to a word",
+      "blurb": "The same pronouns again, glued to the end. On a noun they mean “his / your / our”; on a verb or preposition they mean “him / you / us”.",
+      "entries": [
+        {
+          "id": "att-hu",
+          "form": "ـهُ",
+          "translit": "-hu",
+          "gloss": "his, him, its",
+          "role": "3rd person masculine singular",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "كتبه",
+              "gloss": "his book"
+            },
+            {
+              "bare": "ربه",
+              "gloss": "his Lord",
+              "prefer": "هُۥ$"
+            },
+            {
+              "bare": "له",
+              "gloss": "for him / he has",
+              "prefer": "هُۥ"
+            }
+          ]
+        },
+        {
+          "id": "att-ha",
+          "form": "ـهَا",
+          "translit": "-hā",
+          "gloss": "her, it, its",
+          "role": "3rd person feminine singular",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "فيها",
+              "gloss": "in it"
+            },
+            {
+              "bare": "منها",
+              "gloss": "from it"
+            }
+          ]
+        },
+        {
+          "id": "att-huma",
+          "form": "ـهُمَا",
+          "translit": "-humā",
+          "gloss": "their (two), them (two)",
+          "role": "3rd person dual",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "بينهما",
+              "gloss": "between them two"
+            },
+            {
+              "bare": "لهما",
+              "gloss": "for them two"
+            }
+          ]
+        },
+        {
+          "id": "att-hum",
+          "form": "ـهُمْ",
+          "translit": "-hum",
+          "gloss": "their, them",
+          "role": "3rd person masculine plural",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "لهم",
+              "gloss": "for them"
+            },
+            {
+              "bare": "منهم",
+              "gloss": "from them"
+            }
+          ]
+        },
+        {
+          "id": "att-him",
+          "form": "ـهِمْ",
+          "translit": "-him",
+          "gloss": "their, them — after an i-sound",
+          "role": "3rd person masculine plural, i-form",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربهم",
+              "gloss": "their Lord",
+              "prefer": "هِمْ"
+            },
+            {
+              "bare": "عليهم",
+              "gloss": "upon them"
+            }
+          ]
+        },
+        {
+          "id": "att-hunna",
+          "form": "ـهُنَّ",
+          "translit": "-hunna",
+          "gloss": "their, them (women)",
+          "role": "3rd person feminine plural",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "لهن",
+              "gloss": "for them (fem.)"
+            },
+            {
+              "bare": "بعولتهن",
+              "gloss": "their husbands"
+            }
+          ]
+        },
+        {
+          "id": "att-ka",
+          "form": "ـكَ",
+          "translit": "-ka",
+          "gloss": "your, you (one man)",
+          "role": "2nd person masculine singular",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربك",
+              "gloss": "your Lord"
+            },
+            {
+              "bare": "لك",
+              "gloss": "for you",
+              "prefer": "كَ"
+            }
+          ]
+        },
+        {
+          "id": "att-ki",
+          "form": "ـكِ",
+          "translit": "-ki",
+          "gloss": "your, you (one woman)",
+          "role": "2nd person feminine singular",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربك",
+              "gloss": "your Lord (to a woman)",
+              "prefer": "كِ"
+            },
+            {
+              "bare": "لك",
+              "gloss": "for you (fem.)",
+              "prefer": "كِ"
+            }
+          ]
+        },
+        {
+          "id": "att-kuma",
+          "form": "ـكُمَا",
+          "translit": "-kumā",
+          "gloss": "your (two), you (two)",
+          "role": "2nd person dual",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربكما",
+              "gloss": "your Lord (to two)"
+            },
+            {
+              "bare": "لكما",
+              "gloss": "for you two"
+            }
+          ]
+        },
+        {
+          "id": "att-kum",
+          "form": "ـكُمْ",
+          "translit": "-kum",
+          "gloss": "your, you (plural)",
+          "role": "2nd person masculine plural",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربكم",
+              "gloss": "your Lord"
+            },
+            {
+              "bare": "لكم",
+              "gloss": "for you (pl.)"
+            }
+          ]
+        },
+        {
+          "id": "att-kunna",
+          "form": "ـكُنَّ",
+          "translit": "-kunna",
+          "gloss": "your, you (women)",
+          "role": "2nd person feminine plural",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "بيوتكن",
+              "gloss": "your houses (to the wives of the Prophet)"
+            }
+          ]
+        },
+        {
+          "id": "att-na",
+          "form": "ـنَا",
+          "translit": "-nā",
+          "gloss": "our, us",
+          "role": "1st person plural",
+          "attaches": "noun, verb or preposition",
+          "seek": [
+            {
+              "bare": "ربنا",
+              "gloss": "our Lord"
+            },
+            {
+              "bare": "لنا",
+              "gloss": "for us"
+            }
+          ]
+        },
+        {
+          "id": "att-i",
+          "form": "ـِى",
+          "translit": "-ī",
+          "gloss": "my",
+          "role": "1st person singular, on a noun",
+          "attaches": "noun or preposition",
+          "seek": [
+            {
+              "bare": "ربي",
+              "gloss": "my Lord"
+            },
+            {
+              "bare": "لي",
+              "gloss": "for me"
+            }
+          ]
+        },
+        {
+          "id": "att-ni",
+          "form": "ـنِى",
+          "translit": "-nī",
+          "gloss": "me",
+          "role": "1st person singular, on a verb",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "فاذكروني",
+              "gloss": "so remember Me"
+            },
+            {
+              "bare": "اتبعون",
+              "gloss": "follow me"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verbEnding",
+      "title": "What the verb tells you — prefixes and endings",
+      "blurb": "A verb carries its own subject. These letters say who did it and when, so the pronoun is usually not written at all.",
+      "entries": [
+        {
+          "id": "vb-tu",
+          "form": "ـتُ",
+          "translit": "-tu",
+          "gloss": "I — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قلت",
+              "gloss": "I said",
+              "prefer": "تُ"
+            },
+            {
+              "bare": "خلقت",
+              "gloss": "I created",
+              "prefer": "تُ"
+            }
+          ]
+        },
+        {
+          "id": "vb-ta",
+          "form": "ـتَ",
+          "translit": "-ta",
+          "gloss": "you (one man) — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قلت",
+              "gloss": "you said",
+              "prefer": "تَ"
+            },
+            {
+              "bare": "علمتنا",
+              "gloss": "You taught us"
+            }
+          ]
+        },
+        {
+          "id": "vb-ti",
+          "form": "ـتِ",
+          "translit": "-ti",
+          "gloss": "you (one woman) — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "كنت",
+              "gloss": "you (fem.) were",
+              "prefer": "تِ"
+            }
+          ]
+        },
+        {
+          "id": "vb-fem-sg",
+          "form": "ـِى",
+          "translit": "-ī",
+          "gloss": "you (one woman) — on a command or present verb",
+          "role": "feminine singular verb ending",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "كلي",
+              "gloss": "eat! (to a woman)"
+            },
+            {
+              "bare": "واشربي",
+              "gloss": "and drink!"
+            },
+            {
+              "bare": "واسجدي",
+              "gloss": "and prostrate!"
+            }
+          ]
+        },
+        {
+          "id": "vb-tuma",
+          "form": "ـتُمَا",
+          "translit": "-tumā",
+          "gloss": "you two — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "شيتما",
+              "gloss": "you two wished"
+            }
+          ]
+        },
+        {
+          "id": "vb-tum",
+          "form": "ـتُمْ",
+          "translit": "-tum",
+          "gloss": "you (plural) — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "كنتم",
+              "gloss": "you (pl.) were"
+            },
+            {
+              "bare": "قلتم",
+              "gloss": "you (pl.) said"
+            }
+          ]
+        },
+        {
+          "id": "vb-tunna",
+          "form": "ـتُنَّ",
+          "translit": "-tunna",
+          "gloss": "you (women) — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "كنتن",
+              "gloss": "you (fem. pl.) were"
+            }
+          ]
+        },
+        {
+          "id": "vb-na-past",
+          "form": "ـنَا",
+          "translit": "-nā",
+          "gloss": "we — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قلنا",
+              "gloss": "We said"
+            },
+            {
+              "bare": "جعلنا",
+              "gloss": "We made"
+            }
+          ]
+        },
+        {
+          "id": "vb-at",
+          "form": "ـَتْ",
+          "translit": "-at",
+          "gloss": "she — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قالت",
+              "gloss": "she said"
+            },
+            {
+              "bare": "كانت",
+              "gloss": "she was"
+            }
+          ]
+        },
+        {
+          "id": "vb-aa",
+          "form": "ـَا",
+          "translit": "-ā",
+          "gloss": "they two — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قالا",
+              "gloss": "they two said"
+            },
+            {
+              "bare": "كانا",
+              "gloss": "they two were"
+            }
+          ]
+        },
+        {
+          "id": "vb-uu",
+          "form": "ـُوا۟",
+          "translit": "-ū",
+          "gloss": "they (men) — (past)",
+          "role": "past-tense subject ending",
+          "attaches": "past verb",
+          "seek": [
+            {
+              "bare": "قالوا",
+              "gloss": "they said"
+            },
+            {
+              "bare": "كانوا",
+              "gloss": "they were"
+            }
+          ]
+        },
+        {
+          "id": "vb-na-fem",
+          "form": "ـْنَ",
+          "translit": "-na",
+          "gloss": "they / you (women)",
+          "role": "feminine plural subject ending",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "يتربصن",
+              "gloss": "they (women) wait"
+            },
+            {
+              "bare": "يرضعن",
+              "gloss": "they (mothers) suckle"
+            }
+          ]
+        },
+        {
+          "id": "vb-ya",
+          "form": "يَـ",
+          "translit": "ya-",
+          "gloss": "he / they — (present)",
+          "role": "present-tense subject prefix",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "يعلم",
+              "gloss": "he knows"
+            },
+            {
+              "bare": "يقول",
+              "gloss": "he says"
+            }
+          ]
+        },
+        {
+          "id": "vb-ta-pre",
+          "form": "تَـ",
+          "translit": "ta-",
+          "gloss": "you / she — (present)",
+          "role": "present-tense subject prefix",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "تعلمون",
+              "gloss": "you (pl.) know"
+            },
+            {
+              "bare": "تعملون",
+              "gloss": "you (pl.) do"
+            }
+          ]
+        },
+        {
+          "id": "vb-na-pre",
+          "form": "نَـ",
+          "translit": "na-",
+          "gloss": "we — (present)",
+          "role": "present-tense subject prefix",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "نعبد",
+              "gloss": "we worship"
+            },
+            {
+              "bare": "نستعين",
+              "gloss": "we seek help"
+            }
+          ]
+        },
+        {
+          "id": "vb-a-pre",
+          "form": "أَـ",
+          "translit": "a-",
+          "gloss": "I — (present)",
+          "role": "present-tense subject prefix",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "اعبد",
+              "gloss": "I worship"
+            },
+            {
+              "bare": "اقول",
+              "gloss": "I say"
+            }
+          ]
+        },
+        {
+          "id": "vb-uuna",
+          "form": "ـُونَ",
+          "translit": "-ūna",
+          "gloss": "they / you (plural) — (present)",
+          "role": "present-tense plural ending",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "يعلمون",
+              "gloss": "they know"
+            },
+            {
+              "bare": "يعملون",
+              "gloss": "they do"
+            }
+          ]
+        },
+        {
+          "id": "vb-aani",
+          "form": "ـَانِ",
+          "translit": "-āni",
+          "gloss": "you two / they two — (present)",
+          "role": "present-tense dual ending",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "تكذبان",
+              "gloss": "you two deny"
+            }
+          ]
+        },
+        {
+          "id": "vb-imp",
+          "form": "ٱ… ـُوا۟",
+          "translit": "u-…-ū",
+          "gloss": "do it! — (an order to more than one)",
+          "role": "plural imperative",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "اعبدوا",
+              "gloss": "worship!"
+            },
+            {
+              "bare": "ادخلوا",
+              "gloss": "enter!"
+            }
+          ]
+        },
+        {
+          "id": "vb-imp-sg",
+          "form": "ٱ… / قُلْ",
+          "translit": "—",
+          "gloss": "do it! — (an order to one person)",
+          "role": "singular imperative",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "قل",
+              "gloss": "say!"
+            },
+            {
+              "bare": "اتقوا",
+              "gloss": "be mindful!"
+            }
+          ]
+        },
+        {
+          "id": "vb-lam",
+          "form": "لَمْ + ـْ",
+          "translit": "lam",
+          "gloss": "did not — (present form, past meaning)",
+          "role": "negation that shortens the verb",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "لم",
+              "gloss": "did not"
+            },
+            {
+              "bare": "يلد",
+              "gloss": "he begot"
+            }
+          ]
+        },
+        {
+          "id": "vb-la",
+          "form": "لَا",
+          "translit": "lā",
+          "gloss": "does not / do not",
+          "role": "negation or prohibition",
+          "attaches": "present verb",
+          "seek": [
+            {
+              "bare": "لا",
+              "gloss": "not"
+            },
+            {
+              "bare": "يعلمون",
+              "gloss": "they know"
+            }
+          ]
+        },
+        {
+          "id": "vb-nna",
+          "form": "ـَنَّ",
+          "translit": "-anna",
+          "gloss": "he certainly will — (heavy emphasis)",
+          "role": "emphatic nūn",
+          "attaches": "verb",
+          "seek": [
+            {
+              "bare": "لنخرجنكم",
+              "gloss": "we will surely drive you out"
+            },
+            {
+              "bare": "وليكونا",
+              "gloss": "and he will surely be"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nounEnding",
+      "title": "What the noun's ending tells you",
+      "blurb": "The last mark on a noun says what job it is doing in the sentence, and whether it is one, two or many.",
+      "entries": [
+        {
+          "id": "nn-un",
+          "form": "ـٌ",
+          "translit": "-un",
+          "gloss": "the subject — one, unspecified",
+          "role": "nominative, indefinite",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "نور",
+              "gloss": "a light",
+              "prefer": "رٌ"
+            },
+            {
+              "bare": "خير",
+              "gloss": "a good thing",
+              "prefer": "رٌ"
+            }
+          ]
+        },
+        {
+          "id": "nn-an",
+          "form": "ـًا",
+          "translit": "-an",
+          "gloss": "the object — one, unspecified",
+          "role": "accusative, indefinite",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "كثيرا",
+              "gloss": "much, many"
+            },
+            {
+              "bare": "قليلا",
+              "gloss": "a little"
+            }
+          ]
+        },
+        {
+          "id": "nn-in",
+          "form": "ـٍ",
+          "translit": "-in",
+          "gloss": "after a preposition, or “of” — one, unspecified",
+          "role": "genitive, indefinite",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "خير",
+              "gloss": "of good",
+              "prefer": "رٍ"
+            },
+            {
+              "bare": "شيء",
+              "gloss": "of a thing",
+              "prefer": "ءٍ"
+            }
+          ]
+        },
+        {
+          "id": "nn-uuna",
+          "form": "ـُونَ",
+          "translit": "-ūna",
+          "gloss": "many men — as the subject",
+          "role": "sound masculine plural, nominative",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "المومنون",
+              "gloss": "the believers"
+            },
+            {
+              "bare": "المسلمون",
+              "gloss": "the Muslims"
+            }
+          ]
+        },
+        {
+          "id": "nn-iina",
+          "form": "ـِينَ",
+          "translit": "-īna",
+          "gloss": "many men — as the object or after a preposition",
+          "role": "sound masculine plural, accusative/genitive",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "المومنين",
+              "gloss": "the believers"
+            },
+            {
+              "bare": "المتقين",
+              "gloss": "those mindful of Allah"
+            }
+          ]
+        },
+        {
+          "id": "nn-aani",
+          "form": "ـَانِ",
+          "translit": "-āni",
+          "gloss": "exactly two — as the subject",
+          "role": "dual, nominative",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "رجلان",
+              "gloss": "two men"
+            },
+            {
+              "bare": "جنتان",
+              "gloss": "two gardens"
+            }
+          ]
+        },
+        {
+          "id": "nn-ayni",
+          "form": "ـَيْنِ",
+          "translit": "-ayni",
+          "gloss": "exactly two — as the object or after a preposition",
+          "role": "dual, accusative/genitive",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "اثنين",
+              "gloss": "two"
+            },
+            {
+              "bare": "عينين",
+              "gloss": "two eyes"
+            }
+          ]
+        },
+        {
+          "id": "nn-aat",
+          "form": "ـَٰتٌ",
+          "translit": "-āt",
+          "gloss": "many women, or many things (feminine)",
+          "role": "sound feminine plural",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "الصلحت",
+              "gloss": "the righteous deeds"
+            },
+            {
+              "bare": "المومنت",
+              "gloss": "the believing women"
+            }
+          ]
+        },
+        {
+          "id": "nn-ta",
+          "form": "ـَةٌ",
+          "translit": "-a(tun)",
+          "gloss": "marks the word as feminine",
+          "role": "tāʾ marbūṭa",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "رحمه",
+              "gloss": "a mercy"
+            },
+            {
+              "bare": "جنه",
+              "gloss": "a garden"
+            }
+          ]
+        },
+        {
+          "id": "nn-mu",
+          "form": "مُـ",
+          "translit": "mu-",
+          "gloss": "one who does it / one it is done to",
+          "role": "participle prefix",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "مسلمين",
+              "gloss": "those who submit"
+            },
+            {
+              "bare": "مبين",
+              "gloss": "clear, making clear"
+            }
+          ]
+        },
+        {
+          "id": "nn-ma",
+          "form": "مَـ",
+          "translit": "ma-",
+          "gloss": "the place where, or the act of",
+          "role": "place / verbal-noun prefix",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "المسجد",
+              "gloss": "the place of prostration"
+            },
+            {
+              "bare": "مكان",
+              "gloss": "a place"
+            }
+          ]
+        },
+        {
+          "id": "nn-iyy",
+          "form": "ـِىٌّ",
+          "translit": "-iyy",
+          "gloss": "belonging to, of the kind of",
+          "role": "nisba ending",
+          "attaches": "noun",
+          "seek": [
+            {
+              "bare": "عربيا",
+              "gloss": "Arabic"
+            },
+            {
+              "bare": "نبيا",
+              "gloss": "a prophet"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pointing",
+      "title": "Pointing and joining words",
+      "blurb": "This, that, those — and the words that hook one clause onto the next. Between them they are on almost every page.",
+      "entries": [
+        {
+          "id": "pt-alladhi",
+          "form": "ٱلَّذِى",
+          "translit": "alladhī",
+          "gloss": "the one who, which",
+          "role": "relative pronoun, masculine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "الذي",
+              "gloss": "the one who"
+            },
+            {
+              "bare": "والذي",
+              "gloss": "and the one who"
+            }
+          ]
+        },
+        {
+          "id": "pt-allati",
+          "form": "ٱلَّتِى",
+          "translit": "allatī",
+          "gloss": "the one who, which (feminine)",
+          "role": "relative pronoun, feminine singular",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "التي",
+              "gloss": "the one which (fem.)"
+            }
+          ]
+        },
+        {
+          "id": "pt-alladhina",
+          "form": "ٱلَّذِينَ",
+          "translit": "alladhīna",
+          "gloss": "those who",
+          "role": "relative pronoun, masculine plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "الذين",
+              "gloss": "those who"
+            },
+            {
+              "bare": "والذين",
+              "gloss": "and those who"
+            }
+          ]
+        },
+        {
+          "id": "pt-hadha",
+          "form": "هَٰذَا",
+          "translit": "hādhā",
+          "gloss": "this (near, masculine)",
+          "role": "demonstrative",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هذا",
+              "gloss": "this"
+            },
+            {
+              "bare": "وهذا",
+              "gloss": "and this"
+            }
+          ]
+        },
+        {
+          "id": "pt-hadhihi",
+          "form": "هَٰذِهِۦ",
+          "translit": "hādhihi",
+          "gloss": "this (near, feminine)",
+          "role": "demonstrative",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "هذه",
+              "gloss": "this (fem.)"
+            }
+          ]
+        },
+        {
+          "id": "pt-dhalika",
+          "form": "ذَٰلِكَ",
+          "translit": "dhālika",
+          "gloss": "that (far, masculine)",
+          "role": "demonstrative",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "ذلك",
+              "gloss": "that"
+            },
+            {
+              "bare": "وذلك",
+              "gloss": "and that"
+            }
+          ]
+        },
+        {
+          "id": "pt-tilka",
+          "form": "تِلْكَ",
+          "translit": "tilka",
+          "gloss": "that (far, feminine)",
+          "role": "demonstrative",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "تلك",
+              "gloss": "that (fem.)"
+            }
+          ]
+        },
+        {
+          "id": "pt-ulaika",
+          "form": "أُو۟لَٰٓئِكَ",
+          "translit": "ulāʾika",
+          "gloss": "those — (people)",
+          "role": "demonstrative, plural",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "اوليك",
+              "gloss": "those"
+            },
+            {
+              "bare": "فاوليك",
+              "gloss": "then those"
+            }
+          ]
+        },
+        {
+          "id": "pt-man",
+          "form": "مَن",
+          "translit": "man",
+          "gloss": "whoever, the one who — (people)",
+          "role": "conditional / relative",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "من",
+              "gloss": "whoever",
+              "prefer": "مَن"
+            },
+            {
+              "bare": "ومن",
+              "gloss": "and whoever",
+              "prefer": "مَن"
+            }
+          ]
+        },
+        {
+          "id": "pt-ma",
+          "form": "مَا",
+          "translit": "mā",
+          "gloss": "what, whatever — and also: not",
+          "role": "relative, interrogative or negation",
+          "attaches": "",
+          "seek": [
+            {
+              "bare": "ما",
+              "gloss": "what, whatever"
+            },
+            {
+              "bare": "وما",
+              "gloss": "and what / and not"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

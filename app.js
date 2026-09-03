@@ -3109,6 +3109,31 @@ const QURAN_VOCAB_PROFILE = {
   notes: 'The 300 roots the Qur\'an is built from, in five sets of sixty, each with the words it grows and a verse to meet them in.'
 };
 
+// ── THE SECOND QUR'ANIC SECTION ──────────────────────────────────────────────
+// The roots are the meanings; this is the machinery that attaches to them —
+// prefixes on the front, endings on the back, and the pronouns that either
+// stand alone or cling to a word.
+//
+// It is a DECK OF ITS OWN rather than a flag on the cards in the roots deck,
+// and that is a speed decision as much as a tidiness one. collectCards pages a
+// deck one batch document at a time; two sections mixed into one deck would
+// mean reading root documents to find particle cards and discarding most of
+// each. Separate decks means each tab reads only its own — and at 83 cards this
+// whole deck is a single document.
+//
+// It is also why nothing already on disk is touched: the roots deck's batch
+// documents are never rewritten to make room for this.
+const QURAN_PARTICLES_ID = 'ar-quran-particles';
+const QURAN_PARTICLES_PROFILE = {
+  id: QURAN_PARTICLES_ID, name: 'Quranic Arabic', nativeName: 'العربية الفصحى',
+  code: 'ar-quran', ttsLangCode: 'ar-SA', recipeId: 'vocabBuilder',
+  script: 'arabic', scriptName: 'Arabic script', romanizationName: 'transliteration',
+  // What makes it a companion rather than a second entry in the dropdown: it is
+  // reached by its tab under Quranic Arabic (V), not as a source of its own.
+  companionOf: QURAN_VOCAB_ID,
+  notes: 'The prefixes, suffixes and pronouns that attach to the roots.'
+};
+
 // Chosen from, never typed. Same reasoning as LANGUAGE_CATALOGUE: a language is
 // here because something was actually built for it.
 const VOCAB_CATALOGUE = [
@@ -3119,6 +3144,12 @@ const VOCAB_CATALOGUE = [
 
 // The root-vocabulary track is driven by curated data rather than the model.
 const isQuranVocab = (lang) => lang?.id === QURAN_VOCAB_ID;
+const isQuranParticles = (lang) => lang?.id === QURAN_PARTICLES_ID;
+
+// A deck reached through a tab on another deck rather than by its own row in
+// the source dropdown. It is not hidden — hiding a deck is what made his only
+// deck invisible — it simply has a different door.
+const isCompanionDeck = (lang) => !!lang?.companionOf;
 
 // The other half: the 28-lesson Qur'anic course, on the Languages side. It is
 // identified by its syllabus rather than its id, because the id has moved once
@@ -3208,6 +3239,12 @@ function migrateQuranProgress(lang, syllabus) {
 async function cleanUpQuranVocabTracks(languages) {
   const strays = languages.filter(l =>
     l.id !== QURAN_VOCAB_ID &&
+    // A COMPANION IS NOT A STRAY. The particles deck is `ar-quran-particles`:
+    // a vocabBuilder track whose id matches /quran/i, which is exactly the
+    // shape this sweep deletes. Without this line the second Qur'anic section
+    // would be destroyed, cards and all, on the next reload — silently, since
+    // the sweep runs at startup and reports only to the console.
+    !isCompanionDeck(l) &&
     l.recipeId === 'vocabBuilder' &&
     // Matched on the name too, not just the id: what he is looking at is a
     // second entry reading "Quranic Arabic" in the vocabulary dropdown, and an
@@ -3673,6 +3710,130 @@ function ensureQuranRootDeckCurrent(lang) {
   return _rootDeckSyncs[lang.id];
 }
 
+// ── THE PARTICLES DECK ───────────────────────────────────────────────────────
+// The same idea as the roots, one section along: static data in the page turned
+// into cards, with the front being the form EXACTLY as the table shows it.
+//
+// That last part is not a detail. The roots deck had to be rebuilt once because
+// its cards said something different from the list he was reading, and a card
+// you cannot match to the list you studied is worse than no card.
+const PARTICLE_DECK_VERSION = 1;
+
+function particleCardFor(entry) {
+  return {
+    front: entry.form,
+    back: entry.gloss,
+    word: entry.form,
+    root: entry.form,
+    romanization: entry.translit,
+    headword: '',
+    headwordGloss: entry.role || '',
+    verse: entry.verse || null,
+    type: 'particle',
+    particleId: entry.id,
+    particleN: entry.n,
+    particleGroup: entry.group,
+    role: entry.role || '',
+    note: entry.note || '',
+    quranCount: entry.count,
+    // Named `lemmas` because that is what the back of a card already renders.
+    // The examples ARE the words built from it, exactly as a root's family is.
+    lemmas: (entry.examples || []).map(e => ({ word: e.word, meaning: e.gloss }))
+  };
+}
+
+// Same inversion as CARD_CONTENT_FIELDS: the list owns these, everything else
+// on an existing card belongs to the learner and survives a rebuild.
+const PARTICLE_CONTENT_FIELDS = Object.keys(particleCardFor({ examples: [] }));
+
+function carryParticleState(fresh, old) {
+  if (!old) return fresh;
+  const kept = {};
+  for (const [k, v] of Object.entries(old)) {
+    if (v === undefined) continue;
+    if (PARTICLE_CONTENT_FIELDS.includes(k)) continue;
+    if (k.startsWith('_')) continue;
+    kept[k] = v;
+  }
+  return { ...fresh, ...kept };
+}
+
+// Write the deck so it equals the list, in list order, keeping every schedule.
+// One document at 83 cards, so this is a single write in practice.
+async function syncQuranParticleDeck(lang) {
+  const entries = typeof QURAN_PARTICLES !== 'undefined' ? QURAN_PARTICLES : [];
+  if (!entries.length) return null;
+
+  const byId = new Map();
+  for (const batch of await dbGetLangCardBatches(lang.id)) {
+    for (const card of batch.flashcards || []) {
+      if (card.particleId && !byId.has(card.particleId)) byId.set(card.particleId, card);
+    }
+  }
+
+  const stats = { kept: 0, added: 0, dropped: 0 };
+  const cards = entries.map(entry => {
+    const fresh = particleCardFor(entry);
+    const old = byId.get(entry.id);
+    if (!old) { stats.added++; return fresh; }
+    stats.kept++; byId.delete(entry.id);
+    return carryParticleState(fresh, old);
+  });
+  stats.dropped = byId.size;
+
+  const batchCount = Math.ceil(cards.length / LANG_CARDS_PER_BATCH);
+  for (let i = 0; i < batchCount; i++) {
+    await dbPutLangCardBatch(lang.id, i,
+      cards.slice(i * LANG_CARDS_PER_BATCH, (i + 1) * LANG_CARDS_PER_BATCH));
+  }
+  const col = userCol('langCards');
+  if (col) {
+    for (let i = batchCount; i < batchCount + 4; i++) {
+      await col.doc(`${lang.id}_batch_${i}`).delete().catch(() => {});
+    }
+  }
+
+  await dbPatchLanguage(lang.id, {
+    ...QURAN_PARTICLES_PROFILE,
+    cardCount: cards.length,
+    particleDeckVersion: PARTICLE_DECK_VERSION
+  });
+  Object.assign(lang, { cardCount: cards.length, particleDeckVersion: PARTICLE_DECK_VERSION });
+
+  if (stats.added || stats.dropped) {
+    console.log(`Particles deck: ${stats.kept} refreshed (schedules kept), ` +
+      `${stats.added} added, ${stats.dropped} removed.`);
+  }
+  return stats;
+}
+
+// The deck comes into existence the first time the Pronouns tab is opened, and
+// never before: someone who never opens it never gets the document. After that
+// this is a version check that costs nothing.
+const _particleSyncs = {};
+function ensureParticleDeck() {
+  const known = (AppState._reviewMeta?.languages || AppState._particleLangs || [])
+    .find(l => isQuranParticles(l));
+  if (known && (known.particleDeckVersion || 0) >= PARTICLE_DECK_VERSION) {
+    return Promise.resolve(known);
+  }
+  if (_particleSyncs.run) return _particleSyncs.run;
+
+  _particleSyncs.run = (async () => {
+    await whenAuthReady();
+    if (!AppState.currentUser) return null;      // nothing is written signed out
+    const all = await dbGetAllLanguages().catch(() => []);
+    const lang = all.find(l => isQuranParticles(l)) || { ...QURAN_PARTICLES_PROFILE };
+    if ((lang.particleDeckVersion || 0) >= PARTICLE_DECK_VERSION) return lang;
+    await syncQuranParticleDeck(lang);
+    return lang;
+  })()
+    .catch(err => { console.warn('Could not build the particles deck:', err.message); return null; })
+    .finally(() => { delete _particleSyncs.run; });
+
+  return _particleSyncs.run;
+}
+
 // ── RECOVERING LOST COURSE PROGRESS ──────────────────────────────────────────
 // A course document that was reset — re-added after going missing from the grid
 // — loses unitIndex and unitsMastered. The tutor transcripts do not: they live
@@ -3879,7 +4040,13 @@ const VocabBuilder = {
     let all = await dbGetAllLanguages().catch(() => []);
     all = scheduleRootDeckSync(await removeQuranLessonDeck(
       await sweepPhantomLanguages(await cleanUpQuranVocabTracks(all))));
-    this.langs = all.filter(l => getRecipe(l).id === 'vocabBuilder').map(ensureLangScript);
+    this.langs = all
+      .filter(l => getRecipe(l).id === 'vocabBuilder')
+      // The particles deck is a section of Quranic Arabic, not a language of
+      // its own: it is reached by the tab inside that entry, so listing it here
+      // would put "Quranic Arabic" in the picker twice.
+      .filter(l => !isCompanionDeck(l))
+      .map(ensureLangScript);
 
     // First visit: English is ready to go with no setup at all.
     if (!this.langs.length) {
@@ -4102,7 +4269,16 @@ const VocabBuilder = {
               // Filled in after the paint by renderRootList, so the table here
               // is the same table, built by the same code, rather than a copy
               // of it that can drift.
-              ? `<div class="vocab-saved-body root-list-host" data-roots-for="${escapeAttr(lang.id)}"></div>`
+              ? `<div class="vocab-saved-body">
+                   <div class="vocab-sub-tabs" role="tablist" aria-label="Quranic vocabulary sections">
+                     <button type="button" class="vocab-sub-tab" role="tab"
+                             data-sub-tab="roots" data-for="${escapeAttr(lang.id)}">Roots</button>
+                     <button type="button" class="vocab-sub-tab" role="tab"
+                             data-sub-tab="particles" data-for="${escapeAttr(lang.id)}">Prefixes, suffixes &amp; pronouns</button>
+                   </div>
+                   <div class="root-list-host" data-roots-for="${escapeAttr(lang.id)}"></div>
+                   <div class="root-list-host" data-particles-for="${escapeAttr(lang.id)}" style="display:none;"></div>
+                 </div>`
               : `<div class="vocab-list vocab-saved-body">
                    ${words.map((w, i) => vocabCardHtml(w, i, lang, { swappable: true })).join('')}
                  </div>
@@ -4120,6 +4296,9 @@ const VocabBuilder = {
       if (!isRoots) continue;
       const host = panel.querySelector(`[data-roots-for="${CSS.escape(lang.id)}"]`);
       if (host) this.renderRootList(host, words, lang);
+      const pHost = panel.querySelector(`[data-particles-for="${CSS.escape(lang.id)}"]`);
+      if (pHost) this.renderParticleList(pHost, lang);
+      this.bindSubTabs(panel, lang);
     }
 
     this._openSavedLangs = new Set(wasOpen);
@@ -4391,6 +4570,129 @@ const VocabBuilder = {
         { langName: lang.name, script: lang.script });
     }
     await dbPutLanguage(lang);
+  },
+
+  // ── THE TWO SECTIONS OF QUR'ANIC VOCABULARY ──
+  // Roots on one tab, the prefixes/suffixes/pronouns on the other — the same
+  // two tabs as the Flashcards page, so what you study and what you revise are
+  // named the same thing in both places.
+  //
+  // Both tables are already in the DOM; the tab only shows one. They are static
+  // data in the page, so switching costs nothing and reads nothing.
+  bindSubTabs(panel, lang) {
+    const tabs = panel.querySelectorAll(`[data-sub-tab][data-for="${CSS.escape(lang.id)}"]`);
+    if (!tabs.length) return;
+    const hosts = {
+      roots: panel.querySelector(`[data-roots-for="${CSS.escape(lang.id)}"]`),
+      particles: panel.querySelector(`[data-particles-for="${CSS.escape(lang.id)}"]`)
+    };
+    const show = (which) => {
+      this._openSavedTab = which;
+      tabs.forEach(b => {
+        const on = b.dataset.subTab === which;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      for (const [key, el] of Object.entries(hosts)) {
+        if (el) el.style.display = key === which ? '' : 'none';
+      }
+      // Opening the section is what asks for its deck. Nothing is written to
+      // the account for a learner who never comes here.
+      if (which === 'particles') ensureParticleDeck();
+    };
+    tabs.forEach(b => b.addEventListener('click', () => show(b.dataset.subTab)));
+    show(this._openSavedTab === 'particles' ? 'particles' : 'roots');
+  },
+
+  // The particle table. Same markup and the same classes as the root table —
+  // it IS that table, grouped by what the entry does instead of by set number,
+  // so the two sections read as one list in two halves rather than two designs.
+  renderParticleList(panel, lang) {
+    const all = (typeof QURAN_PARTICLES !== 'undefined' && QURAN_PARTICLES) || [];
+    const groups = (typeof QURAN_PARTICLE_GROUPS !== 'undefined' && QURAN_PARTICLE_GROUPS) || [];
+    if (!all.length) {
+      panel.innerHTML = `<div class="vocab-empty"><p class="vocab-empty-sub">
+        The prefixes and pronouns could not be loaded.</p></div>`;
+      return;
+    }
+
+    const filter = (this.particleFilter || '').trim().toLowerCase();
+    const matches = (p) => !filter ||
+      String(p.form).includes(filter) ||
+      String(p.translit).toLowerCase().includes(filter) ||
+      String(p.gloss).toLowerCase().includes(filter) ||
+      String(p.role).toLowerCase().includes(filter) ||
+      (p.examples || []).some(e => String(e.gloss).toLowerCase().includes(filter) ||
+                                   String(e.word).includes(filter));
+    const shown = all.filter(matches);
+
+    const body = filter
+      ? (shown.length
+          ? `<div class="root-table">${particleTableHeadHtml()}${
+              shown.map(p => particleEntryHtml(p, all.indexOf(p))).join('')}</div>`
+          : `<div class="vocab-empty"><p class="vocab-empty-sub">
+               Nothing matches “${escapeAttr(this.particleFilter)}”.</p></div>`)
+      : groups.map(g => {
+          const inGroup = shown.filter(p => p.group === g.id);
+          if (!inGroup.length) return '';
+          return `
+            <section class="root-set" data-group="${escapeAttr(g.id)}">
+              <h3 class="root-set-title">
+                <span class="root-set-leaf" aria-hidden="true">🧩</span>
+                ${escapeAttr(g.title)} <span class="root-set-range">(${g.from}–${g.to})</span>
+              </h3>
+              <p class="root-set-blurb">${escapeAttr(g.blurb)}</p>
+              <div class="root-table">${particleTableHeadHtml()}${
+                inGroup.map(p => particleEntryHtml(p, all.indexOf(p))).join('')}</div>
+            </section>`;
+        }).join('');
+
+    panel.innerHTML = `
+      <div class="root-head">
+        <div class="root-head-line">
+          <span class="vocab-set-count">${all.length} pieces</span>
+          <span class="root-head-note">what attaches to the roots · every example word checked against the Qur'an itself</span>
+        </div>
+        <input type="search" data-particle-search class="form-input root-search"
+               placeholder="Search a prefix, an ending or what it means…"
+               value="${escapeAttr(this.particleFilter || '')}">
+      </div>
+      ${body}
+    `;
+
+    const search = panel.querySelector('[data-particle-search]');
+    search.addEventListener('input', () => {
+      this.particleFilter = search.value;
+      clearTimeout(this._particleFilterTimer);
+      this._particleFilterTimer = setTimeout(() => {
+        this.renderParticleList(panel, lang);
+        const again = panel.querySelector('[data-particle-search]');
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }, 180);
+    });
+
+    panel.querySelectorAll('.root-row-main').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        if (e.target.closest('.vocab-speak')) return;
+        const row = btn.closest('.root-row');
+        const open = row.classList.toggle('is-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+
+    panel.querySelectorAll('.vocab-speak').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // A prefix is not pronounceable on its own — بِـ is one letter waiting
+        // for a word — so the button says the first real word that carries it.
+        const p = all[parseInt(btn.dataset.idx)];
+        const say = p?.examples?.[0]?.word;
+        if (say && !NarrationEngine.speakLang(say, lang.ttsLangCode || lang.code, 0.85)) {
+          showToast(`No ${lang.name} voice on this device — audio unavailable.`, 'info', 3000);
+        }
+      });
+    });
   },
 
   // ── THE ROOT LIST ──
@@ -4935,6 +5237,59 @@ function rootTableHeadHtml() {
       <span class="root-col-root">Root</span>
       <span class="root-col-gloss">Core meaning / concept</span>
     </div>`;
+}
+
+// The particle table, row for row the same as the root table above — the same
+// three columns, the same disclosure, the same classes. Two sections of one
+// list should not look like two different products.
+//
+// Column two is the form as the muṣḥaf writes it, with a tatweel so a suffix
+// reads as a suffix (ـهُ, not هُ hanging in space).
+function particleTableHeadHtml() {
+  return `
+    <div class="root-table-head" aria-hidden="true">
+      <span class="root-col-n">#</span>
+      <span class="root-col-root">Form</span>
+      <span class="root-col-gloss">What it does</span>
+    </div>`;
+}
+
+function particleEntryHtml(p, i) {
+  const examples = p.examples || [];
+  return `
+    <article class="root-row" data-idx="${i}">
+      <button type="button" class="root-row-main" aria-expanded="false"
+              aria-label="${escapeAttr(p.form)} — ${escapeAttr(p.gloss)}">
+        <span class="root-col-n">${p.n || i + 1}</span>
+        <span class="root-col-root" dir="rtl" lang="ar">${escapeAttr(p.form)}</span>
+        <span class="root-col-gloss">${escapeAttr(p.gloss)}</span>
+        <span class="root-row-more" aria-hidden="true">▾</span>
+      </button>
+      <div class="root-row-detail">
+        <div class="root-row-meta">
+          ${p.translit ? `<span class="root-chip">${escapeAttr(p.translit)}</span>` : ''}
+          ${p.role ? `<span class="root-chip-gloss">${escapeAttr(p.role)}</span>` : ''}
+          ${p.attaches ? `<span class="vocab-pos">attaches to a ${escapeAttr(p.attaches)}</span>` : ''}
+          <button class="vocab-speak" data-idx="${i}" title="Hear a word that carries it">🔊</button>
+        </div>
+        ${p.note ? `<p class="root-particle-note">${escapeAttr(p.note)}</p>` : ''}
+        ${examples.length ? `<div class="root-lemmas">
+          <div class="root-lemmas-head">Words that carry ${escapeAttr(p.form)}</div>
+          ${examples.map(e => `
+            <div class="root-lemma">
+              <span class="root-lemma-ar" dir="rtl" lang="ar">${escapeAttr(e.word)}</span>
+              <span class="root-lemma-body">
+                <span class="root-lemma-meaning">${escapeAttr(e.gloss)}</span>
+              </span>
+            </div>`).join('')}
+        </div>` : ''}
+        ${p.verse ? `
+          <blockquote class="root-verse">
+            <span class="root-verse-ar" dir="rtl" lang="ar">${escapeAttr(p.verse.text)}</span>
+            <cite class="root-verse-ref">${escapeAttr(p.verse.surah)} · ${escapeAttr(p.verse.ref)}</cite>
+          </blockquote>` : ''}
+      </div>
+    </article>`;
 }
 
 function rootEntryHtml(w, i) {
@@ -11687,9 +12042,22 @@ const canHoldCards = (lang) => !(isQuranCourse(lang) || lang.lessonDeckRemoved);
 function isListableDeck(lang) {
   if (!lang || !lang.id || lang.id === 'undefined') return false;  // not addressable
   if (lang.deckDeletedAt) return false;                            // in the 30-day bin
+  // A companion is REACHABLE, just not as its own row — the Pronouns tab under
+  // Quranic Arabic (V) is its door. Listing it too would put the same name in
+  // the dropdown twice, which is the exact problem the (V)/(L) tags were for.
+  if (isCompanionDeck(lang)) return false;
   if (lang.cardCount > 0) return true;                             // has cards: always
   if (!canHoldCards(lang)) return false;                           // retired, and empty
   return !!lang.name;                                              // nameless + empty
+}
+
+// Everything a reader can actually get to. The dropdown wants one row per name;
+// the badge wants every card that is due. Those were the same question until a
+// deck acquired a second door, and answering both with isListableDeck would
+// have made the badge silently undercount a whole section.
+function isReachableDeck(lang) {
+  if (isListableDeck(lang)) return true;
+  return isCompanionDeck(lang) && !lang.deckDeletedAt && lang.cardCount > 0;
 }
 
 function reviewSourceKey(card) {
@@ -11798,9 +12166,19 @@ async function populateReviewFilterFromMeta() {
     // the select blank.
     if (!sizeSel.value) { sizeSel.value = String(REVIEW_SIZE_DEFAULT); AppState.reviewSize = REVIEW_SIZE_DEFAULT; }
   }
-  const exists = [...select.options].some(o => o.value === AppState.reviewFilter);
-  select.value = exists ? AppState.reviewFilter : 'all';
-  AppState.reviewFilter = select.value;
+  // A companion deck has no option of its own — it is reached by its tab — so
+  // the SELECT shows its parent while the FILTER stays on the companion. Without
+  // this, coming back to a session left on Pronouns would silently fall back to
+  // "all" and look like the tab had been forgotten.
+  const companion = (languages.find(l => l.id === (AppState.reviewFilter || '').slice(5)));
+  const asParent = companion && isCompanionDeck(companion)
+    ? `lang:${companion.companionOf}` : null;
+  const wanted = asParent || AppState.reviewFilter;
+  const exists = [...select.options].some(o => o.value === wanted);
+  select.value = exists ? wanted : 'all';
+  AppState.reviewFilter = exists ? (asParent ? AppState.reviewFilter : select.value) : 'all';
+
+  syncDeckTabs();
 
   // Deleting is per-deck, so the button only exists once a deck is selected.
   // Book cards live inside their chapters — a book is deleted in the Library.
@@ -11812,6 +12190,52 @@ async function populateReviewFilterFromMeta() {
   renderRevisionSets();
   syncDeleteDeckButton();
   await renderDeckTrash();
+}
+
+// ── THE TWO QUR'ANIC SECTIONS ───────────────────────────────────────────────
+// The roots and the particles are two sections of one thing, so they are two
+// tabs rather than two rows in the dropdown. The strip appears only when that
+// thing is what you are reviewing.
+//
+// Nothing is read to draw it: the languages are already in hand from the
+// dropdown build, and the labels are static.
+const DECK_TABS = [
+  { key: 'roots',     id: QURAN_VOCAB_ID },
+  { key: 'particles', id: QURAN_PARTICLES_ID }
+];
+
+function currentDeckTab() {
+  const id = (AppState.reviewFilter || '').startsWith('lang:')
+    ? AppState.reviewFilter.slice(5) : '';
+  return DECK_TABS.find(t => t.id === id)?.key || null;
+}
+
+function syncDeckTabs() {
+  const wrap = document.getElementById('review-tabs');
+  if (!wrap) return;
+  const active = currentDeckTab();
+  wrap.style.display = active ? '' : 'none';
+  if (!active) return;
+  wrap.querySelectorAll('[data-deck-tab]').forEach(btn => {
+    const on = btn.dataset.deckTab === active;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
+// Switching section is switching source: same path as choosing from the
+// dropdown, so the session key changes and everything downstream — the queue,
+// the Revision list, the counters — restarts cleanly with no special casing.
+function chooseDeckTab(key) {
+  const tab = DECK_TABS.find(t => t.key === key);
+  if (!tab || currentDeckTab() === key) return;
+  AppState.reviewFilter = `lang:${tab.id}`;
+  AppState.reviewSet = null;
+  dbPut('settings', { key: 'reviewFilter', value: AppState.reviewFilter }).catch(() => {});
+  syncDeckTabs();
+  // The particles deck is built the first time it is asked for, and not before.
+  const ready = key === 'particles' ? ensureParticleDeck() : Promise.resolve();
+  Promise.resolve(ready).then(() => initReviewSession());
 }
 
 // ── RETIRING A SET ──────────────────────────────────────────────────────────
@@ -12267,10 +12691,10 @@ function refreshReviewBadge() {
   const meta = AppState._reviewMeta || { languages: [], books: [] };
   let total = 0;
   for (const l of meta.languages) {
-    // The same rule the dropdown uses. A deck that is no longer offered must not
-    // keep adding to the number over the tab — that would be a badge counting
-    // cards nobody can reach.
-    if (!isListableDeck(l)) continue;
+    // Reachable, not listable. A deck that is no longer offered must not keep
+    // adding to the number over the tab — but a deck reached through a tab is
+    // still reached, and its due cards still count.
+    if (!isReachableDeck(l)) continue;
     total += recorded[`lang:${l.id}`] ?? (l.dueCount || 0);
   }
   for (const b of meta.books) total += recorded[`book:${b.id}`] ?? (b.dueCount || 0);
@@ -12825,7 +13249,7 @@ function showNextCard() {
   // as though it were English text that happened to contain Arabic characters.
   // That is enough to have the two surfaces pick different faces and, on some
   // systems, to lose the cursive joins altogether.
-  const arabicFront = card.type === 'root' ||
+  const arabicFront = card.type === 'root' || card.type === 'particle' ||
     (card._src?.type === 'langCards' && /[\u0600-\u06FF]/.test(card.front || ''));
   if (arabicFront) { frontText.lang = 'ar'; frontText.dir = 'rtl'; }
   else { frontText.removeAttribute('lang'); frontText.removeAttribute('dir'); }
@@ -12845,7 +13269,11 @@ function showNextCard() {
   // The back does the explaining: the word again with what it means, then the
   // root that unifies the family, then the other real forms grown from it, then
   // a verse it actually appears in.
-  const isRootCard = card.type === 'root' && Array.isArray(card.lemmas) && card.lemmas.length;
+  // A particle card is the same card in every respect that matters here: an
+  // Arabic form on the front, and on the back the real words that carry it.
+  const isParticle = card.type === 'particle';
+  const isRootCard = (card.type === 'root' || isParticle) &&
+    Array.isArray(card.lemmas) && card.lemmas.length;
   const rootHead = document.getElementById('card-back-root');
   const lemmaBox = document.getElementById('card-back-lemmas');
   const cardEl = document.getElementById('flashcard-element');
@@ -12860,6 +13288,9 @@ function showNextCard() {
       backWord.lang = 'ar'; backWord.dir = 'rtl';
       document.getElementById('card-back-root-rom').textContent = [
         card.romanization,
+        // A particle's job is the fact worth printing — "3rd person masculine
+        // singular" is what tells you which ـهُ you are looking at.
+        isParticle ? card.role : '',
         card.quranCount ? `${card.quranCount.toLocaleString()}× in the Qur'an` : ''
       ].filter(Boolean).join(' · ');
     }
@@ -12867,7 +13298,8 @@ function showNextCard() {
   if (lemmaBox) {
     lemmaBox.style.display = isRootCard ? 'block' : 'none';
     lemmaBox.innerHTML = isRootCard ? `
-      <div class="card-lemmas-head">Words built from ${escapeAttr(card.root || card.front)}</div>
+      <div class="card-lemmas-head">${isParticle ? 'Words that carry' : 'Words built from'} ${escapeAttr(card.root || card.front)}</div>
+      ${isParticle && card.note ? `<p class="card-particle-note">${escapeAttr(card.note)}</p>` : ''}
       ${card.lemmas.map(l => `
         <div class="card-lemma">
           <span class="card-lemma-ar" dir="rtl" lang="ar">${escapeAttr(l.word)}</span>
@@ -13472,6 +13904,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Remember the chosen topic across sessions (local-only, like other settings)
     dbPut('settings', { key: 'reviewFilter', value: e.target.value }).catch(() => {});
     initReviewSession();
+  });
+  document.querySelectorAll('[data-deck-tab]').forEach(btn => {
+    btn.addEventListener('click', () => chooseDeckTab(btn.dataset.deckTab));
   });
   document.getElementById('review-size').addEventListener('change', (e) => {
     AppState.reviewSize = Number(e.target.value);
